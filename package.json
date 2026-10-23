@@ -1,0 +1,41 @@
+{
+  "name": "avatar-desk",
+  "productName": "Avatar Desk",
+  "version": "0.1.0",
+  "description": "A transparent desktop avatar for macOS: TalkingHead + motion-engine, Ollama for the brain, Super Voice for speech.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "postinstall": "node scripts/fetch-avatars.mjs",
+    "start": "electron .",
+    "dist": "electron-builder --mac --arm64"
+  },
+  "dependencies": {
+    "@met4citizen/headaudio": "0.1.0",
+    "@met4citizen/talkinghead": "1.7.0",
+    "motion-engine": "github:lhupyn/motion-engine#v2.1.0",
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.17.0"
+  },
+  "build": {
+    "appId": "local.avatar-desk",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "node_modules/**"
+    ],
+    "mac": {
+      "target": "dir",
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Avatar Desk listens while you hold the mic button, so you can talk to your avatar.",
+        "LSUIElement": false
+      }
+    }
+  }
+}

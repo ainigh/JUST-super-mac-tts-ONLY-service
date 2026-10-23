@@ -10,7 +10,7 @@ https://github.com/ainigh/super-mac-tts-stt-service/tree/main already runs well,
 
 for https://github.com/ainigh/super-mac-tts-stt-service/tree/main , we hope to find a way it doesnt hear itself. the thing is that if model hears itself, we know because we can compare without doing any fancy complicated stuff. 
 
-the app this repo provides uses animated 3d from https://github.com/met4citizen/HeadTTS with full emotion
+the app this repo provides uses animated 3d from https://github.com/met4citizen/TalkingHead , https://github.com/met4citizen/HeadTTS with full emotion
 
 we want to provide api for cliebts, smilar way as https://github.com/ainigh/super-mac-tts-stt-service/tree/main does. it should support update etc
 

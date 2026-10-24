@@ -96,34 +96,47 @@ test('the schedule: several at once, cancelled, kept, and done when due', async 
   s2.stop();
 });
 
-test('the prompt: the character, the scripts with what they take, what it has learned, the day', () => {
+test('the prompt: the character, Tool Mac Tool Run\'s tools as it gives them, the scripts by name, what it has learned, the day', () => {
   const m = { prompt: () => "Your playbook:\n- Prefers Celsius\n\nThe user's standing instructions (follow them):\nCall me Sam." };
   const catalog = {
     reachable: true,
     error: null,
-    scripts: [{ name: 'utilities/weather.py', summary: 'The weather', inputs: [{ prompt: 'City', kind: 'argument', optional: true }], dangers: [] }, { name: 'utilities/library.py', summary: 'Notes', inputs: [], dangers: [] }],
+    tools: [
+      { name: 'web_fetch', description: 'Reads any web address.', args: [{ name: 'url', type: 'string', required: true, about: 'the address' }, { name: 'find', type: 'string', required: false, about: 'words' }], asks: false, stream: false, aliases: ['fetch'] },
+      { name: 'run_script', description: 'Runs a script.', args: [{ name: 'script', type: 'string', required: true, about: 'its name' }], asks: true, stream: true, aliases: [] },
+      { name: 'teleport', description: 'A tool this app has never heard of.', args: [], asks: false, stream: false, aliases: [] },
+    ],
+    guide: ['Search the web before you say you can\'t.'],
+    examples: [{ user: 'When does the Louvre open?', steps: [{ call: { tool: 'web_fetch', arguments: { url: 'https://louvre.fr' } }, result: '9 to 6' }], answer: 'From 9 to 6.' }],
+    scripts: [{ name: 'utilities/weather.py', summary: 'The weather', inputs: [], dangers: [] }, { name: 'hello.sh', summary: 'Hi', inputs: [], dangers: [] }],
     flows: [{ name: 'morning.flow', summary: 'The day' }],
   };
   const p = systemPrompt({ character: CHARACTERS[2], catalog, notes: m, now: new Date(2026, 9, 24).getTime() });
   assert.match(p, /You are Sofia/);
-  assert.match(p, /utilities\/weather\.py: The weather \| takes: City \(optional\)/);
-  assert.match(p, /utilities\/library\.py is the user's notes library/);
+  assert.match(p, /^- web_fetch: Reads any web address\. Arguments: url \(string\): the address; find \(string, optional\): words\.$/m);
+  assert.match(p, /^- run_script: Runs a script\. Arguments: script \(string\): its name\. \[waits for the user to click Run on the Mac\]$/m);
+  assert.match(p, /^- teleport: A tool this app has never heard of\.$/m, 'what Tool Mac Tool Run adds is there the day it ships');
+  assert.match(p, /^- schedule: /m);
+  assert.match(p, /^Using Tool Mac Tool Run's tools \(its own advice\):\n- Search the web before you say you can't\.$/m);
+  assert.match(p, /^The user says: When does the Louvre open\?\nYou answer: \{"tool": "web_fetch", "arguments": \{"url":"https:\/\/louvre\.fr"\}\}\nThe tool result: 9 to 6\nYou answer: From 9 to 6\.$/m);
+  assert.match(p, /^utilities\/: weather$/m);
+  assert.match(p, /^hello$/m);
+  assert.match(p, /^Their flows, for run_flow: morning$/m);
   assert.match(p, /- Prefers Celsius/);
   assert.match(p, /Call me Sam\./);
   assert.match(p, /Today is Saturday 24 October 2026\.$/);
   assert.match(catalogPrompt({ reachable: false, error: 'not running' }), /isn't available right now \(not running\)/);
+  assert.match(systemPrompt({ character: CHARACTERS[0], catalog: { reachable: false, error: 'not running', tools: [], scripts: [], flows: [] } }), /no tools but the schedule/);
   assert.match(stamp(new Date(2026, 9, 24, 9, 5, 7).getTime()), /Saturday 24 October 2026, 09:05:07 \(UTC[+-]\d\d:\d\d\)/);
 });
 
-test('a tool named loosely, or by a script\'s own name, is the tool meant', () => {
-  const catalog = { scripts: [{ name: 'utilities/weather.py' }], flows: [{ name: 'morning.flow' }] };
-  assert.equal(canonical({ name: 'remind_me', arguments: {} }).name, 'schedule');
-  assert.deepEqual(canonical({ name: 'weather', arguments: { args: ['Paris'] } }, catalog), {
-    name: 'run_script',
-    arguments: { script: 'utilities/weather.py', args: ['Paris'], stdin: undefined, why: undefined },
-  });
-  assert.equal(canonical({ name: 'morning', arguments: {} }, catalog).name, 'run_flow');
-  assert.ok(canonical({ name: 'fly_to_mars', arguments: {} }, catalog).unknown);
+test('a call goes where its tool is: the schedule here, everything else to Tool Mac Tool Run as called', () => {
+  const catalog = { tools: [{ name: 'web_search', aliases: ['google'], args: [] }, { name: 'runs', aliases: ['cancel_run'], args: [] }] };
+  assert.deepEqual(canonical({ name: 'remind_me', arguments: { in_minutes: 5 } }, catalog), { name: 'schedule', arguments: { in_minutes: 5 }, where: 'local' });
+  assert.deepEqual(canonical({ name: 'Google', arguments: { q: 'x' } }, catalog), { name: 'web_search', arguments: { q: 'x' }, where: 'mac' });
+  // A name it doesn't know (a script's, a tool added later) goes as it was called: Tool Mac Tool Run says what it is.
+  assert.deepEqual(canonical({ name: 'weather', arguments: { args: ['Paris'] } }, catalog), { name: 'weather', arguments: { args: ['Paris'] }, where: 'mac' });
+  assert.equal(canonical({ name: 'cancel_schedule', arguments: {} }, catalog).where, 'local');
 });
 
 test('sizes go round', () => {

@@ -1,113 +1,66 @@
 // What the model is told. One model plays the three parts Super Voice gave to three (Tom, the face
 // who understands the user and owns every request until it's delivered; Jerry, the engine who
 // does the work with tools against done criteria; Jane, the brain who knows, judges, and reviews
-// work with suspicion), as habits it goes through in order, with a worked example in its own
-// tools, since local models are small. The harness adds the rest at the moments it matters: a
-// review when a tool fails, a nudge when words promise work no call does, a chance to learn after.
+// work with suspicion), as habits it goes through in order. The tools, the advice on using them
+// and the examples of them at work are Tool Mac Tool Run's, as it gives them (GET /api/tools):
+// nothing here knows one. The harness adds the rest at the moments it matters: a review when a
+// tool fails, a nudge when words promise work no call does, a chance to learn after.
 
 import { PLAYBOOK, THE_USER } from './notes.mjs';
 import * as scheduleTools from './scheduler.mjs';
-import * as runTools from './toolrun.mjs';
+import { findTool, hasTool } from './toolrun.mjs';
 
-/**
- * Every tool the model has, in the order it's told them. All are Tool Mac Tool Run's but the
- * schedule, which is run here; what it learns is kept there too (the library, MEMORY).
- */
-export const ALL_TOOLS = [...runTools.TOOLS.map((t) => ({ ...t, where: 'mac' })), ...scheduleTools.TOOLS.map((t) => ({ ...t, where: 'local' }))];
+/** The tools run here: the schedule. Every other tool is Tool Mac Tool Run's, as it lists them. */
+export const LOCAL_TOOLS = scheduleTools.TOOLS;
 
-/** Names a small model tends to use for the tools, and the tool each means. */
+/** Names a small model tends to use for the schedule's tools, and the tool each means. */
 const ALIASES = {
-  run: 'run_script', script: 'run_script', execute: 'run_script', run_tool: 'run_script', use_tool: 'run_script', call_script: 'run_script',
-  flow: 'run_flow', compose: 'run_flow', run_code: 'run_flow_code', flow_code: 'run_flow_code',
-  check_code: 'check_flow', runs: 'list_runs', get_run: 'read_run', run_status: 'read_run', stop: 'stop_run', cancel_run: 'stop_run',
-  scripts: 'list_scripts', list_tools: 'list_scripts', tools: 'list_scripts',
-  search: 'find', find_script: 'find', find_tool: 'find', search_scripts: 'find', search_api: 'find', lookup_tool: 'find',
   remind: 'schedule', reminder: 'schedule', set_reminder: 'schedule', remind_me: 'schedule', set_timer: 'schedule', timer: 'schedule',
   schedule_task: 'schedule', later: 'schedule', add_schedule: 'schedule', create_schedule: 'schedule', alarm: 'schedule', set_alarm: 'schedule',
   schedules: 'list_schedules', list_reminders: 'list_schedules', reminders: 'list_schedules', list_schedule: 'list_schedules',
-  cancel: 'cancel_schedule', cancel_reminder: 'cancel_schedule', delete_schedule: 'cancel_schedule', remove_schedule: 'cancel_schedule',
-  unschedule: 'cancel_schedule', cancel_timer: 'cancel_schedule',
-  memorize: 'remember', memorise: 'remember', save_memory: 'remember', add_memory: 'remember', store: 'remember', save_fact: 'remember',
-  lookup: 'recall', look_up: 'recall', what_do_i_know: 'recall', who_is: 'recall', get_memory: 'recall', search_memory: 'recall',
-  upcoming: 'memory', birthdays: 'memory',
-  link: 'mind', relate: 'mind', connect: 'mind', mind_add: 'mind', mind_query: 'mind', graph: 'mind',
-  present: 'show', display: 'show', show_window: 'show', clipboard: 'copy', copy_to_clipboard: 'copy',
-  browser: 'chrome_page', chrome: 'chrome_page', page: 'chrome_page', web_page: 'chrome_page', read_page: 'chrome_page', chromepage: 'chrome_page',
-  notes: 'library', file_library: 'library', library_op: 'library',
-  api: 'call_api', http: 'call_api', request: 'call_api', call_route: 'call_api',
+  cancel_reminder: 'cancel_schedule', delete_schedule: 'cancel_schedule', remove_schedule: 'cancel_schedule', unschedule: 'cancel_schedule', cancel_timer: 'cancel_schedule',
 };
 
-/** What an alias says about the arguments it was called with: upcoming is memory's upcoming, link is the mind's add. */
-const ALIAS_OP = { upcoming: 'upcoming', birthdays: 'upcoming', link: 'add', relate: 'add', connect: 'add', mind_add: 'add', mind_query: 'query' };
-
-/**
- * The tools the model is told of now: those over Tool Mac Tool Run only when it lists their group,
- * and has it on; find (and not list_scripts) where it searches.
- */
+/** The tools the model is told of now: Tool Mac Tool Run's, as it lists them, and the schedule. */
 export function toolsFor(catalog) {
-  const search = runTools.hasSearch(catalog);
-  return ALL_TOOLS.filter((t) => {
-    if (t.group) return runTools.hasGroup(catalog, t.group);
-    if (t.needs === 'search') return search;
-    if (t.name === 'list_scripts') return !search;
-    if (t.name === 'call_api') return runTools.otherGroups(catalog).length > 0;
-    return true;
-  });
+  return [...(catalog?.tools || []).map((t) => ({ ...t, where: 'mac' })), ...LOCAL_TOOLS.map((t) => ({ ...t, where: 'local' }))];
 }
 
 /**
- * The tool a call means: { name, arguments } with the name made canonical. A script's own name used
- * as the tool ({"tool": "weather.py", "arguments": {"args": ["Paris"]}}) is a run_script of it.
+ * Where a call goes: { name, arguments, where }. The schedule's tools (and the names a model gives
+ * them) are run here; anything else goes to Tool Mac Tool Run as it was called, which takes the
+ * names a model reaches for and says what to call when there's no such tool.
  */
 export function canonical(call, catalog) {
-  const raw = String(call.name).trim();
-  const n = raw.toLowerCase().replace(/[\s-]+/g, '_');
-  const a = call.arguments && typeof call.arguments === 'object' ? call.arguments : {};
-  // learn (its old notes tool), or remember with a section and a note, is a line of its playbook;
-  // about the user, a note on them in MEMORY. Without MEMORY, a fact the user told it goes in the
-  // playbook too, rather than nowhere.
-  const memory = runTools.hasGroup(catalog, 'memory');
-  if (['learn', 'note_to_self', 'save_note', 'learn_this'].includes(n) || (n === 'remember' && ((a.section && a.note && !a.category && !a.about) || !memory))) {
-    const note = String(a.note ?? ([a.about, a.text].filter(Boolean).join(': ') || a.text || '')).trim();
-    const user = /^(user|prefs?|preferences?|about_user)$/i.test(String(a.section ?? ''));
-    if (user && memory) return { name: 'remember', arguments: { category: 'PEOPLE', about: THE_USER, notes: [`pref ${note}`] } };
-    return { name: 'library', arguments: { op: 'append', name: PLAYBOOK, text: `- ${note}` } };
-  }
-  if (ALL_TOOLS.some((t) => t.name === n)) return { name: n, arguments: call.arguments };
-  if (ALIASES[n]) {
-    const op = ALIAS_OP[n];
-    return canonical({ name: ALIASES[n], arguments: op && !a.op ? { op, ...a } : call.arguments }, catalog);
-  }
-  const script = runTools.findScript(raw, catalog);
-  if (script) {
-    const a = call.arguments || {};
-    const args = a.args ?? a.arguments ?? Object.values(a).filter((v) => typeof v === 'string' && v !== a.why && v !== a.stdin);
-    return { name: 'run_script', arguments: { script: script.name, args, stdin: a.stdin, why: a.why } };
-  }
-  const flow = (catalog?.flows || []).find((f) => f.name === raw || f.name.replace(/\.flow$/, '') === raw);
-  if (flow) return { name: 'run_flow', arguments: { flow: flow.name, ...(call.arguments || {}) } };
-  return { name: n, arguments: call.arguments, unknown: true };
+  const n = String(call.name).trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const args = call.arguments && typeof call.arguments === 'object' ? call.arguments : {};
+  const local = LOCAL_TOOLS.find((t) => t.name === n) || LOCAL_TOOLS.find((t) => t.name === ALIASES[n]);
+  // A Tool Mac Tool Run tool of the same name wins over a guess at the schedule's ("cancel": a run).
+  if (local && (LOCAL_TOOLS.some((t) => t.name === n) || !findTool(n, catalog))) return { name: local.name, arguments: args, where: 'local' };
+  const tool = findTool(n, catalog);
+  return { name: tool?.name || String(call.name).trim(), arguments: args, where: 'mac' };
 }
 
+/** A tool as the model is told it: what it does, and what it takes. */
 function manualLine(t) {
   let line = `- ${t.name}: ${t.description}`;
-  if (t.args?.length) line += ` Arguments: ${t.args.map(([n, d]) => `${n} (${d})`).join('; ')}.`;
+  if (t.where === 'local') {
+    if (t.args?.length) line += ` Arguments: ${t.args.map(([n, d]) => `${n} (${d})`).join('; ')}.`;
+    return line;
+  }
+  if (t.args?.length) line += ` Arguments: ${t.args.map((a) => `${a.name} (${a.type}${a.required ? '' : ', optional'}): ${a.about}`).join('; ')}.`;
+  if (t.asks) line += ' [waits for the user to click Run on the Mac]';
   return line;
 }
 
-/**
- * The scripts and flows there are, so they're run by name. Where Tool Mac Tool Run searches, only
- * their names (what fits the request at hand is described at the end, and find gives the rest);
- * else each with what it does and takes, and every other route for call_api.
- */
+/** The scripts and flows there are, by name (find says what each does and takes). */
 export function catalogPrompt(catalog) {
   if (!catalog?.reachable || catalog.error) {
-    return `Tool Mac Tool Run isn't available right now (${catalog?.error || 'not reached'}), so there are no scripts to run: say so if the user asks for something that needs one, and that it needs Tool Mac Tool Run open with its API on.`;
+    return `Tool Mac Tool Run isn't available right now (${catalog?.error || 'not reached'}), so you have no tools but the schedule: say so if the user asks for something that needs one, and that it needs Tool Mac Tool Run open with its API on.`;
   }
-  if (!catalog.scripts.length && !catalog.flows.length) return 'Tool Mac Tool Run has no scripts in its folder yet.';
-  const others = runTools.otherGroups(catalog);
-  if (runTools.hasSearch(catalog)) {
-    const lines = ['The scripts you can run with run_script, by name (find says what one does and takes; the ones that fit what was just said are described at the end of these instructions):'];
+  const lines = [];
+  if (catalog.scripts.length) {
+    lines.push("The user's scripts, for run_script by name (find says what one does and takes; the ones that fit what was just said are described at the end of these instructions):");
     const folders = new Map();
     for (const s of catalog.scripts) {
       const at = s.name.lastIndexOf('/');
@@ -116,24 +69,25 @@ export function catalogPrompt(catalog) {
       folders.get(folder).push(s.name.slice(at + 1).replace(/\.[a-z0-9]+$/i, ''));
     }
     for (const [folder, names] of folders) lines.push(`${folder ? `${folder}/` : ''}: ${names.join(', ')}`.replace(/^: /, ''));
-    if (catalog.flows.length) lines.push(`The flows, for run_flow: ${catalog.flows.map((f) => f.name.replace(/\.flow$/, '')).join(', ')}`);
-    if (others.length) lines.push(`Tool Mac Tool Run also has (find gives their routes, for call_api): ${others.map((g) => `${g.title}${g.on ? '' : ' (turned off right now)'}`).join('; ')}.`);
-    return lines.join('\n');
   }
-  const lines = ['The scripts you can run with run_script (name: what it does, in its own words; then what it takes, in order):'];
-  for (const s of catalog.scripts) lines.push(`- ${runTools.scriptLine(s)}`);
-  if (catalog.flows.length) {
-    lines.push('The flows you can run with run_flow:');
-    for (const f of catalog.flows) lines.push(`- ${f.name}${f.summary ? `: ${f.summary}` : ''}`);
-  }
-  if (others.length) {
-    lines.push('Other routes, for call_api (method path: what it does):');
-    for (const g of others) {
-      lines.push(`${g.title}${g.about ? ` (${g.about})` : ''}${g.on ? '' : ': turned off in Tool Mac Tool Run right now'}`);
-      if (g.on) for (const r of g.routes) lines.push(`- ${r.method} ${r.path}: ${r.summary}${r.asks ? ' [asks on the Mac]' : ''}`);
-    }
-  }
+  if (catalog.flows.length) lines.push(`Their flows, for run_flow: ${catalog.flows.map((f) => f.name.replace(/\.flow$/, '')).join(', ')}`);
   return lines.join('\n');
+}
+
+/** Tool Mac Tool Run's examples, in the shape this app's calls are written. */
+function examplesPrompt(catalog) {
+  const out = [];
+  for (const e of (catalog?.examples || []).slice(0, 6)) {
+    if (!e?.user || !Array.isArray(e.steps)) continue;
+    out.push(`The user says: ${e.user}`);
+    for (const step of e.steps) {
+      if (!step?.call?.tool) continue;
+      out.push(`You answer: {"tool": ${JSON.stringify(step.call.tool)}, "arguments": ${JSON.stringify(step.call.arguments || {})}}`);
+      if (step.result) out.push(`The tool result: ${step.result}`);
+    }
+    if (e.answer) out.push(`You answer: ${e.answer}`);
+  }
+  return out.join('\n');
 }
 
 /**
@@ -142,11 +96,7 @@ export function catalogPrompt(catalog) {
  */
 export function systemPrompt({ character, catalog, notes, context = [], matches = [], now = Date.now(), typedOnly = false }) {
   const name = character.name;
-  const libraryScript = (catalog?.scripts || []).find((s) => /(^|\/)(library|notes?)\.[a-z]+$/i.test(s.name));
-  const library = runTools.hasLibrary(catalog);
-  const google = runTools.findScript('browser/google', catalog);
-  const openPage = runTools.findScript('browser/open-page', catalog);
-  const has = (g) => runTools.hasGroup(catalog, g);
+  const has = (t) => hasTool(catalog, t);
   const p = [];
   p.push(
     `You are ${name}, an assistant who lives on the user's Mac as a 3D character on their desktop (${character.looks}). The user talks to you out loud${typedOnly ? '' : ' (you hear them through the microphone)'} or types in your chat window, and everything you write is read aloud in your voice while your face and body act it out.`,
@@ -159,51 +109,24 @@ export function systemPrompt({ character, catalog, notes, context = [], matches 
 - When what you heard clearly wasn't meant for you (people talking in the room, a TV, half a sentence), answer with only: (nothing)`);
   p.push(`How you work. You have three habits, and you go through them in order on every request:
 1. Understand (the face). Work out what the user wants and what "done" looks like for them, using your memory of them. If something you need is missing and no tool could find it, ask one short question; otherwise don't ask, act. You own every request until the user has what they asked for: never drop one quietly.
-2. Do (the engine). Anything to do or find out, on this Mac or on the web, is done with a tool: the weather, the news, files, apps, the browser, notes, sums, reminders. Pick the tool by what it says it does, and give it exactly the arguments it takes. Before a run that takes time, say in a few words what you're doing. Never say something was done, found, saved or set unless a tool's result says so; never make up a result; never say you can't when a tool could do it.
-3. Check (the critic). When a result comes back, read it with suspicion against what was asked: did the right thing run, is the answer complete, does it make sense? If not, fix it: try again differently, another script, other arguments; or say plainly what's missing. Only then answer: the facts first, in a sentence or two, in your own words (never paste raw output).
+2. Do (the engine). Anything to do or find out, on this Mac or on the web, is done with a tool: the weather, the news, a fact, a price, files, apps, the browser, notes, sums, reminders. Your tools are primitives: put them together (search, then read what you found; find a script, then run it). Pick each by what it says it does, and give it exactly the arguments it takes. Before a step that takes time, say in a few words what you're doing. Never say something was done, found, saved or set unless a tool's result says so; never make up a result; never say you can't when a tool could do it.
+3. Check (the critic). When a result comes back, read it with suspicion against what was asked: did the right thing run, is the answer complete, does it make sense? If not, fix it: try again differently, another tool, other arguments; or say plainly what's missing. Only then answer: the facts first, in a sentence or two, in your own words (never paste raw output).
 What needs no tool (knowing, explaining, judging, deciding, writing) you answer straight from what you know. When you don't know, say so, and what would settle it.`);
-  p.push(`Running things on the Mac:
-- Scripts and flows run through Tool Mac Tool Run. Each run puts a card on the Mac and waits for the user to click Run (you can't click): when you send one, tell them to click Run. If they click Don't Run, leave it unless they ask again.
-- The user can cancel a run, or what you're doing, at any time. When a result says it was cancelled, stop, say so in a few words, and don't send it again unless they ask.
-${
-    google
-      ? `- For anything the web can answer that no script does (the weather, a price, a fact, opening hours, the news), run ${google.name} with the question in words ("weather in Corinth"): it asks Google in Chrome and prints Google's answer. To open a page, run ${openPage?.name || 'a browser/ script'}. chrome_page only reads the page already open.\n`
-      : ''
-  }- This app keeps no notes or library of its own: to keep, find, change or remove notes, lists and anything else, ${
-      library
-        ? "use library: the user's notes in Tool Mac Tool Run, which answers at once (no card, no click). Look before you write: find or read the note first, then append to it or write it whole"
-        : `use the scripts${libraryScript ? ` (${libraryScript.name} is the user's notes library)` : ' (a notes or library script, when there is one)'}`
-    }.`);
-  if (has('memory')) {
-    p.push(`Remembering the user's world (MEMORY and the mind, in Tool Mac Tool Run: they answer at once, no click):
-- Before you answer anything about a person, place, organization, plan or date, recall it first, and use what comes back; say so when nothing is remembered. What the mind already has on what's being said is given at the end of these instructions: use it, and recall for more.
-- When the user tells you something worth keeping (who someone is, how they're linked, a birthday or a date, a preference, a plan, an idea), remember it in the file it belongs to, with its links and notes (dates as "date 2026-11-03 …", birthdays as "birthday 03-14"), and say in a few words what you remembered.
-- Only ever write what the user said: never invent or guess. If it contradicts what's remembered, ask which is right before changing anything.${
-      has('mind') ? '\n- To link things without a file (who works where, what belongs to what), use mind with op add. Rename and forget in the mind only when asked: they stay in its record.' : ''
-    }
-- Your playbook (below) is for how to get things done, not for facts about their world.`);
-  }
-  if (has('screen') || has('browser')) {
-    p.push(
-      [
-        'Showing, copying, and the page in Chrome:',
-        has('screen') && '- When what you would say is long (steps, a list, a recipe, a result to check), show it in a window with show, and say it in a sentence. When they will paste something, copy it, and say that you did.',
-        has('browser') && "- To guide the user through a site, read the page in Chrome with chrome_page: find tells you where a thing is (in view, above, below, inside a closed menu) and highlight rings it in red for them. You can't click or type there: tell them what to do, one step at a time, and read the page again after each step. Never say something is on the page unless has or find said so.",
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    );
+  if (catalog?.guide?.length) p.push(`Using Tool Mac Tool Run's tools (its own advice):\n${catalog.guide.map((l) => `- ${l}`).join('\n')}`);
+  p.push(`Cards and cancelling: a tool marked as waiting for the user's click puts a card on the Mac, and you can't click it for them: tell them to click Run. The user can cancel a tool, or what you're doing, at any time: when a result says it was cancelled, stop, say so in a few words, and don't send it again unless they ask.`);
+  if (has('remember') && has('recall')) {
+    p.push(`Remembering the user's world: what the mind already has on what's being said is given at the end of these instructions; use it, and recall for more. Your playbook (below) is for how to get things done, not for facts about their world.`);
   }
   p.push(`Time:
 - Each message says when it was said, to the second. For anything later (a reminder, a check, a follow-up) use schedule, with in_minutes or at. Write its task as an instruction to your future self with every detail, since then you'll get only the task.
 - A message starting "Scheduled task" is one you set earlier, due now: do it now (say the reminder, run what it asks) and tell the user, as if you'd just remembered.`);
-  if (library || has('memory')) {
+  if (has('library') || has('remember')) {
     p.push(
       [
         'Learning (it is all kept in Tool Mac Tool Run):',
-        library &&
-          `- Your playbook, below, is what you've learned about getting things done for the user: which script and arguments work for what, how they like things done, mistakes not to make again. Read it before you act. The moment you learn something that will matter next time, add it in one short line: library, op append, name "${PLAYBOOK}", text "- …". To fix or drop a line that proved wrong, write the note whole without it (op write). Request ids and one-off facts don't belong there.`,
-        has('memory') && `- What you learn about the user themselves (a preference, where they live, what to call them) goes to MEMORY: remember, category PEOPLE, about "${THE_USER}", notes ["pref …"].`,
+        has('library') &&
+          `- Your playbook, below, is what you've learned about getting things done for the user: which tool, site or arguments work for what, how they like things done, mistakes not to make again. Read it before you act. The moment you learn something that will matter next time, add it in one short line: library, op append, name "${PLAYBOOK}", text "- …". To fix or drop a line that proved wrong, write the note whole without it (op write). Request ids and one-off facts don't belong there.`,
+        has('remember') && `- What you learn about the user themselves (a preference, where they live, what to call them) goes to MEMORY: remember, category PEOPLE, about "${THE_USER}", notes ["pref …"].`,
       ]
         .filter(Boolean)
         .join('\n'),
@@ -213,57 +136,19 @@ ${
 The tools:
 ${toolsFor(catalog).map(manualLine).join('\n')}
 
-${catalogPrompt(catalog)}`);
-  p.push(`An example, for the shape only (the scripts you really have are the ones listed above).
-The user says: what's the weather in Lagos?
-You answer: Let me check. Click Run on your Mac.
-{"tool": "run_script", "arguments": {"script": "utilities/weather.py", "args": ["Lagos"], "why": "You asked for the weather in Lagos"}}
-The tool result: weather.py succeeded, printing "Lagos: 28°C, sunny, high 31, low 24".
-You answer: It's 28 degrees and sunny in Lagos, with a high of 31.
+${catalogPrompt(catalog)}`.trimEnd());
+  const examples = examplesPrompt(catalog);
+  p.push(`Examples, for the shape only (use the tools, scripts and sites that fit the request at hand).
 The user says: remind me to call Sam in 20 minutes
 You answer: {"tool": "schedule", "arguments": {"in_minutes": 20, "task": "Remind the user to call Sam."}}
 The tool result: Scheduled s1 for today at 15:40.
 You answer: Sure, I'll remind you at 15:40.
 Later, the message: Scheduled task s1, set at 15:20: Remind the user to call Sam.
-You answer: It's time to call Sam!
-${
-    has('memory')
-      ? `
-The user says: no, I always mean Celsius and my city is Leeds
-You answer: Got it.
-{"tool": "remember", "arguments": {"category": "PEOPLE", "about": "${THE_USER}", "notes": ["pref temperatures in Celsius", "lives in Leeds"]}}`
-      : ''
-  }${
-    library
-      ? `
-The tool result for a run: weather.py failed: "give the city first, then the units"
-You answer: {"tool": "library", "arguments": {"op": "append", "name": "${PLAYBOOK}", "text": "- weather.py takes the city first, then the units"}}`
-      : ''
-  }${
-    has('memory')
-      ? `
-The user says: my sister Ada's birthday is on the 14th of March
-You answer: {"tool": "remember", "arguments": {"category": "PEOPLE", "about": "Ada", "text": "The user's sister", "notes": ["birthday 03-14"]}}
-The tool result: {"file": "PEOPLE", "node": "ada", "added_to_file": "- Ada: The user's sister", …}
-You answer: I'll remember Ada's birthday, the 14th of March.
-The user says: what should I get Ada?
-You answer: {"tool": "recall", "arguments": {"name": "Ada"}}
-The tool result: {"found": true, "lines": ["| PEOPLE | ada", "| ada @birthday 03-14", "| ada - likes | gardening"], …}
-You answer: Ada likes gardening, so a good pair of gloves or a plant would suit her. Her birthday's on the 14th of March.`
-      : ''
-  }${
-    library
-      ? `
-The user says: put eggs on my shopping list
-You answer: {"tool": "library", "arguments": {"op": "append", "name": "Shopping", "text": "- eggs"}}
-The tool result: {"name": "Shopping", "action": "appended", …}
-You answer: Eggs are on your shopping list.`
-      : ''
-  }`);
+You answer: It's time to call Sam!${examples ? `\n${examples}` : ''}`);
   if (notes) p.push(notes.prompt());
   // What changes from one message to the next comes last.
   if (catalog?.upcoming?.length) p.push(`Coming up in the next week, from MEMORY (bring it up when it's relevant, or when they ask what's coming):\n${catalog.upcoming.map((l) => `- ${l}`).join('\n')}`);
-  if (matches.length) p.push(`What fits what was just said, from a search of the scripts, flows and routes (run a script by its name; find looks for others):\n${matches.map((l) => `- ${l}`).join('\n')}`);
+  if (matches.length) p.push(`What fits what was just said, from Tool Mac Tool Run's search (a tool by its name; a script with run_script; find looks for others):\n${matches.map((l) => `- ${l}`).join('\n')}`);
   if (context.length) p.push(`What the mind already has on what's being said (its notation: "| a - label | b" is a link, "| a @kind note" a note):\n${context.join('\n')}`);
   p.push(`Today is ${longDay(now)}.`);
   return p.join('\n\n');
@@ -303,16 +188,15 @@ export const NOTE = {
   promised:
     "Note from the Mac (not the user): you said you'd do something, but made no tool call, so nothing is happening. If the user asked for something, make the call now. If not, answer again without promising.",
   cannot:
-    "Note from the Mac (not the user): you said you can't, or don't know, but your tools may well do it (the scripts reach the web, files, apps and the Mac). Look at the scripts listed (or find one by a few words) and use one now; only if none could, say so plainly.",
+    "Note from the Mac (not the user): you said you can't, or don't know, but your tools may well do it (they reach the web, files, apps and the Mac). Search the web, or find a tool or script by a few words, and use it now; only if none could, say so plainly.",
   outOfRounds: (n) => `Note from the Mac (not the user): that's ${n} tool calls for this one request, as many as one gets. Answer the user now with what you have, saying what's left undone.`,
   onlyFirst: (done, rest) => `Note from the Mac (not the user): only your first call (${done}) was made; ${rest.join(', ')} wasn't, since it's one call per answer. Make it next if it's still wanted.`,
-  unknownTool: (name, catalog) =>
-    `There's no tool called ${name}. The tools: ${toolsFor(catalog).map((t) => t.name).join(', ')}.${catalog?.scripts?.length ? ' To run a script, call run_script with its name as listed.' : ''}`,
+  unknownTool: (name, catalog) => `There's no tool called ${name}. The tools: ${toolsFor(catalog).map((t) => t.name).join(', ')}.`,
   /** After a tool that failed: the critic's moment. */
   review:
     "Note from the Mac (not the user): that didn't work. Before anything else, look at why: the wrong script, the wrong arguments, something the error or the output tells you? Try once more a different way if one could work; otherwise tell the user plainly what went wrong and what would fix it. Don't repeat the same call unchanged.",
   /** After a request that took work: the moment to learn. */
-  reflect: `Note from the Mac (not the user), not said aloud: the request is over. Is there something you learned from it that will matter next time and isn't in your playbook yet (which script or arguments worked, how the user likes things done, a mistake to avoid)? If so, answer with only the library call that adds it to "${PLAYBOOK}" (or writes the note again without a line that proved wrong), or, for something about the user themselves, the remember call. If not, answer only (nothing).`,
+  reflect: `Note from the Mac (not the user), not said aloud: the request is over. Is there something you learned from it that will matter next time and isn't in your playbook yet (which tool, site, API or arguments worked, how the user likes things done, a mistake to avoid)? If so, answer with only the library call that adds it to "${PLAYBOOK}" (or writes the note again without a line that proved wrong), or, for something about the user themselves, the remember call. If not, answer only (nothing).`,
 };
 
 /** The answer promises work ("let me check", "I'll remind you") without the call that does it. */

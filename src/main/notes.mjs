@@ -4,10 +4,11 @@
 // and what it knows of the user themselves (preferences, where they live) is MEMORY's, as notes
 // on "the user". The model writes them with the tools it has for those (library, remember); this
 // reads them back for its prompt at the start of every request, for the chat's Mind tab, and
-// moves what an older version kept in memory.json over, once.
+// moves what an older version kept in memory.json over, once. It reads and writes them with Tool
+// Mac Tool Run's own tools (library, recall, remember), as the model does.
 
 import fs from 'node:fs';
-import { hasGroup } from './toolrun.mjs';
+import { hasTool } from './toolrun.mjs';
 
 export const PLAYBOOK = 'Super Face playbook';
 export const INSTRUCTIONS = 'Super Face instructions';
@@ -34,17 +35,17 @@ export class Notes {
   }
 
   get library() {
-    return hasGroup(this.toolrun.catalog, 'library');
+    return hasTool(this.toolrun.catalog, 'library');
   }
 
   get memory() {
-    return hasGroup(this.toolrun.catalog, 'memory');
+    return hasTool(this.toolrun.catalog, 'recall');
   }
 
   /** Reads them all again (the two notes in one call, MEMORY's in another, at once). */
   async refresh({ signal } = {}) {
     if (!this.library && !this.memory) {
-      this.error = this.toolrun.catalog.reachable ? "Tool Mac Tool Run's library and MEMORY are turned off" : "Tool Mac Tool Run isn't reachable";
+      this.error = this.toolrun.catalog.reachable ? this.toolrun.catalog.error || "Tool Mac Tool Run's library and MEMORY are turned off" : "Tool Mac Tool Run isn't reachable";
       this.emit();
       return this;
     }
@@ -62,8 +63,8 @@ export class Notes {
   /** The two notes' texts by name ({} when neither is written yet); undefined when it didn't answer. */
   async read(signal) {
     try {
-      const [status, json] = await this.toolrun.call('POST', '/api/library', { op: 'read_many', names: [PLAYBOOK, INSTRUCTIONS] }, { signal, timeout: 2000 });
-      if (status < 200 || status >= 300) return undefined;
+      const { ok, json } = await this.toolrun.tool('library', { op: 'read_many', names: [PLAYBOOK, INSTRUCTIONS] }, { signal, timeout: 2000 });
+      if (!ok) return undefined;
       return Object.fromEntries((json.notes || []).map((n) => [String(n.name).toLowerCase() === PLAYBOOK.toLowerCase() ? PLAYBOOK : INSTRUCTIONS, String(n.text ?? '')]));
     } catch {
       return undefined;
@@ -73,8 +74,8 @@ export class Notes {
   /** MEMORY's lines on the user ([] when there are none); undefined when it didn't answer. */
   async recall(signal) {
     try {
-      const [status, json] = await this.toolrun.call('POST', '/api/memory', { op: 'recall', name: THE_USER }, { signal, timeout: 2000 });
-      if (status < 200 || status >= 300) return undefined;
+      const { ok, json } = await this.toolrun.tool('recall', { name: THE_USER }, { signal, timeout: 2000 });
+      if (!ok) return undefined;
       return json.found === false ? [] : (json.lines || []).map(String).slice(0, 40);
     } catch {
       return undefined;
@@ -102,8 +103,8 @@ export class Notes {
   }
 
   async write(name, head, body) {
-    const [status, json] = await this.toolrun.call('POST', '/api/library', { op: 'write', name, text: `${head}\n${body}\n` });
-    return status >= 200 && status < 300 ? 'Saved.' : json.error || `Tool Mac Tool Run said ${status}`;
+    const { ok, status, json } = await this.toolrun.tool('library', { op: 'write', name, text: `${head}\n${body}\n` });
+    return ok ? 'Saved.' : json.error || `Tool Mac Tool Run said ${status}`;
   }
 
   /**
@@ -127,7 +128,7 @@ export class Notes {
       .filter((l) => l.length > 2 && !have.has(l.toLowerCase()));
     if (add.length) await this.write(PLAYBOOK, PLAYBOOK_HEAD, [...this.playbook, ...add].join('\n'));
     if (this.memory && notes.user?.length) {
-      await this.toolrun.call('POST', '/api/memory', { op: 'remember', category: 'PEOPLE', about: THE_USER, notes: notes.user.map((n) => `pref ${n}`) });
+      await this.toolrun.tool('remember', { category: 'PEOPLE', about: THE_USER, notes: notes.user.map((n) => `pref ${n}`) });
     }
     if (typeof old.instructions === 'string' && old.instructions.trim() && !this.instructions) await this.write(INSTRUCTIONS, INSTRUCTIONS_HEAD, old.instructions.trim());
     try {

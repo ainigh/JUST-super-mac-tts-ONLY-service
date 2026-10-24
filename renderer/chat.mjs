@@ -300,7 +300,10 @@ function renderTools() {
   );
   section(
     'Through Tool Mac Tool Run',
-    (tools.mac || []).filter((t) => match(t.name, t.description)).map((t) => item(t.name, t.description.split('. ')[0].replace(/\.$/, '') + '.', '', '', t.name === 'library' ? 'In my notes, ' : `Use ${t.name} to `)),
+    // As Tool Mac Tool Run lists them: what it adds later shows up here by itself.
+    (tools.mac || [])
+      .filter((t) => match(t.name, t.description))
+      .map((t) => item(t.name, t.description.split('. ')[0].replace(/\.$/, '') + '.', t.args?.length ? `Takes: ${t.args.map((a) => a.name).join(', ')}` : '', t.asks ? 'Asks on the Mac first' : '', `Use ${t.name} to `)),
   );
   const groups = {};
   for (const s of tools.scripts) (groups[s.group] ||= []).push(s);
@@ -313,14 +316,6 @@ function renderTools() {
     );
   }
   section('Flows', tools.flows.filter((f) => match(f.name, f.summary)).map((f) => item(f.name, f.summary, '', '', `Run the flow ${f.name} `)));
-  // The routes it reaches with call_api (what Tool Mac Tool Run adds later shows up here by itself).
-  const covered = tools.covered || ['about', 'scripts', 'runs'];
-  for (const g of (tools.groups || []).filter((x) => !covered.includes(x.id))) {
-    section(
-      `${g.title}${g.on ? '' : ' (turned off)'}`,
-      g.routes.filter((r) => match(r.path, r.summary, g.title)).map((r) => item(`${r.method} ${r.path}`, r.summary, '', r.asks ? 'Asks on the Mac first' : '', `Using Tool Mac Tool Run's ${g.title}, `)),
-    );
-  }
 }
 
 function renderLater() {

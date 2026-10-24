@@ -332,45 +332,36 @@ it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) a
   "arguments": {…}}`; the app runs it and hands the result back as the next message, until the
   model answers in words (ten tools for one request at most). Not Ollama's tool calling, so any
   model can do it.
-- **Tool Mac Tool Run's tools**: `run_script`, `run_flow`, `run_flow_code`, `check_flow`,
-  `list_scripts`, `list_runs`, `read_run`, `stop_run`, over its API (`http://127.0.0.1:8768`). The
-  scripts and flows (with what each does and takes) are fetched as the app opens, every five
-  minutes, and on `POST /api/tools`, and put in the model's instructions. Every run puts a card on
-  the Mac and waits for the user's click on Run. Runs are streamed, so each can be **cancelled**
-  at any point: while the card waits (the card is taken away and nothing runs) or while it runs
-  (it's stopped). The routes it lists (`GET /api/endpoints`) are fetched with them.
-- **Notes**: `library` (an `op`, with `name`, `text`, `q`, `to`…) is Tool Mac Tool Run's file
-  library (`POST /api/library`), which answers at once, with no card: this app keeps no library of
-  its own. An older Tool Mac Tool Run without it: the notes script (`utilities/library.py`).
-- **Remembering the user's world**: Tool Mac Tool Run's MEMORY (a file for each kind of thing:
-  PEOPLE, ORGANIZATIONS, EVENT-DATES, BIRTHDAYS, LOCATIONS, IDEAS, LEVERAGE, STRATEGIES, OTHERS) and
-  its mind (what links to what), all answered at once. `remember` (`category`, `about`, `text`,
-  `links`, `notes` such as `"birthday 03-14"`), `recall` (`name`), `memory` (`upcoming`,
-  `members`, and its files as for the library), `mind` (`about`, `find`, `path`, `neighbors`,
-  `query` in its notation, `add` a link, `note`…; compacting is the person's). The model is told to
-  recall before it answers about a person, place, organization, plan or date, and to write only
-  what the user said. With every request, what the mind already has on what's being said
-  (`POST /api/mind/context`) goes in with the model's instructions, and the next week's dates
-  (`upcoming`) are fetched with the scripts.
-- **Showing and Chrome's page**: `show` (a window in front of everything, with copy buttons:
-  your text, a file, or a node of the mind), `copy` (to the clipboard), `chrome_page` (`url`,
-  `tabs`, `page`, `has`, `find`, `highlight`, `outline`: reads Chrome's page to guide the user
-  through a site; it never clicks, opens or searches; the model is told to ask Google, with
-  `browser/google`, for what no script does).
-- **A call that misses** is never left to guesswork, whatever the tool: an op a tool doesn't have
-  that is a script's name (`chrome_page` asked to `google`: `browser/google.sh`) runs that script
-  with the words given (asking on the Mac, as every run does); any other tool, op or route that
-  isn't there comes back with what Tool Mac Tool Run's search has for the call's words, each with
-  how to call it.
-- Each of these is offered only when Tool Mac Tool Run lists its group and has it switched on.
-- **Every other route** Tool Mac Tool Run lists (Straw, automation, system docs, and whatever it
-  adds later) is reached with `call_api` (`method`, `path`, `body`, `why`), only under `/api/` on
-  that server; one marked as asking on the Mac waits for the click there.
+- **Tool Mac Tool Run's tools, as it lists them**: every tool but the schedule is Tool Mac Tool
+  Run's (`http://127.0.0.1:8768`). Its `GET /api/tools` says what they are (each one's name, what
+  it's for, its arguments, whether it waits for Run on the Mac) with its own advice on using them
+  and examples of them at work, and all of it goes into the model's instructions as given; each
+  call is passed to `POST /api/tools/{name}` as the model made it, and its answer comes back to the
+  model (without what's only for programs, such as request ids). This app knows no tool, route or
+  op of Tool Mac Tool Run's, so what it adds or changes is there the day it ships. Today that's
+  `find`, `run_script`, `run_flow`, `run_flow_code`, `check_flow`, `runs`, `web_search`,
+  `web_fetch` (the web, read from the Mac, at once), `browser` (the user's Chrome: open a page,
+  read it, find and ring things), `straw` (click and type in Chrome), `library`, `remember`,
+  `recall`, `memory`, `mind`, `show`, `copy`, `docs` and `call_api`. The list, the scripts and the
+  flows are fetched as the app opens, every five minutes, and on `POST /api/tools`.
+- **Runs, and cancelling**: a tool that waits for Run on the Mac is streamed, so it can be
+  **cancelled** at any point: while the card waits (the card is taken away and nothing runs) or
+  while it runs (it's stopped).
+- **A call that misses** is never left to guesswork: Tool Mac Tool Run takes the names a model
+  reaches for (another name for a tool or an argument, a script's own name), and when there's
+  still no such tool, or an argument is missing, its answer says what the tool takes and what fits
+  instead, and that goes back to the model with the critic's note.
+- **With every request**: what fits it, from Tool Mac Tool Run's search (`GET /api/search`: tools,
+  scripts and flows, each a line), and what the mind already has on what's being said
+  (`POST /api/mind/context`), go in with the model's instructions; the next week's dates (the
+  `memory` tool's `upcoming`) are fetched with the tools.
+- **An older Tool Mac Tool Run**, without `/api/tools`, is said plainly (update it): the model then
+  has the schedule alone.
 - **Its own tools**: only the schedule: `schedule` (`in_minutes`, or `at`: a local date and time
   such as `"2026-10-24 17:30"`, `"17:30"`, `"tomorrow 9:00"`, `"friday 8:00"`), `list_schedules`,
   `cancel_schedule` (an id, or `"all"`).
-- **What it learns is kept in Tool Mac Tool Run**: its playbook (which scripts and arguments work
-  for what, how the user likes things done, its mistakes) is the library note `Super Face playbook`,
+- **What it learns is kept in Tool Mac Tool Run**, written and read with its own tools: its
+  playbook (which tools, sites and arguments work for what, how the user likes things done, its mistakes) is the library note `Super Face playbook`,
   added to with `library` (`append`; `write` to drop a line); the user's standing instructions are
   the note `Super Face instructions`; what it learns about the user themselves goes to MEMORY with
   `remember` (`PEOPLE`, about `the user`, `notes: ["pref …"]`). All three are read for its prompt

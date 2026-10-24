@@ -8,9 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { calls, isSilent, looksBroken, sayable, words } from './calls.mjs';
 import { PLAYBOOK, THE_USER } from './notes.mjs';
-import { NOTE, ALL_TOOLS, toolsFor, canonical, claimsInability, promisesWork, systemPrompt, toolResult, userMessage } from './prompt.mjs';
+import { NOTE, LOCAL_TOOLS, canonical, claimsInability, promisesWork, systemPrompt, toolResult, userMessage } from './prompt.mjs';
 import * as scheduleTools from './scheduler.mjs';
-import { TOOL_NAMES as RUN_TOOLS, coveredGroups } from './toolrun.mjs';
 
 const MAX_ROUNDS = 10; // tool calls for one request
 const KEEP_LOG = 300; // chat entries kept
@@ -293,25 +292,25 @@ export class Assistant {
     turn.calls++;
     const args = call.arguments && typeof call.arguments === 'object' ? call.arguments : {};
     const entry = this.add({ kind: 'tool', name: call.name, args, state: 'working', startedAt: this.now(), output: '' });
-    const log = this.trace?.open({ kind: 'tool', name: call.name, args, state: 'working', where: ALL_TOOLS.find((t) => t.name === call.name)?.where || 'unknown' });
+    const log = this.trace?.open({ kind: 'tool', name: call.name, args, state: 'working', where: call.where });
     turn.toolEntry = entry;
     this.emitState();
     let text;
     let failed = false;
     try {
-      if (call.unknown) {
-        text = NOTE.unknownTool(call.name, this.toolrun.catalog);
-        failed = true;
-      } else if (scheduleTools.TOOLS.some((t) => t.name === call.name)) {
+      if (call.where === 'local') {
         text = scheduleTools.runTool(this.scheduler, call.name, args, this.now());
         failed = /^(I couldn't|Say |That time|There are already|Nothing scheduled has)/.test(text);
-      } else if (RUN_TOOLS.includes(call.name)) {
+      } else if (!this.toolrun.catalog.tools.length) {
+        text = `${NOTE.unknownTool(call.name, this.toolrun.catalog)} (Tool Mac Tool Run isn't available: ${this.toolrun.catalog.error || 'not reached'}.)`;
+        failed = true;
+      } else {
         turn.toolRunning = true;
         this.emitState();
         // A card left unclicked is said once; a long run needs no words (the busy tone says it's working).
         let reminder = null;
         try {
-          text = await this.toolrun.run(call.name, args, {
+          ({ text, failed } = await this.toolrun.run(call.name, args, {
             signal: turn.ctrl.signal,
             log,
             onStatus: (s) => {
@@ -325,43 +324,23 @@ export class Assistant {
               this.update(entry, patch);
               this.emitState();
             },
-          });
+          }));
         } finally {
           clearTimeout(reminder);
           turn.toolRunning = false;
         }
-        if (text === null) text = NOTE.unknownTool(call.name, this.toolrun.catalog);
-        failed = isFailure(text);
-      } else {
-        text = NOTE.unknownTool(call.name, this.toolrun.catalog);
-        failed = true;
       }
     } catch (err) {
       text = `It didn't work: ${err.message || err}`;
       failed = true;
     }
     const cancelled = turn.ctrl.signal.aborted;
-    // A call that missed (a tool, an op or a route there isn't, or asking a reader to act): what
-    // Tool Mac Tool Run has for its words, so the model is shown the way rather than guessing again.
-    if (failed && !cancelled && MISSED.test(text)) text += await this.alternatives(call, turn.ctrl.signal);
     if (failed && !cancelled) turn.failures++;
     this.update(entry, { state: cancelled ? 'cancelled' : failed ? 'failed' : 'done', result: text, endedAt: this.now() });
     this.trace?.change(log, { state: cancelled ? 'cancelled' : failed ? 'failed' : 'done', result: text, ms: this.now() - entry.startedAt }, { final: true });
     turn.toolEntry = null;
     this.emitState();
     return { text, failed, cancelled };
-  }
-
-  /** What Tool Mac Tool Run has for the words of a call that missed: a few lines to append, or ''. */
-  async alternatives(call, signal) {
-    const a = call.arguments && typeof call.arguments === 'object' ? call.arguments : {};
-    const words = [call.unknown ? call.name : '', a.op, a.action, a.text, a.q, a.query, a.url, a.path, a.name]
-      .filter((w) => typeof w === 'string' && w.trim())
-      .map((w) => w.replace(/[_/{}]+/g, ' ').replace(/\bapi\b/gi, '').trim())
-      .join(' ')
-      .slice(0, 200);
-    const lines = await this.toolrun.suggest(words, { signal });
-    return lines.length ? `\n\nWhat Tool Mac Tool Run has for "${words}" (call one of these instead, as it says):\n${lines.map((l) => `- ${l}`).join('\n')}` : '';
   }
 
   /** Cancels one tool (from its card in the chat): the request carries on with "cancelled" as its result. */
@@ -388,7 +367,7 @@ export class Assistant {
         const what = learning(call);
         if (!what) continue; // only its playbook, and notes on the user, are written here
         const result = await this.toolrun.run(call.name, call.arguments, { signal: ctrl.signal });
-        if (result && !isFailure(result)) {
+        if (!result.failed) {
           learned = true;
           this.add({ kind: 'note', text: what });
         }
@@ -485,14 +464,12 @@ export class Assistant {
     this.saveTimer.unref?.();
   }
 
-  /** The tools there are, for the chat's list: built in, and the user's scripts and flows. */
+  /** The tools there are, for the chat's list: built in, Tool Mac Tool Run's, and the user's scripts and flows. */
   tools() {
     const c = this.toolrun.catalog;
     return {
-      builtin: ALL_TOOLS.filter((t) => t.where === 'local').map((t) => ({ name: t.name, description: t.description, args: (t.args || []).map(([n, d]) => ({ name: n, about: d })) })),
-      mac: toolsFor(c).filter((t) => t.where === 'mac').map((t) => ({ name: t.name, description: t.description })),
-      groups: c.groups,
-      covered: coveredGroups(c),
+      builtin: LOCAL_TOOLS.map((t) => ({ name: t.name, description: t.description, args: (t.args || []).map(([n, d]) => ({ name: n, about: d })) })),
+      mac: c.tools.map((t) => ({ name: t.name, description: t.description, asks: t.asks, args: t.args.map((a) => ({ name: a.name, about: a.about })) })),
       scripts: c.scripts,
       flows: c.flows,
       reachable: c.reachable && !c.error,
@@ -501,14 +478,6 @@ export class Assistant {
       fetched: c.fetched,
     };
   }
-}
-
-/** A tool's answer means it didn't work. */
-/** A call that missed what's there: no such tool, op or route, or a reader asked to act. */
-const MISSED = /^There's no (tool called|[\w-]+ op called)|^chrome_page only reads|That route isn't one listed/m;
-
-export function isFailure(text) {
-  return /^[^\n]*: (failed|could_not_start|stopped)\b|^It didn't (run|work)|isn't answering|^Tool Mac Tool Run said|^The (Flow|Straw) code has a mistake|^There's no tool|^There's no [\w-]+ op called|^chrome_page only reads|^(Say|Give) (which|what|whose|the)\b|^call_api (only|is for)|^The method is|^body must be|wants its token|^No script|has no scripts folder|turned off in Tool Mac Tool Run/m.test(String(text));
 }
 
 /** What the chat shows of the model's words: [tags] taken out (emojis stay). */

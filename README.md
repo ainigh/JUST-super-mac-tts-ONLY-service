@@ -43,9 +43,11 @@ Run script), and no wake word.
   about with every request, and knows what's coming up this week. It can show you something in a
   window with copy buttons, copy to your clipboard, and read the page in Chrome to guide you
   through a site.
-- **Learning**: it keeps short notes of its own on how to work with you, which scripts work for
-  what, and its mistakes, reads them every time, and you can read and delete them (and give it
-  standing instructions) in the chat's **Mind** tab.
+- **Learning**: it keeps nothing of its own. What it learns about getting things done for you (which
+  scripts work for what, how you like things, its mistakes) is a note in Tool Mac Tool Run's library,
+  **Super Face playbook**; what it learns about you is MEMORY's, as notes on **the user**; your standing
+  instructions are the note **Super Face instructions**. It reads all three before every request; you
+  can read and change them in Tool Mac Tool Run, or in the chat's **Mind** tab.
 - **The chat**: click the character. What you both said, each tool at work (waiting for your click,
   running, what it printed, Cancel), every tool there is (fetched from Tool Mac Tool Run as it
   opens), what's scheduled, its memory and model, the **Model** log (every request to the model,

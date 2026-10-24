@@ -59,7 +59,7 @@ function renderStatus() {
   const busy = status.assistant.busy;
   $('stop').hidden = !busy && !status.speaking;
   $('stop').title = busy ? "Stop: cancels what I'm doing (a run waiting for your click, or running, too)" : 'Stop talking';
-  $('toolCount').textContent = status.tools.reachable ? String(status.tools.scripts + status.tools.flows + 5) : '5';
+  $('toolCount').textContent = status.tools.reachable ? String(status.tools.scripts + status.tools.flows + 3) : '3';
   $('laterCount').textContent = status.schedules ? String(status.schedules) : '';
   $('listenWhileSpeaking').checked = status.listenWhileSpeaking;
   $('busyTone').checked = status.busyTone !== false;
@@ -139,10 +139,6 @@ function toolLabel(e) {
       return 'Cancelling a schedule';
     case 'list_schedules':
       return "What's scheduled";
-    case 'learn':
-      return 'Taking a note';
-    case 'unlearn':
-      return 'Crossing out a note';
     case 'remember':
       return a.about ? `Remembering ${a.about}` : 'Remembering';
     case 'recall':

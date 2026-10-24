@@ -2,7 +2,8 @@
 // HeadTTS makes the voice (Kokoro, in the page: WebGPU, else WASM), with the timing of every word
 // and viseme, so the lips follow the words exactly. Each sentence gets a mood, an expression, a
 // gesture and a head movement: what was asked, the cues written in the text, and what the director
-// reads in the sentences themselves (no model). The ears (ears.mjs) listen here too. The main process sends commands (speak, stop,
+// reads in the sentences themselves (no model). While the assistant works it out, it turns away and
+// looks busy, and faces the user again the moment they talk or it speaks. The ears (ears.mjs) listen here too. The main process sends commands (speak, stop,
 // express, tts, ears, settings) and is told how it goes; a click on the character opens the chat.
 
 import { TalkingHead } from 'talkinghead';
@@ -108,6 +109,7 @@ function createHead() {
 let avatarLoaded = Promise.resolve(); // settles once the avatar being loaded is in (or isn't)
 
 async function loadAvatar() {
+  if (busy.on) endBusy();
   let done;
   avatarLoaded = new Promise((r) => (done = r));
   avatarState = 'loading';
@@ -264,6 +266,120 @@ function show(d, seconds = 3) {
   else if (d.look === 'away') head.lookAhead(3500);
 }
 
+// ---------------------------------------------------------------- busy: while it works it out
+
+// While the assistant thinks or a tool runs, and nothing is being said, the character turns away
+// from the user and gets on with it: heads down, a look up, a frown of thought, a hand counting
+// things off, now and then turning to the other side. The moment the user talks, or it has
+// something to say, it turns back and faces them.
+
+const BUSY_TURN = 0.7; // radians: well turned away, the face still in view
+const BUSY_AFTER = 700; // ms of working before it turns away (a quick answer doesn't)
+const busy = { wanted: false, hearing: false, on: false, side: 1, eye: null, timers: [], startTimer: 0, turn: 0 };
+
+/** Turns the whole body to `angle` (radians about the vertical) over `ms`, eased. */
+function turnTo(angle, ms) {
+  cancelAnimationFrame(busy.turn);
+  const body = head?.armature;
+  if (!body) return;
+  const from = body.rotation.y;
+  if (!ms || Math.abs(from - angle) < 0.001) {
+    body.rotation.y = angle;
+    return;
+  }
+  const start = performance.now();
+  const step = (now) => {
+    const k = Math.min(1, (now - start) / ms);
+    const ease = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+    body.rotation.y = from + (angle - from) * ease;
+    if (k < 1) busy.turn = requestAnimationFrame(step);
+  };
+  busy.turn = requestAnimationFrame(step);
+}
+
+const later = (ms, fn) => busy.timers.push(setTimeout(fn, ms));
+const between = (a, b) => a + Math.random() * (b - a);
+
+/** What it does next while it works, weighted; never the same twice running. */
+const BEATS = [
+  [3, 'down', () => head.lookAt(null, innerHeight * 1.6, 3200)], // heads down, reading
+  [2, 'up', () => (head.lookAt(null, -innerHeight * 0.4, 2200), playExpression('thinking', 2.2))], // a look up, thinking
+  [2, 'aside', () => head.lookAhead(2600)],
+  [2, 'serious', () => playExpression(Math.random() < 0.5 ? 'thinking' : 'pensive', 2.5)],
+  [1, 'count', () => head.playGesture('index', 1.8, busy.side < 0)], // counting things off
+  [1, 'nod', () => (head.lookAt(null, innerHeight * 1.4, 1800), head.playGesture('yes'))], // that checks out
+  [1, 'pose', () => head.playPose(Math.random() < 0.5 ? 'hip' : 'side', null, 5)],
+];
+let lastBeat = '';
+
+function beat() {
+  if (!busy.on) return;
+  const choices = BEATS.filter(([, name]) => name !== lastBeat);
+  let r = Math.random() * choices.reduce((n, [w]) => n + w, 0);
+  const [, name, act] = choices.find(([w]) => (r -= w) < 0) || choices[0];
+  lastBeat = name;
+  try {
+    act();
+  } catch (err) {
+    console.warn('A busy beat failed:', err);
+  }
+  later(between(2200, 4200), beat);
+}
+
+/** Now and then it turns to the other side, as someone busy shifts about. */
+function swapSides() {
+  if (!busy.on) return;
+  busy.side = -busy.side;
+  head.lookAhead(1600);
+  turnTo(busy.side * BUSY_TURN * between(0.8, 1.1), 1600);
+  later(between(8000, 13000), swapSides);
+}
+
+function startBusy() {
+  busy.on = true;
+  busy.side = -busy.side; // not always the same way round
+  busy.eye = head.opt.avatarIdleEyeContact;
+  head.opt.avatarIdleEyeContact = 0; // it isn't looking at the user now
+  turnTo(busy.side * BUSY_TURN, 1100);
+  head.lookAt(null, innerHeight * 1.5, 2500);
+  later(900, beat);
+  later(between(8000, 12000), swapSides);
+}
+
+/** Back to the user: quickly when they've started talking. */
+function endBusy() {
+  busy.on = false;
+  busy.timers.forEach(clearTimeout);
+  busy.timers = [];
+  if (busy.eye !== null) head.opt.avatarIdleEyeContact = busy.eye;
+  busy.eye = null;
+  if (!head?.armature) return;
+  try {
+    head.stopGesture(400);
+  } catch {
+    /* none playing */
+  }
+  turnTo(0, busy.hearing ? 450 : 700);
+  head.lookAtCamera(busy.hearing ? 2500 : 1800);
+}
+
+/** Busy only while it works, nobody is talking, and nothing is being said. */
+const shouldBeBusy = () => busy.wanted && !busy.hearing && !inFlight.size && !queue.length && avatarState === 'ready' && !!head;
+
+function updateBusy() {
+  const should = shouldBeBusy();
+  if (should && !busy.on) {
+    busy.startTimer ||= setTimeout(() => {
+      busy.startTimer = 0;
+      if (shouldBeBusy() && !busy.on) startBusy();
+    }, BUSY_AFTER);
+    return;
+  }
+  clearTimeout(busy.startTimer);
+  busy.startTimer = 0;
+  if (!should && busy.on) endBusy();
+}
+
 // ---------------------------------------------------------------- speaking
 
 const queue = []; // utterances not started
@@ -275,6 +391,7 @@ let pumping = false;
 
 function speak(u) {
   queue.push(u);
+  updateBusy(); // something to say: it faces the user to say it
   pump();
 }
 
@@ -382,6 +499,7 @@ async function perform(u, gen) {
     }
     caption(document.getElementById('caption').textContent, 2500);
     bridge.event({ type: 'ended', id: u.id });
+    updateBusy(); // said, and still working: back to it
   });
 }
 
@@ -402,6 +520,7 @@ function stop(ids) {
   queue.unshift(...again);
   caption('');
   if (!queue.length) head.setMood(cfg.mood);
+  updateBusy();
   pump();
 }
 
@@ -460,10 +579,12 @@ const COMMANDS = {
   },
   /** What the assistant is doing, on the face: thinking while it works out an answer. */
   attend: async ({ state }) => {
-    await readyNow;
+    await avatarLoaded; // the voice may still be downloading: the body needn't wait for it
     if (avatarState !== 'ready') return;
-    if (state === 'thinking' && !inFlight.size) playExpression('thinking', 2.5);
+    busy.wanted = state === 'thinking' || state === 'tool';
+    if (state === 'thinking' && !inFlight.size && !busy.on) playExpression('thinking', 2.5);
     if (state === 'listening') head.lookAtCamera(1500);
+    updateBusy();
   },
   settings: async (patch) => {
     const before = cfg;
@@ -528,8 +649,10 @@ const ears = new Ears({
   onState: (state) => {
     bridge.event({ type: 'ears', state });
     document.body.dataset.ears = state.state;
-    // Someone's talking: it looks at them.
-    if (state.state === 'hearing' && avatarState === 'ready' && !inFlight.size) head.lookAtCamera(2000);
+    // Someone's talking: it stops what it's doing, turns, and looks at them.
+    busy.hearing = state.state === 'hearing';
+    updateBusy();
+    if (busy.hearing && avatarState === 'ready' && !inFlight.size) head.lookAtCamera(2000);
   },
   onHeard: (p) => bridge.event({ type: 'heard', ...p }),
 });

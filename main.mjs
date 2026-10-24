@@ -99,7 +99,8 @@ core.subscribe((ev) => {
   chat?.webContents.send('ui:event', ev);
   if (ev.type === 'assistant') {
     const phase = ev.state.phase;
-    if (phase === 'thinking' && lastPhase !== 'thinking') send('attend', { state: 'thinking' });
+    // The character looks busy while it thinks or a tool runs, and itself again after.
+    if (phase !== lastPhase) send('attend', { state: phase });
     lastPhase = phase;
   }
 });

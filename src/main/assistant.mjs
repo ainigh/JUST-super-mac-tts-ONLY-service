@@ -211,9 +211,13 @@ export class Assistant {
 
   /** The model's answer, streamed: its words are said sentence by sentence as they come. */
   async answer(turn) {
-    // What the mind has on what's being said, once a request: given to the model with its instructions.
-    turn.context ??= await this.toolrun.context(this.recent(), { signal: turn.ctrl.signal });
-    const system = systemPrompt({ character: this.character(), catalog: this.toolrun.catalog, memory: this.memory, context: turn.context, now: this.now() });
+    // Once a request, both at once: what the mind has on what's being said, and the scripts and
+    // routes that fit it (the rest are only named), given to the model with its instructions.
+    if (!turn.context) {
+      const asked = turn.batch.map((b) => b.text).join('\n');
+      [turn.context, turn.matches] = await Promise.all([this.toolrun.context(this.recent(), { signal: turn.ctrl.signal }), this.toolrun.matches(asked, { signal: turn.ctrl.signal })]);
+    }
+    const system = systemPrompt({ character: this.character(), catalog: this.toolrun.catalog, memory: this.memory, context: turn.context, matches: turn.matches, now: this.now() });
     const messages = [{ role: 'system', content: system }, ...this.history];
     const out = { text: '', spokenTo: 0, entry: null, spokenAny: false };
     const flush = (final) => {

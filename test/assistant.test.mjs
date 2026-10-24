@@ -15,9 +15,9 @@ import { CHARACTERS } from '../src/shared/characters.mjs';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** A stand-in for Tool Mac Tool Run. */
-async function fakeToolRun() {
-  const seen = { closedWhileWaiting: 0, stopped: [], runs: [] };
+/** A stand-in for Tool Mac Tool Run; with `search`, one that finds things by a few words (GET /api/search). */
+async function fakeToolRun({ search = false } = {}) {
+  const seen = { closedWhileWaiting: 0, stopped: [], runs: [], searches: [] };
   const server = http.createServer(async (req, res) => {
     let body = '';
     for await (const c of req) body += c;
@@ -41,7 +41,7 @@ async function fakeToolRun() {
       const route = (method, path, summary, asks = false) => ({ method, path, summary, asks_on_the_mac: asks });
       return json(200, {
         groups: [
-          { id: 'about', title: 'About the API', about: '', routes: [route('GET', '/api/health', 'is it up')] },
+          { id: 'about', title: 'About the API', about: '', routes: [route('GET', '/api/health', 'is it up'), ...(search ? [route('GET', '/api/search', 'find by a few words')] : [])] },
           { id: 'scripts', title: 'Scripts and flows', about: '', routes: [route('POST', '/api/run', 'run a script', true)] },
           { id: 'library', title: 'File library', about: 'The notes', switch: 'library', on: true, routes: [route('POST', '/api/library', 'any operation')] },
           { id: 'straw', title: 'Straw', about: 'Chrome', routes: [route('GET', '/api/straw', "Straw's words"), route('POST', '/api/straw/run', 'run Straw code', true)] },
@@ -54,6 +54,16 @@ async function fakeToolRun() {
           { id: 'runs', title: 'Runs and requests', about: '', switch: 'runs', on: true, routes: [route('GET', '/api/runs', 'the latest runs')] },
         ],
       });
+    }
+    if (url.pathname === '/api/search' && search) {
+      seen.searches.push(Object.fromEntries(url.searchParams));
+      const q = url.searchParams.get('q');
+      const results = [];
+      if (/weather|rain/i.test(q)) results.push({ kind: 'script', name: 'utilities/weather.py', summary: 'The weather', inputs: [], run: { method: 'POST', path: '/api/run', body: { script: 'utilities/weather.py' } } });
+      if (/remember|birthday/i.test(q)) results.push({ kind: 'route', method: 'POST', path: '/api/memory/remember', summary: 'remember', group: 'memory', asks_on_the_mac: false });
+      if (/straw|chrome/i.test(q)) results.push({ kind: 'route', method: 'POST', path: '/api/straw/run', summary: 'run Straw code', group: 'straw', asks_on_the_mac: true });
+      if (/route|api/i.test(q)) results.push({ kind: 'route', method: 'GET', path: '/api/search', summary: 'find', group: 'about' });
+      return json(200, { ok: true, q, count: results.length, results, next: [{ method: 'GET', path: '/api/endpoints?brief=true', why: 'the groups' }] });
     }
     if (url.pathname === '/api/library') {
       seen.library = b;
@@ -214,6 +224,41 @@ test('the routes are fetched too: the library is a tool of its own, the rest (wh
   }
 });
 
+test('where Tool Mac Tool Run searches, the scripts are only named, what fits the request is described, and find finds the rest', async () => {
+  const fake = await fakeToolRun({ search: true });
+  try {
+    const t = new ToolRun({ url: () => fake.url });
+    const c = await t.refresh();
+    const p = systemPrompt({ character: CHARACTERS[0], catalog: c, memory: new Memory() });
+    assert.match(p, /^- find: /m);
+    assert.doesNotMatch(p, /^- list_scripts: /m, 'find does it better');
+    assert.match(p, /^utilities\/: weather$/m, 'a script by its name alone');
+    assert.match(p, /^hello, slow, long, nope$/m);
+    assert.doesNotMatch(p, /Says hello/, 'what a script does is for find, and for the scripts that fit');
+    assert.doesNotMatch(p, /\/api\/calendar\/today/, 'nor is every route listed');
+    assert.match(p, /^Tool Mac Tool Run also has \(find gives their routes, for call_api\): Straw; Chrome's page \(turned off right now\); Calendar\.$/m);
+    // What fits what was just said: at the end of the instructions, with what it does and takes.
+    const fits = await t.matches('will it rain in Leeds? and remember it');
+    assert.deepEqual(fits, ['script utilities/weather.py: The weather'], 'a route a tool covers is left out');
+    assert.equal(fake.seen.searches.at(-1).next, 'false');
+    const withFits = systemPrompt({ character: CHARACTERS[0], catalog: c, memory: new Memory(), matches: fits });
+    assert.match(withFits, /^What fits what was just said[^\n]*\n- script utilities\/weather\.py: The weather\n/m);
+    // find, as a tool: each thing as it's called; a route a tool covers says which.
+    assert.equal(await t.run('find', { q: 'birthday or straw' }), 'route POST /api/memory/remember: remember (the remember tool does this)\nroute POST /api/straw/run: run Straw code [asks on the Mac]');
+    assert.equal(fake.seen.searches.at(-1).limit, '8');
+    assert.match(await t.run('find', { q: 'nothing like it' }), /^Nothing matched "nothing like it"/);
+    assert.match(await t.run('find', {}), /^Say what to look for/);
+    assert.equal(canonical({ name: 'search', arguments: { q: 'x' } }, c).name, 'find');
+    // A script named as the prompt names it (no extension) runs as itself.
+    assert.match(await t.run('run_script', { script: 'utilities/weather', why: 'rain?' }), /Leeds: 12°C/);
+    assert.equal(fake.seen.runs.at(-1).script, 'utilities/weather.py');
+    // A route that isn't one: found, rather than picked from a list there isn't.
+    assert.match(await t.run('call_api', { path: '/api/nowhere' }), /find the right one by a few words/);
+  } finally {
+    fake.close();
+  }
+});
+
 test('library: one op, answered at once; call_api: a listed route, never another server', async () => {
   const fake = await fakeToolRun();
   try {
@@ -280,6 +325,23 @@ test('what the mind has on what is being said is given to the model with its ins
     assert.match(fake.seen.context[0].text, /what should I get Ada\?/);
     assert.equal(a.log.find((e) => e.kind === 'tool').state, 'done');
     assert.equal(a.log.at(-1).text, 'Ada likes gardening.');
+  } finally {
+    fake.close();
+  }
+});
+
+test('what fits the request is searched for once a request, beside the mind, and described to the model', async () => {
+  const fake = await fakeToolRun({ search: true });
+  try {
+    const { a, model, idle, toolrun } = await setup(['{"tool": "run_script", "arguments": {"script": "utilities/weather", "why": "rain?"}}', 'Yes, rain in Leeds.'], fake);
+    await toolrun.refresh();
+    a.say('will it rain today?');
+    await idle();
+    assert.match(model.asked[0][0].content, /^What fits what was just said[^\n]*\n- script utilities\/weather\.py: The weather$/m);
+    assert.equal(fake.seen.searches.length, 1, 'searched once, not every round');
+    assert.equal(fake.seen.searches[0].q, 'will it rain today?');
+    assert.equal(fake.seen.runs[0].script, 'utilities/weather.py');
+    assert.equal(a.log.at(-1).text, 'Yes, rain in Leeds.');
   } finally {
     fake.close();
   }

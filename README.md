@@ -58,7 +58,9 @@ Run script), and no wake word.
   follow the words. What it shows is read from the sentences themselves, not asked of the model:
   each is read for what kind it is (hello, thanks, sorry, good or bad news, a question, an offer,
   an instruction, not knowing, a "but"…), and the face, hands, head and eyes follow, some at the
-  very word (`src/shared/director.mjs`).
+  very word (`src/shared/director.mjs`). While it works something out, it turns away and gets busy (heads
+  down, a look up, a frown of thought, a hand counting things off, turning to the other side now and then);
+  the moment you talk, or it has something to say, it turns back and faces you.
 - **API**: [API.md](API.md), at `http://127.0.0.1:8769`: speak, stop, express, audio alone, the
   echo check, and the assistant (chat, cancel, tools, schedules, memory), with live events.
 

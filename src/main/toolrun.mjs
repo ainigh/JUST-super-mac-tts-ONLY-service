@@ -401,7 +401,7 @@ export class ToolRun {
           return `Nothing matched "${q}". Try other words, or fewer of them.${findScript('browser/google', this.catalog) ? ' For something the web answers, run browser/google with the question.' : ''}`;
         }
         case 'library':
-          return await this.library(args, { signal, log });
+          return await this.library(args, { signal, log, onStatus });
         case 'remember':
           return await this.answer('POST', '/api/memory', rememberBody(args), { signal, log });
         case 'recall': {
@@ -410,9 +410,9 @@ export class ToolRun {
           return await this.answer('POST', '/api/memory', { op: 'recall', name: n }, { signal, log });
         }
         case 'memory':
-          return await this.opOn('/api/memory', 'memory', MEMORY_OPS, args, { signal, log });
+          return await this.opOn('/api/memory', 'memory', MEMORY_OPS, args, { signal, log, onStatus });
         case 'mind':
-          return await this.opOn('/api/mind', 'mind', MIND_OPS, mindArgs(args), { signal, log });
+          return await this.opOn('/api/mind', 'mind', MIND_OPS, mindArgs(args), { signal, log, onStatus });
         case 'show': {
           const body = pick(args, ['title', 'text', 'format', 'shelf', 'name', 'mind', 'why', 'copy']);
           if (typeof body.text !== 'string' && !body.mind && body.mind !== '' && !(body.shelf && body.name)) return 'Give the text to show (or a shelf and name, or a node of the mind).';
@@ -426,7 +426,7 @@ export class ToolRun {
           return await this.answer('POST', '/api/clipboard', body, { signal, log });
         }
         case 'chrome_page':
-          return await this.browser(args, { signal, log });
+          return await this.browser(args, { signal, log, onStatus });
         case 'call_api':
           return await this.callApi(args, { signal, log, onStatus });
       }
@@ -438,11 +438,11 @@ export class ToolRun {
   }
 
   /** The file library: one operation, answered at once (nothing is asked on the Mac). */
-  async library(args, { signal, log }) {
+  async library(args, { signal, log, onStatus }) {
     const { op: rawOp, ...rest } = args || {};
     const op = str(rawOp)?.toLowerCase().replace(/[\s-]+/g, '_');
     if (!op) return `Say which op: ${LIBRARY_OPS.join(', ')}.`;
-    if (!LIBRARY_OPS.includes(op)) return `There's no library op called ${op}. The ops: ${LIBRARY_OPS.join(', ')}.`;
+    if (!LIBRARY_OPS.includes(op)) return (await this.byScript('library', op, wordsOf(rest), { signal, log, onStatus })) ?? `There's no library op called ${op}. The ops: ${LIBRARY_OPS.join(', ')}.`;
     const [status, json] = await this.call('POST', '/api/library', { op, ...rest }, { signal, log });
     if (status >= 200 && status < 300) {
       const { request: _, client: __, next: ___, ...answer } = json;
@@ -463,22 +463,26 @@ export class ToolRun {
   }
 
   /** One operation by name on an endpoint that takes {"op"} (MEMORY, the mind). */
-  async opOn(path, what, ops, args, { signal, log }) {
+  async opOn(path, what, ops, args, { signal, log, onStatus }) {
     const { op: rawOp, ...rest } = args || {};
     const op = str(rawOp)?.toLowerCase().replace(/[\s-]+/g, '_').replace(/^neighbours$/, 'neighbors');
     if (!op) return `Say which op: ${ops.join(', ')}.`;
-    if (!ops.includes(op)) return `There's no ${what} op called ${op}. The ops: ${ops.join(', ')}.`;
+    if (!ops.includes(op)) return (await this.byScript(what, op, wordsOf(rest), { signal, log, onStatus })) ?? `There's no ${what} op called ${op}. The ops: ${ops.join(', ')}.`;
     return this.answer('POST', path, { op, ...rest }, { signal, log });
   }
 
   /** Chrome's page: reading it, never acting on it. */
-  async browser(args, { signal, log }) {
+  async browser(args, { signal, log, onStatus }) {
     const text = str(args.text ?? args.q ?? args.query ?? args.words ?? args.find ?? args.label ?? args.search);
     const said = str(args.op ?? args.what ?? args.action)?.toLowerCase().replace(/[\s-]+/g, '_');
     const op = said ? (BROWSER_ALIASES[said] ?? said) : text ? 'find' : 'url';
-    if (BROWSER_ACTS.test(op)) return `chrome_page only reads the page in front of Chrome: it can't ${said.replace(/_/g, ' ')}. To open a page or ask Google, run a browser/ script (browser/open-page, browser/google); on the page, tell the user what to do (find, then highlight, shows them where), then read it again.`;
+    if (!BROWSER_OPS.includes(op) && op !== 'status') {
+      const ran = await this.byScript('chrome_page', said, text ?? str(args.url ?? args.address), { signal, log, onStatus });
+      if (ran) return ran;
+    }
+    if (BROWSER_ACTS.test(op)) return `chrome_page only reads the page in front of Chrome: it can't ${said.replace(/_/g, ' ')}. On the page, tell the user what to do (find, then highlight, shows them where), then read it again.`;
     if (op === 'status') return this.answer('GET', '/api/browser', null, { signal, log });
-    if (!BROWSER_OPS.includes(op)) return `There's no chrome_page op called ${said}. The ops: ${BROWSER_OPS.join(', ')}. (To ask Google or open a page, run a browser/ script, such as browser/google.)`;
+    if (!BROWSER_OPS.includes(op)) return `There's no chrome_page op called ${said}. The ops: ${BROWSER_OPS.join(', ')}.`;
     if (['has', 'find', 'highlight'].includes(op) && !text) return `Say what to look for: text (for ${op}).`;
     if (op === 'highlight') return this.answer('POST', '/api/browser/highlight', { text, ...(args.seconds ? { seconds: Number(args.seconds) } : {}) }, { signal, log });
     const q = new URLSearchParams();
@@ -505,6 +509,31 @@ export class ToolRun {
     }
     this.trace?.change(log, { state: 'done', result: lines.length ? lines.join('\n') : '(nothing)', ms: Date.now() - started }, { final: true });
     return lines;
+  }
+
+  /**
+   * An op a tool doesn't have that is a script's name (chrome_page's "google": browser/google.sh;
+   * library's "weather": utilities/weather.py): the model meant the script, so it's run, with the
+   * words it gave, asking on the Mac as every run does. Null when no script has that name.
+   */
+  async byScript(tool, op, words, opts) {
+    if (!op) return null;
+    const script = findScript(op.replace(/_/g, '-'), this.catalog) || findScript(op, this.catalog);
+    if (!script) return null;
+    const out = await this.run('run_script', { script: script.name, args: words ? [words] : [], why: 'You asked for it' }, opts);
+    return `${tool} has no op called ${op}: that's the script ${script.name}, so it was run${words ? ` with "${words}"` : ''}.\n${out}`;
+  }
+
+  /** What Tool Mac Tool Run has for some words, a line each (as find gives them); [] for nothing, or no search. */
+  async suggest(words, { signal, limit = 5 } = {}) {
+    const q = String(words ?? '').trim();
+    if (!hasSearch(this.catalog) || !q) return [];
+    try {
+      const [status, json] = await this.call('GET', `/api/search?${searchQuery(q, null, limit)}`, null, { signal, timeout: 2000 });
+      return status >= 200 && status < 300 ? this.describe(json.results).slice(0, limit) : [];
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -811,6 +840,9 @@ function mindArgs(a) {
   if (out.op === 'add' && typeof out.notes === 'string') out.notes = [out.notes];
   return out;
 }
+
+/** The words a call carries (what to look for, a name, an address): what to run a script with, or search for. */
+const wordsOf = (a = {}) => str(a.text ?? a.q ?? a.query ?? a.words ?? a.url ?? a.name ?? a.about) ?? null;
 
 const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o?.[k] !== undefined && o[k] !== null).map((k) => [k, o[k]]));
 

@@ -67,6 +67,7 @@ async function fakeToolRun({ search = false } = {}) {
       if (/weather|rain/i.test(q)) results.push({ kind: 'script', name: 'utilities/weather.py', summary: 'The weather', inputs: [], run: { method: 'POST', path: '/api/run', body: { script: 'utilities/weather.py' } } });
       if (/remember|birthday/i.test(q)) results.push({ kind: 'route', method: 'POST', path: '/api/memory/remember', summary: 'remember', group: 'memory', asks_on_the_mac: false });
       if (/straw|chrome/i.test(q)) results.push({ kind: 'route', method: 'POST', path: '/api/straw/run', summary: 'run Straw code', group: 'straw', asks_on_the_mac: true });
+      if (/open|navigate/i.test(q)) results.push({ kind: 'script', name: 'browser/open-page.sh', summary: 'Opens a page in Chrome', inputs: [] });
       if (/route|api/i.test(q)) results.push({ kind: 'route', method: 'GET', path: '/api/search', summary: 'find', group: 'about' });
       const kinds = (url.searchParams.get('in') || 'routes,scripts,flows').split(',').map((k) => k.replace(/s$/, ''));
       const kept = results.filter((r) => kinds.includes(r.kind));
@@ -119,7 +120,7 @@ async function fakeToolRun({ search = false } = {}) {
     }
     if (url.pathname === '/api/run') {
       seen.runs.push(b);
-      if (!['hello.sh', 'utilities/weather.py', 'slow.sh', 'long.sh', 'nope.sh'].includes(b.script)) return json(404, { error: `no script called ${b.script}`, code: 'unknown_script' });
+      if (!['hello.sh', 'utilities/weather.py', 'slow.sh', 'long.sh', 'nope.sh', 'browser/google.sh', 'browser/open-page.sh'].includes(b.script)) return json(404, { error: `no script called ${b.script}`, code: 'unknown_script' });
       assert.equal(b.stream, true);
       assert.equal(b.client, 'Super Face');
       res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'X-Request-Id': 'REQ1' });
@@ -289,7 +290,7 @@ test("Chrome's page: the ops and words a model reaches for are taken as meant; a
     await t.run('chrome_page', {});
     assert.deepEqual(fake.seen.browser, ['GET /api/browser/page?max=6000', 'GET /api/browser/find?text=Compute', 'POST /api/browser/highlight', 'GET /api/browser', 'GET /api/browser/find?text=Compute', 'GET /api/browser/url']);
     assert.deepEqual(JSON.parse(await t.run('chrome_page', { op: 'url' })), { url: 'https://example.com' }, 'no request id, no "next"');
-    assert.match(await t.run('chrome_page', { op: 'click', text: 'Compute' }), /^chrome_page only reads the page in front of Chrome: it can't click\. To open a page or ask Google, run a browser\/ script/);
+    assert.match(await t.run('chrome_page', { op: 'click', text: 'Compute' }), /^chrome_page only reads the page in front of Chrome: it can't click\. On the page, tell the user what to do/);
     assert.match(await t.run('chrome_page', { op: 'go_to', text: 'example.com' }), /can't go to\./);
     assert.match(await t.run('chrome_page', { op: 'teleport' }), /^There's no chrome_page op called teleport\. The ops: url, tabs/);
     assert.match(await t.run('chrome_page', { op: 'find' }), /^Say what to look for/);
@@ -298,21 +299,43 @@ test("Chrome's page: the ops and words a model reaches for are taken as meant; a
   }
 });
 
-test("asking Chrome's page to google, open or go somewhere is the browser/ script that does it; the model is told to ask Google", async () => {
+test('a call that misses: an op that is a script\'s name runs that script; anything else is shown what Tool Mac Tool Run has for its words', async () => {
   const fake = await fakeToolRun({ search: true });
   try {
     const t = new ToolRun({ url: () => fake.url });
     const c = await t.refresh();
-    // What a model did: the page tool, asked to google.
-    assert.deepEqual(canonical({ name: 'browser', arguments: { op: 'google', text: 'Corinth weather' } }, c), { name: 'run_script', arguments: { script: 'browser/google.sh', args: ['Corinth weather'], why: 'You asked for it' } });
-    assert.deepEqual(canonical({ name: 'chrome_page', arguments: { op: 'navigate', url: 'example.com' } }, c).arguments.script, 'browser/open-page.sh');
-    assert.deepEqual(canonical({ name: 'chrome_page', arguments: { op: 'find', text: 'Compute' } }, c), { name: 'chrome_page', arguments: { op: 'find', text: 'Compute' } }, 'reading the page stays reading the page');
-    assert.equal(canonical({ name: 'chrome_page', arguments: { op: 'google', text: 'x' } }, { ...c, scripts: [] }).name, 'chrome_page', 'no google.sh in the folder: the page tool says what it can do');
+    // What a model did: the page tool, asked to google. Any tool, any op that's a script's name.
+    const out = await t.run('chrome_page', { op: 'google', text: 'Corinth weather' });
+    assert.match(out, /^chrome_page has no op called google: that's the script browser\/google\.sh, so it was run with "Corinth weather"\.\nbrowser\/google\.sh: succeeded/);
+    assert.deepEqual(fake.seen.runs.at(-1).args, ['Corinth weather']);
+    assert.match(await t.run('library', { op: 'weather', q: 'Leeds' }), /^library has no op called weather: that's the script utilities\/weather\.py/);
+    assert.match(await t.run('mind', { op: 'teleport' }), /^There's no mind op called teleport/, 'no script of that name: the error, as before');
+    // Reading the page stays reading the page.
+    await t.run('chrome_page', { op: 'find', text: 'Compute' });
+    assert.equal(fake.seen.browser.at(-1), 'GET /api/browser/find?text=Compute');
     const p = systemPrompt({ character: CHARACTERS[0], catalog: c });
     assert.match(p, /For anything the web can answer that no script does[^\n]*run browser\/google\.sh with the question/);
     // find, scoped to a kind with nothing in it: everything, said so; nothing at all: Google.
     assert.match(await t.run('find', { q: 'weather', in: 'flows' }), /^Nothing of that kind matched "weather"; these are everything that did:\nscript utilities\/weather\.py/);
     assert.match(await t.run('find', { q: 'Corinth', in: 'scripts' }), /^Nothing matched "Corinth"\. Try other words, or fewer of them\. For something the web answers, run browser\/google with the question\.$/);
+  } finally {
+    fake.close();
+  }
+});
+
+test('the model is shown what Tool Mac Tool Run has when its call misses (a tool, op or route that is not there)', async () => {
+  const fake = await fakeToolRun({ search: true });
+  try {
+    const { a, model, idle, toolrun } = await setup(['{"tool": "chrome_page", "arguments": {"op": "navigate", "url": "example.com"}}', 'Click Run on your Mac.', '{"tool": "fly_to_mars", "arguments": {}}', 'I cannot do that.'], fake);
+    await toolrun.refresh();
+    a.say('open example.com');
+    await idle();
+    const result = model.asked[1].at(-1).content;
+    assert.match(result, /chrome_page only reads the page in front of Chrome: it can't navigate\./);
+    assert.match(result, /What Tool Mac Tool Run has for "navigate example\.com" \(call one of these instead, as it says\):\n- script browser\/open-page\.sh: Opens a page in Chrome/);
+    a.say('fly me to mars');
+    await idle();
+    assert.doesNotMatch(model.asked[3].at(-1).content, /What Tool Mac Tool Run has/, 'nothing found: nothing added');
   } finally {
     fake.close();
   }

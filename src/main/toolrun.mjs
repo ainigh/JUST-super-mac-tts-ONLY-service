@@ -5,7 +5,9 @@
 // answers at once, without a card, has a tool each: the file library, MEMORY (remember, recall),
 // the mind (what links to what), showing and copying, and Chrome's page (read only). Each is
 // offered when Tool Mac Tool Run lists its group (GET /api/endpoints) and has it on; any other
-// route it lists is reached with call_api, so what it adds later is there the day it ships.
+// route it lists is reached with call_api, so what it adds later is there the day it ships. Where
+// it answers GET /api/search, the model isn't handed every script and route: it gets their names,
+// what fits the request at hand, and find for the rest.
 
 export const DEFAULT_URL = 'http://127.0.0.1:8768';
 export const CLIENT = 'Super Face';
@@ -21,157 +23,147 @@ const MIND_OPS = ['about', 'find', 'path', 'neighbors', 'query', 'edges', 'notes
 const BROWSER_OPS = ['url', 'tabs', 'page', 'has', 'find', 'highlight', 'outline'];
 export const MEMORY_FILES = ['PEOPLE', 'ORGANIZATIONS', 'EVENT-DATES', 'BIRTHDAYS', 'LOCATIONS', 'IDEAS', 'LEVERAGE', 'STRATEGIES', 'OTHERS'];
 
-/** The tools over Tool Mac Tool Run, as the model is told them. */
+/** The ops the model is told of (it may use any of the rest too; each answers with what it takes). */
+const LIBRARY_SAID = ['read', 'find', 'search', 'list', 'recent', 'append', 'write', 'create', 'rename', 'copy', 'delete', 'restore'];
+const MIND_SAID = ['about', 'find', 'query', 'path', 'neighbors', 'dates', 'add', 'note', 'rename', 'forget'];
+const more = (said, all) => `${said.join(', ')}${all.length > said.length ? '…' : ''}`;
+
+/** The tools over Tool Mac Tool Run, as the model is told them: short, since a small model reads them with every message. */
 export const TOOLS = [
   {
     name: 'run_script',
-    description:
-      "Runs one of the user's scripts (listed below by name). A card on their Mac asks them first: the call waits for their click on Run, then for the script, and comes back with how it went and what it printed (or that they didn't click Run, or cancelled it).",
+    description: "Runs one of the user's scripts (listed below). It waits for their click on Run on the Mac, then comes back with what it printed (or that they didn't click Run, or cancelled).",
     args: [
-      ['script', "string: its name, exactly as listed (e.g. utilities/weather.py)"],
-      ['args', 'list of strings, optional: its arguments, one per input it takes, in order'],
-      ['stdin', 'string, optional: text handed to it as input, for an input marked stdin'],
-      ['why', 'string: why the user wants this, in their words; shown on the card they click'],
+      ['script', 'string: its name, as listed (e.g. utilities/weather)'],
+      ['args', 'list of strings, optional: one per input it takes, in order'],
+      ['stdin', 'string, optional: for an input marked stdin'],
+      ['why', 'string: why the user wants it, in their words; shown on the card'],
     ],
   },
   {
     name: 'run_flow',
-    description: "Runs one of the user's flows (listed below), once they click Run on their Mac; comes back with how it went and what it printed.",
+    description: "Runs one of the user's flows (listed below), once they click Run on the Mac.",
     args: [
-      ['flow', 'string: its name, as listed'],
+      ['flow', 'string: its name'],
       ['args', 'list of strings, optional'],
-      ['why', 'string: why the user wants this; shown on the card'],
+      ['why', 'string: shown on the card'],
     ],
   },
   {
     name: 'run_flow_code',
-    description:
-      'Runs Flow code you write, to chain scripts (run "utilities/weather.py" ["Paris"] gives what it printed), once the user clicks Run on their Mac, where the code is shown in full. Check it with check_flow first.',
+    description: 'Runs Flow code you write to chain scripts (run "utilities/weather.py" ["Paris"] gives what it printed), once the user clicks Run. Check it with check_flow first.',
     args: [
       ['source', 'string: the Flow code'],
-      ['name', 'string, optional: what to call the run'],
-      ['why', 'string: why the user wants this; shown on the card'],
+      ['name', 'string, optional'],
+      ['why', 'string: shown on the card'],
     ],
   },
-  { name: 'check_flow', description: 'Checks Flow code for mistakes without running anything (nothing is asked of the user).', args: [['source', 'string: the Flow code']] },
-  { name: 'list_scripts', description: 'Lists the scripts again, fresh from Tool Mac Tool Run (they are already listed below; use it only if one seems missing).' },
-  { name: 'list_runs', description: 'Lists the latest runs on the Mac, newest first, without their output.', args: [['limit', 'integer, optional: how many, default 10']] },
-  { name: 'read_run', description: 'Reads one run in full, with its output.', args: [['id', "string: the run's id"]] },
-  { name: 'stop_run', description: 'Stops a run that is still going (one the user started asks them first).', args: [['id', "string: the run's id"]] },
+  { name: 'check_flow', description: 'Checks Flow code for mistakes, running nothing.', args: [['source', 'string: the Flow code']] },
+  { name: 'list_scripts', description: 'Lists the scripts again, fresh (they are already listed below; only if one seems missing).' },
+  {
+    name: 'find',
+    needs: 'search',
+    description: 'Finds the scripts, flows and routes for something by a few words ("weather", "play a song", "run Straw code"), best first, each with what it does and takes. Use it when unsure which script fits or what it takes, and before ever saying you can\'t.',
+    args: [
+      ['q', 'string: a few words'],
+      ['in', 'string, optional: scripts, flows or routes'],
+    ],
+  },
+  { name: 'list_runs', description: 'The latest runs on the Mac, without their output.', args: [['limit', 'integer, optional (10)']] },
+  { name: 'read_run', description: 'One run in full, with its output.', args: [['id', "string: the run's id"]] },
+  { name: 'stop_run', description: 'Stops a run that is still going.', args: [['id', "string: the run's id"]] },
   {
     name: 'library',
     group: 'library',
-    description:
-      "The user's notes library in Tool Mac Tool Run (LIBRARY): Markdown notes known by name, like keys and values. Answers at once: no card, no click. Deleting moves a note to the library's own Trash (restore brings it back).",
+    description: "The user's notes (Markdown, by name). Answers at once, no click. Delete goes to its Trash (restore brings it back).",
     args: [
-      ['op', `string: ${LIBRARY_OPS.join(', ')}`],
-      ['name', "string: the note's name (no .md), for read, exists, write, create, append, rename, copy, delete, outline, backlinks, restore"],
+      ['op', `string: ${more(LIBRARY_SAID, LIBRARY_OPS)}`],
+      ['name', "string: the note's name"],
       ['text', 'string: for write (replaces it all), create, append (a line at the end)'],
-      ['q', 'string: words to look for, for search and find (a "phrase" in quotes); also narrows list by name'],
+      ['q', 'string: words, for find and search'],
       ['to', 'string: the new name, for rename and copy'],
-      ['names', 'list of strings: for read_many'],
-      ['limit', 'integer, optional: for list, search, find, recent'],
     ],
   },
   {
     name: 'remember',
     group: 'memory',
-    description:
-      "Remembers something the user told you about their world, in MEMORY (a file for each kind of thing) and the mind, which links it to what it's about. Answers at once. Only what they said: never invent.",
+    description: 'Keeps something the user told you about their world, in MEMORY and the mind. Answers at once. Only what they said.',
     args: [
-      ['category', `string: the file it goes in: ${MEMORY_FILES.join(', ')}`],
-      ['about', 'string: who or what it is about ("Ada Lovelace", "the dentist")'],
-      ['text', 'string, optional: what they said about it, briefly'],
-      ['links', 'list, optional: what it links to, each {"label": "works at", "to": "Acme", "category": "ORGANIZATIONS"}'],
-      ['notes', 'list of strings, optional: dated and other notes, such as "birthday 03-14", "date 2026-11-03 dentist", "pref mornings"'],
+      ['category', `string: ${MEMORY_FILES.join(', ')}`],
+      ['about', 'string: who or what ("Ada", "the dentist")'],
+      ['text', 'string, optional: what they said, briefly'],
+      ['links', 'list, optional: each {"label": "works at", "to": "Acme", "category": "ORGANIZATIONS"}'],
+      ['notes', 'list of strings, optional: "birthday 03-14", "date 2026-11-03 dentist", "pref mornings"'],
     ],
   },
   {
     name: 'recall',
     group: 'memory',
-    description:
-      "What's remembered about a name, from MEMORY and the mind: its links, its notes (birthdays, dates), the files it's in, the lines that mention it. Answers at once. Recall before you answer anything about a person, place, organization, plan or date.",
-    args: [['name', 'string: the name, as the user says it (looked up loosely: case, "the", plurals, near spellings)']],
+    description: "What's remembered about a name: links, notes, dates, the lines that mention it. Answers at once.",
+    args: [['name', 'string: as the user says it']],
   },
   {
     name: 'memory',
     group: 'memory',
-    description:
-      "The rest of MEMORY: what's coming up (birthdays, events), who is under a category, and its files (read, search, append, write…), as for the library. Answers at once.",
+    description: "The rest of MEMORY: what's coming up, who is in a category, its files. Answers at once.",
     args: [
-      ['op', `string: ${MEMORY_OPS.join(', ')}`],
+      ['op', `string: upcoming, members, read, search, append, write…`],
       ['days', 'integer, optional: for upcoming (30)'],
-      ['name', 'string: a file (PEOPLE…), for members, read, append, write…'],
-      ['q', 'string: words to look for, for search and find'],
+      ['name', 'string: a file (PEOPLE…)'],
+      ['q', 'string: for search'],
       ['text', 'string: for append and write'],
     ],
   },
   {
     name: 'mind',
     group: 'mind',
-    description:
-      "The mind: what links to what (people, places, things, with labels like \"works at\" and notes), only ever added to. Ask it, or add to it. Answers at once. Rename and forget only when the user asks.",
+    description: 'What links to what (people, places, things), only ever added to. Answers at once. Rename and forget only when asked.',
     args: [
-      ['op', `string: ${MIND_OPS.join(', ')}`],
-      ['name', 'string: a node, for about, neighbors, note, rename, forget'],
-      ['q', 'string: words for find; or query lines in its notation for query ("| sam | x": everything from sam; "| x - works at | acme": who works at Acme)'],
-      ['from', 'string: for path; or, for add, the node a link goes from'],
-      ['label', 'string: for add, the link, as a short verb read left to right ("works at"); for edges, the label to list'],
-      ['to', 'string: for path, add (the node it goes to) and rename (the new name)'],
-      ['facts', 'list, optional: for add, several at once, each {"from", "label", "to"} or {"from", "notes": ["pref mornings"]}'],
-      ['note', 'string: for note ("todo call back Friday", "date 2026-11-03")'],
-      ['kind', 'string: for notes (date, todo, pref, birthday…)'],
-      ['days', 'integer, optional: for dates (30)'],
-      ['depth', 'integer, optional: for neighbors (1)'],
+      ['op', `string: ${more(MIND_SAID, MIND_OPS)}`],
+      ['name', 'string: a node'],
+      ['q', 'string: words for find; for query, lines in its notation ("| x - works at | acme": who works at Acme)'],
+      ['from', 'string: for add and path'],
+      ['label', 'string: for add, a short verb ("works at")'],
+      ['to', 'string: for add, path, rename'],
+      ['note', 'string: for note ("todo call back Friday")'],
     ],
   },
   {
     name: 'show',
     group: 'screen',
-    description:
-      'Shows the user something on their Mac, in a window in front of everything, with copy buttons: a text you write (steps, a list, a result), a file, or all that the mind knows about something. Use it when what you would say is long, or is something to copy or check; then say it in a sentence.',
+    description: 'Shows the user something in a window in front of everything, with copy buttons: text you write, a file, or what the mind knows of something. For anything long or to copy; then say it in a sentence.',
     args: [
-      ['title', 'string: its title'],
-      ['text', 'string: what to show (Markdown), when it is yours'],
-      ['format', 'string, optional: markdown (the default), text or json'],
-      ['shelf', 'string, optional: library, memory or system-docs, with name: a file to show'],
-      ['name', "string, optional: the file's name, with shelf"],
-      ['mind', 'string, optional: a node of the mind to show, all that is known about it'],
-      ['why', 'string: a line on why it is shown'],
-      ['copy', 'true, optional: put it on the clipboard too'],
+      ['title', 'string'],
+      ['text', 'string: Markdown'],
+      ['mind', 'string, optional: a node of the mind, instead of text'],
+      ['shelf', 'string, optional: library, memory or system-docs, with name: a file, instead of text'],
+      ['name', 'string, optional: with shelf'],
+      ['why', 'string: a line on why'],
     ],
   },
   {
     name: 'copy',
     group: 'screen',
-    description: "Puts text on the user's clipboard, for them to paste somewhere (a command, an address, a reply). Say that you did.",
-    args: [
-      ['text', 'string: what to copy'],
-      ['shelf', 'string, optional: library, memory or system-docs, with name: a whole file'],
-      ['name', "string, optional: the file's name, with shelf"],
-    ],
+    description: "Puts text on the user's clipboard, to paste. Say that you did.",
+    args: [['text', 'string']],
   },
   {
     name: 'browser',
     group: 'browser',
-    description:
-      "Reads the page in front of Google Chrome, to guide the user through a site: what's open, what it says, whether words are on it, where a thing is (in view, above, below, or inside a closed menu), and a red ring around it to show them. It only reads: it never clicks or types, so tell them what to click. Read again after each step.",
+    description: "Reads the page in front of Chrome, to guide the user through a site: what it says, whether words are on it, where a thing is, a red ring around it. It never clicks or types: tell them what to click, then read again.",
     args: [
       ['op', `string: ${BROWSER_OPS.join(', ')}`],
-      ['text', 'string: for has, find and highlight: the words to look for ("Compute")'],
-      ['max', 'integer, optional: for page, how many characters of its text (6000)'],
-      ['all', 'true, optional: for tabs, every window'],
+      ['text', 'string: for has, find and highlight'],
     ],
   },
   {
     name: 'call_api',
-    description:
-      "Calls any other route Tool Mac Tool Run lists (they're below, under \"Other routes\"), for what the tools above don't do. One marked \"asks on the Mac\" waits for the user's click there, like a run.",
+    description: 'Calls a route of Tool Mac Tool Run\'s API that no tool above covers: one find gave you, one listed below, or one a result\'s "next" names. One that "asks on the Mac" waits for the click, like a run.',
     args: [
-      ['method', 'string: GET, POST, PUT or DELETE, as listed'],
-      ['path', 'string: the route, as listed, with any {name} filled in and ?query added (e.g. /api/straw)'],
-      ['body', 'object, optional: the JSON to send, as the route says'],
-      ['why', 'string: why the user wants this; shown on the card when it asks on the Mac'],
+      ['method', 'string: GET, POST, PUT or DELETE'],
+      ['path', 'string: the route, {name} filled in, ?query added'],
+      ['body', 'object, optional: the JSON it takes'],
+      ['why', 'string: shown on the card when it asks'],
     ],
   },
 ];
@@ -319,8 +311,9 @@ export class ToolRun {
           return JSON.stringify(c.scripts.map((s) => ({ name: s.name, does: s.summary || undefined, takes: s.inputs.length ? s.inputs : undefined })));
         }
         case 'run_script': {
-          const script = str(args.script ?? args.name);
-          if (!script) return 'Say which script: its name, as listed.';
+          const named = str(args.script ?? args.name);
+          if (!named) return 'Say which script: its name, as listed.';
+          const script = findScript(named, this.catalog)?.name || named;
           const body = { script };
           const a = list(args.args ?? args.arguments);
           if (a) body.args = a;
@@ -376,6 +369,15 @@ export class ToolRun {
           const [status, json] = await this.call('POST', `/api/runs/${encodeURIComponent(id)}/stop`, { why: str(args.why) || 'The user asked to stop it' }, { signal, log, timeout: 150_000 });
           return trouble(status, json) || (json.stopping ? 'Stopping it.' : 'It had already ended.');
         }
+        case 'find': {
+          const q = str(args.q ?? args.query ?? args.words ?? args.text ?? args.what);
+          if (!q) return 'Say what to look for: q, a few words.';
+          const [status, json] = await this.call('GET', `/api/search?${searchQuery(q, args.in, 8)}`, null, { signal, log });
+          const t = trouble(status, json);
+          if (t) return t;
+          const lines = this.describe(json.results);
+          return lines.length ? lines.join('\n') : `Nothing matched "${q}". Try other words, fewer of them, or another kind (in: scripts, flows or routes).`;
+        }
         case 'library':
           return await this.library(args, { signal, log });
         case 'remember':
@@ -421,7 +423,7 @@ export class ToolRun {
     if (!LIBRARY_OPS.includes(op)) return `There's no library op called ${op}. The ops: ${LIBRARY_OPS.join(', ')}.`;
     const [status, json] = await this.call('POST', '/api/library', { op, ...rest }, { signal, log });
     if (status >= 200 && status < 300) {
-      const { request: _, client: __, ...answer } = json;
+      const { request: _, client: __, next: ___, ...answer } = json;
       return clip(JSON.stringify(answer));
     }
     return trouble(status, json);
@@ -431,7 +433,8 @@ export class ToolRun {
   async answer(method, path, body, { signal, log, timeout }) {
     const [status, json] = await this.call(method, path, body, { signal, log, timeout });
     if (status >= 200 && status < 300) {
-      const { request: _, client: __, ok: ___, ...rest } = json;
+      // "next" names routes; the tool the model called is already the way to them.
+      const { request: _, client: __, ok: ___, next: ____, ...rest } = json;
       return clip(JSON.stringify(brief(rest)));
     }
     return trouble(status, json);
@@ -479,6 +482,45 @@ export class ToolRun {
     return lines;
   }
 
+  /**
+   * What fits some text best (the request at hand), from GET /api/search: lines for the model's
+   * prompt, each a script, flow or route with what it does and takes, or [] when there's no search,
+   * nothing fits, or it doesn't answer in time. Routes a tool covers are left out.
+   */
+  async matches(text, { signal, limit = 6 } = {}) {
+    const q = String(text ?? '').trim().slice(-300);
+    if (!hasSearch(this.catalog) || !q) return [];
+    const log = this.trace?.open({ kind: 'context', name: 'What fits the request', state: 'working' });
+    const started = Date.now();
+    let lines = [];
+    try {
+      const [status, json] = await this.call('GET', `/api/search?${searchQuery(q, null, limit + 4)}`, null, { signal, log, timeout: 1500 });
+      if (status >= 200 && status < 300) lines = this.describe(json.results, { onlyOthers: true }).slice(0, limit);
+    } catch {
+      /* not this time */
+    }
+    this.trace?.change(log, { state: 'done', result: lines.length ? lines.join('\n') : '(nothing)', ms: Date.now() - started }, { final: true });
+    return lines;
+  }
+
+  /** Search results, a line each, as the model calls them (a script described as the catalog has it). */
+  describe(results, { onlyOthers = false } = {}) {
+    const covered = coveredGroups(this.catalog);
+    const lines = [];
+    for (const r of Array.isArray(results) ? results : []) {
+      if (r?.kind === 'script' && r.name) {
+        lines.push(`script ${scriptLine(findScript(r.name, this.catalog) || scriptJSON(r))}`);
+      } else if (r?.kind === 'flow' && r.name) {
+        lines.push(`flow ${r.name}${r.summary ? `: ${r.summary}` : ''}`);
+      } else if (r?.kind === 'route' && r.method && r.path) {
+        if (r.group === 'about' || (onlyOthers && covered.includes(r.group))) continue;
+        const tool = TOOLS.find((t) => t.group && t.group === r.group)?.name;
+        lines.push(`route ${r.method} ${r.path}: ${r.summary || ''}${r.asks_on_the_mac ? ' [asks on the Mac]' : ''}${tool && covered.includes(r.group) ? ` (the ${tool} tool does this)` : ''}`);
+      }
+    }
+    return lines;
+  }
+
   /** Any route Tool Mac Tool Run lists. One that asks on the Mac waits for the click (up to its two minutes). */
   async callApi(args, { signal, log, onStatus }) {
     const method = (str(args.method) || 'GET').toUpperCase();
@@ -510,7 +552,7 @@ export class ToolRun {
     const [status, json] = await this.call(method, p, body ?? (method === 'GET' || method === 'DELETE' ? null : {}), { signal, log, timeout: asks ? 150_000 : 30_000 });
     onStatus({ state: 'done', label: `${method} ${p}` });
     const t = trouble(status, json);
-    if (t) return route ? t : `${t}${status === 404 ? ' That route isn\'t one listed: use one from the list.' : ''}`;
+    if (t) return route ? t : `${t}${status === 404 ? ` That route isn't one listed: ${hasSearch(this.catalog) ? 'find the right one by a few words.' : 'use one from the list.'}` : ''}`;
     const { client: _, ...answer } = json;
     return `${method} ${p}: ${status}\n${clip(JSON.stringify(answer))}`;
   }
@@ -660,6 +702,40 @@ export function hasGroup(catalog, id) {
 }
 
 export const hasLibrary = (catalog) => hasGroup(catalog, 'library');
+
+/** Whether it finds scripts, flows and routes by a few words (GET /api/search). */
+export function hasSearch(catalog) {
+  return !!catalog?.groups?.some((g) => g.routes.some((r) => r.method === 'GET' && r.path === '/api/search'));
+}
+
+/** A search's query string: the words, what kinds of thing, how many. */
+function searchQuery(q, kinds, limit) {
+  const p = new URLSearchParams({ q, limit: String(limit), next: 'false' });
+  const k = String(kinds ?? '').toLowerCase().split(/[\s,]+/).filter((x) => ['scripts', 'flows', 'routes'].includes(x));
+  if (k.length) p.set('in', k.join(','));
+  return p;
+}
+
+/** The script a name means: as listed, without its extension, or by its last part. */
+export function findScript(name, catalog) {
+  const scripts = catalog?.scripts || [];
+  const bare = (s) => s.replace(/\.[a-z0-9]+$/i, '');
+  return (
+    scripts.find((s) => s.name === name) ||
+    scripts.find((s) => bare(s.name) === bare(name)) ||
+    scripts.find((s) => bare(s.name.split('/').pop()) === bare(name.split('/').pop()))
+  );
+}
+
+/** A script for the model: its name, what it does, what it takes, what can't be undone. */
+export function scriptLine(s) {
+  let l = s.name;
+  if (s.summary) l += `: ${s.summary}`;
+  if (s.inputs?.length) l += ` | takes: ${s.inputs.map((i) => `${i.kind === 'stdin' ? 'stdin ' : ''}${i.prompt}${i.optional ? ' (optional)' : ''}`).join('; ')}`;
+  else if (s.asksForInput) l += ' | asks questions as it runs: answer them in stdin';
+  if (s.dangers?.length) l += ` | can't be undone: ${s.dangers.join(', ')}`;
+  return l;
+}
 
 /** The route groups a tool covers now (call_api isn't told of them). */
 export function coveredGroups(catalog) {

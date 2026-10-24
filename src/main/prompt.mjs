@@ -22,6 +22,7 @@ const ALIASES = {
   flow: 'run_flow', compose: 'run_flow', run_code: 'run_flow_code', flow_code: 'run_flow_code',
   check_code: 'check_flow', runs: 'list_runs', get_run: 'read_run', run_status: 'read_run', stop: 'stop_run', cancel_run: 'stop_run',
   scripts: 'list_scripts', list_tools: 'list_scripts', tools: 'list_scripts',
+  search: 'find', find_script: 'find', find_tool: 'find', search_scripts: 'find', search_api: 'find', lookup_tool: 'find',
   remind: 'schedule', reminder: 'schedule', set_reminder: 'schedule', remind_me: 'schedule', set_timer: 'schedule', timer: 'schedule',
   schedule_task: 'schedule', later: 'schedule', add_schedule: 'schedule', create_schedule: 'schedule', alarm: 'schedule', set_alarm: 'schedule',
   schedules: 'list_schedules', list_reminders: 'list_schedules', reminders: 'list_schedules', list_schedule: 'list_schedules',
@@ -41,9 +42,19 @@ const ALIASES = {
 /** What an alias says about the arguments it was called with: upcoming is memory's upcoming, link is the mind's add. */
 const ALIAS_OP = { upcoming: 'upcoming', birthdays: 'upcoming', link: 'add', relate: 'add', connect: 'add', mind_add: 'add', mind_query: 'query' };
 
-/** The tools the model is told of now: those over Tool Mac Tool Run only when it lists their group, and has it on. */
+/**
+ * The tools the model is told of now: those over Tool Mac Tool Run only when it lists their group,
+ * and has it on; find (and not list_scripts) where it searches.
+ */
 export function toolsFor(catalog) {
-  return ALL_TOOLS.filter((t) => (t.group ? runTools.hasGroup(catalog, t.group) : t.name === 'call_api' ? runTools.otherGroups(catalog).length > 0 : true));
+  const search = runTools.hasSearch(catalog);
+  return ALL_TOOLS.filter((t) => {
+    if (t.group) return runTools.hasGroup(catalog, t.group);
+    if (t.needs === 'search') return search;
+    if (t.name === 'list_scripts') return !search;
+    if (t.name === 'call_api') return runTools.otherGroups(catalog).length > 0;
+    return true;
+  });
 }
 
 /**
@@ -64,7 +75,7 @@ export function canonical(call, catalog) {
     const op = ALIAS_OP[n];
     return canonical({ name: ALIASES[n], arguments: op && !a.op ? { op, ...a } : call.arguments }, catalog);
   }
-  const script = findScript(raw, catalog);
+  const script = runTools.findScript(raw, catalog);
   if (script) {
     const a = call.arguments || {};
     const args = a.args ?? a.arguments ?? Object.values(a).filter((v) => typeof v === 'string' && v !== a.why && v !== a.stdin);
@@ -75,42 +86,43 @@ export function canonical(call, catalog) {
   return { name: n, arguments: call.arguments, unknown: true };
 }
 
-function findScript(name, catalog) {
-  const scripts = catalog?.scripts || [];
-  const bare = (s) => s.replace(/\.[a-z0-9]+$/i, '');
-  return (
-    scripts.find((s) => s.name === name) ||
-    scripts.find((s) => bare(s.name) === bare(name)) ||
-    scripts.find((s) => bare(s.name.split('/').pop()) === bare(name.split('/').pop()))
-  );
-}
-
 function manualLine(t) {
   let line = `- ${t.name}: ${t.description}`;
   if (t.args?.length) line += ` Arguments: ${t.args.map(([n, d]) => `${n} (${d})`).join('; ')}.`;
   return line;
 }
 
-/** The scripts and flows there are, with what each does and takes, so they're run by name. */
+/**
+ * The scripts and flows there are, so they're run by name. Where Tool Mac Tool Run searches, only
+ * their names (what fits the request at hand is described at the end, and find gives the rest);
+ * else each with what it does and takes, and every other route for call_api.
+ */
 export function catalogPrompt(catalog) {
   if (!catalog?.reachable || catalog.error) {
     return `Tool Mac Tool Run isn't available right now (${catalog?.error || 'not reached'}), so there are no scripts to run: say so if the user asks for something that needs one, and that it needs Tool Mac Tool Run open with its API on.`;
   }
   if (!catalog.scripts.length && !catalog.flows.length) return 'Tool Mac Tool Run has no scripts in its folder yet.';
-  const lines = ['The scripts you can run with run_script (name: what it does, in its own words; then what it takes, in order):'];
-  for (const s of catalog.scripts) {
-    let l = `- ${s.name}`;
-    if (s.summary) l += `: ${s.summary}`;
-    if (s.inputs?.length) l += ` | takes: ${s.inputs.map((i) => `${i.kind === 'stdin' ? 'stdin ' : ''}${i.prompt}${i.optional ? ' (optional)' : ''}`).join('; ')}`;
-    else if (s.asksForInput) l += ' | asks questions as it runs: answer them in stdin';
-    if (s.dangers?.length) l += ` | can't be undone: ${s.dangers.join(', ')}`;
-    lines.push(l);
+  const others = runTools.otherGroups(catalog);
+  if (runTools.hasSearch(catalog)) {
+    const lines = ['The scripts you can run with run_script, by name (find says what one does and takes; the ones that fit what was just said are described at the end of these instructions):'];
+    const folders = new Map();
+    for (const s of catalog.scripts) {
+      const at = s.name.lastIndexOf('/');
+      const folder = at === -1 ? '' : s.name.slice(0, at);
+      if (!folders.has(folder)) folders.set(folder, []);
+      folders.get(folder).push(s.name.slice(at + 1).replace(/\.[a-z0-9]+$/i, ''));
+    }
+    for (const [folder, names] of folders) lines.push(`${folder ? `${folder}/` : ''}: ${names.join(', ')}`.replace(/^: /, ''));
+    if (catalog.flows.length) lines.push(`The flows, for run_flow: ${catalog.flows.map((f) => f.name.replace(/\.flow$/, '')).join(', ')}`);
+    if (others.length) lines.push(`Tool Mac Tool Run also has (find gives their routes, for call_api): ${others.map((g) => `${g.title}${g.on ? '' : ' (turned off right now)'}`).join('; ')}.`);
+    return lines.join('\n');
   }
+  const lines = ['The scripts you can run with run_script (name: what it does, in its own words; then what it takes, in order):'];
+  for (const s of catalog.scripts) lines.push(`- ${runTools.scriptLine(s)}`);
   if (catalog.flows.length) {
     lines.push('The flows you can run with run_flow:');
     for (const f of catalog.flows) lines.push(`- ${f.name}${f.summary ? `: ${f.summary}` : ''}`);
   }
-  const others = runTools.otherGroups(catalog);
   if (others.length) {
     lines.push('Other routes, for call_api (method path: what it does):');
     for (const g of others) {
@@ -125,7 +137,7 @@ export function catalogPrompt(catalog) {
  * The system prompt. What comes first stays the same from one message to the next (so Ollama
  * reuses what it has read); the day is last, and each message carries its exact time.
  */
-export function systemPrompt({ character, catalog, memory, context = [], now = Date.now(), typedOnly = false }) {
+export function systemPrompt({ character, catalog, memory, context = [], matches = [], now = Date.now(), typedOnly = false }) {
   const name = character.name;
   const libraryScript = (catalog?.scripts || []).find((s) => /(^|\/)(library|notes?)\.[a-z]+$/i.test(s.name));
   const library = runTools.hasLibrary(catalog);
@@ -223,6 +235,7 @@ You answer: Eggs are on your shopping list.`
   }
   // What changes from one message to the next comes last.
   if (catalog?.upcoming?.length) p.push(`Coming up in the next week, from MEMORY (bring it up when it's relevant, or when they ask what's coming):\n${catalog.upcoming.map((l) => `- ${l}`).join('\n')}`);
+  if (matches.length) p.push(`What fits what was just said, from a search of the scripts, flows and routes (run a script by its name; find looks for others):\n${matches.map((l) => `- ${l}`).join('\n')}`);
   if (context.length) p.push(`What the mind already has on what's being said (its notation: "| a - label | b" is a link, "| a @kind note" a note):\n${context.join('\n')}`);
   p.push(`Today is ${longDay(now)}.`);
   return p.join('\n\n');
@@ -262,7 +275,7 @@ export const NOTE = {
   promised:
     "Note from the Mac (not the user): you said you'd do something, but made no tool call, so nothing is happening. If the user asked for something, make the call now. If not, answer again without promising.",
   cannot:
-    "Note from the Mac (not the user): you said you can't, or don't know, but your tools may well do it (the scripts reach the web, files, apps and the Mac). Look at the scripts listed and use one now; only if none could, say so plainly.",
+    "Note from the Mac (not the user): you said you can't, or don't know, but your tools may well do it (the scripts reach the web, files, apps and the Mac). Look at the scripts listed (or find one by a few words) and use one now; only if none could, say so plainly.",
   outOfRounds: (n) => `Note from the Mac (not the user): that's ${n} tool calls for this one request, as many as one gets. Answer the user now with what you have, saying what's left undone.`,
   onlyFirst: (done, rest) => `Note from the Mac (not the user): only your first call (${done}) was made; ${rest.join(', ')} wasn't, since it's one call per answer. Make it next if it's still wanted.`,
   unknownTool: (name, catalog) =>

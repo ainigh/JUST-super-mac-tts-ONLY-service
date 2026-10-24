@@ -27,7 +27,9 @@ Run script), and no wake word.
   result comes back to it as the next message (not Ollama's tool calling, so any model can). Its
   tools are Tool Mac Tool Run's (run a script or a flow, write Flow code, read runs), each run
   asking you on the Mac first; its file library (notes, answered at once); any other route it
-  lists, so what it adds later is there the day it ships; plus its own: a schedule and its memory. **Cancel** any of it: the
+  lists, so what it adds later is there the day it ships; plus its own: a schedule and its memory. Where Tool Mac Tool
+  Run finds things by a few words (`GET /api/search`), the model is told only the scripts' names and, with each request,
+  the few that fit it, and it finds the rest itself (`find`): its instructions are half the size. **Cancel** any of it: the
   Stop button, a Cancel on a tool's card, or say "cancel": a run waiting for your click is taken off
   the Mac, a running one is stopped.
 - **Later**: "remind me in 20 minutes…", "at 5 check the build…", "on Friday at 8…". It

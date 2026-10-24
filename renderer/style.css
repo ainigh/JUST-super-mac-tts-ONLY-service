@@ -72,3 +72,17 @@ body {
 body:not([data-state='loading']):not([data-problem]) #status {
   display: none;
 }
+
+/* Something went wrong: said where it can be read, on a card. */
+body[data-problem] #status {
+  left: 12px;
+  right: 12px;
+  bottom: 40%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--ink);
+  text-shadow: none;
+  font-size: 13px;
+  box-shadow: 0 0 0 1px var(--line), 0 6px 18px rgba(0, 0, 0, 0.18);
+}

@@ -92,8 +92,9 @@ export function allowedOrigin(origin, extra = []) {
  * @param {object} [o.updater] - state(), check(), install()
  * @param {() => string} [o.docs] - API.md
  * @param {string[]} [o.avatars]
+ * @param {number} [o.readyWait] - ms a speak waits for the avatar to finish starting
  */
-export function createApi({ speech, face, settings, version, updater = null, docs = () => '', avatars = [] }) {
+export function createApi({ speech, face, settings, version, updater = null, docs = () => '', avatars = [], readyWait = 15_000 }) {
   const started = Date.now();
 
   async function handle(req, res) {
@@ -133,7 +134,7 @@ export function createApi({ speech, face, settings, version, updater = null, doc
     } catch (err) {
       const e = err instanceof HTTPError ? err : new HTTPError(500, 'failed', err?.message || String(err));
       const headers = { ...cors };
-      if (e.code === 'model_loading') headers['Retry-After'] = '5';
+      if (e.code === 'model_loading' || e.code === 'not_ready') headers['Retry-After'] = '5';
       if (e.extra.allow) headers.Allow = e.extra.allow.replace(' ', ', ');
       const { allow: _a, ...extra } = e.extra;
       return send(res, e.status, { error: e.message, code: e.code, ...extra }, headers);
@@ -237,18 +238,33 @@ export function createApi({ speech, face, settings, version, updater = null, doc
       speaking: speech.speaking,
       queued: speech.queued,
       avatar: f.avatar,
+      ...(f.message ? { message: f.message } : {}),
+      ready: f.avatar === 'ready' && f.tts?.state === 'ready',
       models: { tts: f.tts },
       expressions: s.expressions,
       superVoice: s.superVoiceUrl,
     };
   }
 
-  function readyToSpeak() {
-    const t = face.status().tts;
-    if (t?.state === 'downloading') {
-      throw new HTTPError(503, 'model_loading', 'getting the voices ready (downloading, the first time only)', { progress: t.progress ?? 0 });
+  /**
+   * Speaks only when it can: the avatar shown and the voice loaded. While they're starting it
+   * waits (a few seconds, as when the app has just opened); anything else is said at once, so a
+   * caller isn't left waiting on an avatar that will never speak, and can say it another way.
+   */
+  async function readyToSpeak() {
+    const until = Date.now() + readyWait;
+    for (;;) {
+      const f = face.status();
+      const t = f.tts || {};
+      if (f.avatar === 'failed') throw new HTTPError(503, 'avatar_failed', `the avatar didn't load: ${f.message || t.message || 'unknown error'}`);
+      if (t.state === 'failed') throw new HTTPError(503, 'model_failed', `the voice model didn't load: ${t.message || 'unknown error'}`);
+      if (t.state === 'downloading') {
+        throw new HTTPError(503, 'model_loading', 'getting the voices ready (downloading, the first time only)', { progress: t.progress ?? 0 });
+      }
+      if (f.avatar === 'ready' && t.state === 'ready') return;
+      if (Date.now() >= until) throw new HTTPError(503, 'not_ready', 'the avatar is still starting: try again in a moment');
+      await new Promise((r) => setTimeout(r, 200));
     }
-    if (t?.state === 'failed') throw new HTTPError(503, 'model_failed', `the voice model didn't load: ${t.message || 'unknown error'}`);
   }
 
   function textOf(b) {
@@ -266,7 +282,7 @@ export function createApi({ speech, face, settings, version, updater = null, doc
 
   async function speak(b, s) {
     const text = textOf(b);
-    readyToSpeak();
+    await readyToSpeak();
     const u = {
       text,
       voice: voiceOf(b, s),
@@ -290,7 +306,7 @@ export function createApi({ speech, face, settings, version, updater = null, doc
 
   async function tts(b, s) {
     const text = textOf(b);
-    readyToSpeak();
+    await readyToSpeak();
     const format = String(b.format || 'wav').toLowerCase();
     if (!['wav', 'pcm', 'json'].includes(format)) bad('format is wav, pcm or json');
     const voice = voiceOf(b, s);

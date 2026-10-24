@@ -11,13 +11,30 @@
       {
         "imports": {
           "three": "/node_modules/three/build/three.module.js",
-          "three/addons/": "/node_modules/three/examples/jsm/",
+          "three/addons/": "/renderer/vendor/three-addons/",
           "talkinghead": "/node_modules/@met4citizen/talkinghead/modules/talkinghead.mjs",
           "headtts": "/node_modules/@met4citizen/headtts/modules/headtts.mjs"
         }
       }
     </script>
-    <script type="module" src="./app.mjs"></script>
+    <script>
+      // Until the page has started (its modules loaded and run), a failure is reported here: a
+      // missing file would otherwise leave an empty window that never speaks, and no word why.
+      window.faceFailed = (message) => {
+        if (window.faceStarted) return;
+        window.faceStarted = true;
+        const show = () => {
+          document.body.dataset.problem = 'true';
+          document.getElementById('status').textContent = `The avatar didn’t load: ${message}`;
+        };
+        if (document.body) show();
+        else addEventListener('DOMContentLoaded', show);
+        window.face?.event({ type: 'state', state: { avatar: 'failed', tts: { state: 'failed', message }, message } });
+      };
+      addEventListener('error', (e) => window.faceFailed(e.message || 'the page failed'));
+      addEventListener('unhandledrejection', (e) => window.faceFailed(String(e.reason?.message || e.reason)));
+    </script>
+    <script type="module" src="./app.mjs" onerror="faceFailed('a file it needs is missing from the app')"></script>
   </head>
   <body data-state="loading">
     <main id="stage" aria-label="The avatar. Drag to move, right-click for options."></main>

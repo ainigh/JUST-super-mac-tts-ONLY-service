@@ -71,8 +71,16 @@ const speech = new Speech({ send: (type, data) => send(type, data) });
 
 ipcMain.on('event', (_e, ev) => {
   if (ev.type === 'state') {
+    const was = face;
     face = { ...face, ...ev.state };
     refreshMenu();
+    if (face.avatar === 'failed' && was.avatar !== 'failed') {
+      // Shown, so what went wrong can be read on it (and nobody waits on it to speak).
+      console.error('Super Face: the avatar did not load:', face.message);
+      for (const id of [...speech.order]) speech.finish(id, 'failed', `the avatar didn't load: ${face.message || ''}`);
+      show();
+    }
+    if (face.avatar === 'ready' && face.tts.state === 'ready' && !settings.get().welcomed) welcome();
     return;
   }
   speech.event(ev);
@@ -86,6 +94,20 @@ ipcMain.on('event', (_e, ev) => {
 speech.subscribe((ev) => {
   if (ev.type === 'stopped' || ev.type === 'failed') afterSpeaking();
 });
+
+/** The first time it's ready: it shows itself and says hello, so it's plain that it works. */
+function welcome() {
+  settings.set({ welcomed: true });
+  show();
+  const s = settings.get();
+  speech.enqueue({
+    text: "Hi! I'm Super Face. 👋 Click the little person in the menu bar to show or hide me, and right-click it for my settings.",
+    voice: s.voice,
+    speed: s.speed,
+    auto: true,
+    source: 'superface',
+  });
+}
 
 function afterSpeaking() {
   if (speech.speaking || speech.queued) return;
@@ -228,7 +250,7 @@ function startStatic() {
 // ---------------------------------------------------------------- the API
 
 const faceApi = {
-  status: () => ({ visible: !!win?.isVisible(), avatar: face.avatar, tts: face.tts, backend: face.backend }),
+  status: () => ({ visible: !!win?.isVisible(), avatar: face.avatar, tts: face.tts, backend: face.backend, message: face.message }),
   show,
   hide,
   toggle,
@@ -296,7 +318,9 @@ function menu() {
   const u = updater.state();
   const visible = !!win?.isVisible();
   const ttsLine =
-    face.tts.state === 'ready'
+    face.avatar === 'failed'
+      ? `The avatar didn't load: ${face.message || ''}`.slice(0, 70)
+      : face.tts.state === 'ready'
       ? `Voice ready (${face.backend === 'webgpu' ? 'GPU' : 'CPU'})`
       : face.tts.state === 'downloading'
         ? `Getting the voices… ${Math.round((face.tts.progress || 0) * 100)}%`
@@ -370,6 +394,7 @@ app.whenReady().then(async () => {
   tray.on('right-click', () => tray.popUpContextMenu(menu()));
   createWindow();
   serve();
+  setInterval(() => speech.watch(), 5000);
   updater.start();
   globalShortcut.register('CommandOrControl+Shift+A', toggle);
 });

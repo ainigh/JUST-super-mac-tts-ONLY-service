@@ -39,6 +39,7 @@ jobs:
         env:
           CI: "1"
       - run: npm test
+      - run: node scripts/check-package.mjs --source
       - name: Build the app
         run: |
           VERSION="0.1.${{ github.run_number }}"
@@ -47,6 +48,17 @@ jobs:
           npm run dist
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # Opened as a user would: it must load, and speak, before it's released.
+      - name: Try the app
+        run: scripts/smoke-mac.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke
+          path: |
+            dist/smoke.png
+            dist/smoke.log
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: SuperFace

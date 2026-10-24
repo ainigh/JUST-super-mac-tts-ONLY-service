@@ -1,7 +1,7 @@
 // What the avatar does while it talks: for each sentence, a mood, an expression, a hand gesture, a
 // head movement (any of them may be none). Three sources, in order:
 //   1. what the caller asked for (fields on the request, emojis and [tags] in the text);
-//   2. the model, through Super Voice (the app has no model of its own): one question per
+//   2. the model (Ollama's, the one the assistant thinks with): one question per
 //      utterance, every sentence answered at once, with only the catalog's names allowed;
 //   3. rules: words and punctuation, instant and offline (used while the model hasn't answered,
 //      or when it's off or unreachable).
@@ -111,7 +111,7 @@ export function schema(n) {
   };
 }
 
-/** The request body for Super Voice's POST /api/model/chat. */
+/** The question for the model (messages, and the answer's JSON schema). */
 export function modelRequest(texts, { context = '', who = '' } = {}) {
   const lines = texts.map((t, i) => `${i + 1}. ${t}`).join('\n');
   const intro = [who && `The avatar is ${who}.`, context && `Just before this: "${context}"`].filter(Boolean).join(' ');

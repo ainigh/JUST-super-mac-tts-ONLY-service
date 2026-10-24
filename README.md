@@ -1,32 +1,50 @@
 # Super Face
 
-The mouth and the face. A menu bar app for the Mac: a 3D avatar, head to toes, standing on your
-desktop with no window or background around it, that says whatever it's given, out loud, with
-lip-sync, expressions and gestures. Any app can make it talk, over HTTP, the way apps use Ollama.
+A character on your Mac's desktop you just talk to. A 3D person, head to toes, with no window or
+background around it, on standby as soon as it opens: it hears you, thinks with one local model,
+does things with your scripts through [Tool Mac Tool Run](https://github.com/ainigh/tool-mac-tool-run),
+sets itself reminders, learns as it goes, and answers out loud, with lip-sync, expressions and
+gestures. Click it for the chat. Any app can make it talk, or talk to it, over HTTP. The goal it
+was built to is in [GOAL.md](GOAL.md).
 
-[Super Voice](https://github.com/ainigh/super-mac-tts-stt-service) is the ears and the model;
-Super Face is the mouth and the presentation. With both running, everything Super Voice says (AI
-Listen's Tom, Jerry and Jane) is said by the avatar, and Super Voice asks Super Face about each
-phrase it hears ("was that you?"), so it doesn't take the avatar's voice for yours. The goal it was
-built to is in [GOAL.md](GOAL.md).
+It's everything [Super Voice](https://github.com/ainigh/super-mac-tts-stt-service) does with AI
+Listen (hearing you, a model, tools, memory) without the complexity: one assistant instead of Tom,
+Jerry and Jane, one model instead of three, no library of its own (the notes are a Tool Mac Tool
+Run script), and no wake word.
 
-- **The voice**: Kokoro-82M, through [HeadTTS](https://github.com/met4citizen/HeadTTS), in the app
-  itself: on the Mac's GPU (WebGPU) when it can, else the CPU. Eight voices, the same six as Super
-  Voice (with the same short names, f1–f3 and m1–m3) and two more. Each word and viseme comes with
-  its timing, so the lips follow the words exactly.
-- **The face and body**: [TalkingHead](https://github.com/met4citizen/TalkingHead), all of it: 8
-  moods, 27 expressions, 8 hand gestures, nods and shakes, 10 body poses, eye contact, hands that
-  move as it talks, blinking and breathing while it waits.
-- **Feeling**: for each sentence, a mood, an expression, a gesture and a head movement. What the
-  caller asks for comes first (fields, or emojis and `[tags]` written in the text); then Super
-  Voice's model chooses (one question per reply, from the catalog's names only; the app has no
-  model of its own, so there's one model on the Mac for both); and rules on the words fill in until
-  it answers, or when it can't be reached.
-- **Not hearing itself**: it keeps what it said and when; `POST /api/echo` tells a listener
-  whether a phrase it heard was the avatar's own words coming back. Plain word comparison, nothing
-  fancier.
-- **API**: [API.md](API.md), at `http://127.0.0.1:8769`: speak, stop, express, show and hide, what
-  was said, the echo check, live events, audio without the avatar, settings and updates.
+- **Four characters, each its own voice**: Ivy (a woman, Kokoro's Heart), David (a man, Michael),
+  Sofia (a woman, Emma, British) and Leo (a young man, Puck). Picking one picks its voice and its
+  name.
+- **Ears**: while it shows, it listens. Silero VAD hears where your phrase starts and ends,
+  Moonshine writes it down, both in the app (on the GPU when there's one). Its own voice is kept out
+  three ways: the microphone's echo cancellation, then what it heard is compared word for word with
+  what it just said (and dropped when it's only that), and you can turn off listening while it
+  talks. Talk over it and it stops to listen. A small light at its feet says when it hears you.
+- **One model**: [Ollama](https://ollama.com)'s, on this Mac (the best one you have, or the one you
+  pick). It answers, calls the tools, and writes the emojis and `[tags]` its face plays, all in one
+  answer, said sentence by sentence as it's written.
+- **Tools, hand-rolled**: the model writes a line of JSON, `{"tool": …, "arguments": …}`, and the
+  result comes back to it as the next message (not Ollama's tool calling, so any model can). Its
+  tools are Tool Mac Tool Run's (run a script or a flow, write Flow code, read runs), each run
+  asking you on the Mac first, plus its own: a schedule and its memory. **Cancel** any of it: the
+  Stop button, a Cancel on a tool's card, or say "cancel": a run waiting for your click is taken off
+  the Mac, a running one is stopped.
+- **Later**: "remind me in 20 minutes…", "at 5 check the build…", "on Friday at 8…". It
+  schedules a task for itself (as many as you like, each cancellable); when it's due the character
+  appears and does it.
+- **Learning**: it keeps short notes of what it learns about you, which scripts work for what, and
+  its mistakes, reads them every time, and you can read and delete them (and give it standing
+  instructions) in the chat's **Mind** tab.
+- **The chat**: click the character. What you both said, each tool at work (waiting for your click,
+  running, what it printed, Cancel), every tool there is (fetched from Tool Mac Tool Run as it
+  opens), what's scheduled, its memory and model; the character picker and the size buttons
+  (smaller and bigger go round). Click it again to hide it.
+- **The face**: [TalkingHead](https://github.com/met4citizen/TalkingHead) (8 moods, 27 expressions,
+  8 hand gestures, nods and shakes, 10 poses) and Kokoro through
+  [HeadTTS](https://github.com/met4citizen/HeadTTS), with each word and viseme timed, so the lips
+  follow the words.
+- **API**: [API.md](API.md), at `http://127.0.0.1:8769`: speak, stop, express, audio alone, the
+  echo check, and the assistant (chat, cancel, tools, schedules, memory), with live events.
 
 ## Install
 
@@ -38,9 +56,22 @@ the repository may be private):
 ```
 
 It takes the latest release GitHub built; if there isn't one, it builds it on your Mac (that needs
-Node.js 22). It installs `~/Applications/Super Face.app` and opens it: look for the little person
-in the menu bar. The first time, the voice model downloads (a few hundred MB); the menu shows how
-far it has got.
+Node.js 22). It installs `~/Applications/Super Face.app` and opens it: the character appears, says
+hello, and listens. macOS asks once for the microphone. The first time, the voice and the ears
+download (a few hundred MB); the menu shows how far they've got.
+
+What it works with, on the same Mac:
+
+1. **Ollama** with a model: `brew install ollama`, then `ollama pull qwen3:8b` (or any model; it
+   picks the best you have). Without it, it says it can't reach its model.
+2. **Tool Mac Tool Run** with its API on (its [install](https://github.com/ainigh/tool-mac-tool-run)):
+   its scripts are the character's tools. Its examples include `utilities/library.py`, your notes
+   (the character's library: this app keeps none of its own). A scripts folder set up before that
+   script existed doesn't get it by itself; this puts it there (`~/Scripts` is the usual folder):
+
+   ```bash
+   gh api -H "Accept: application/vnd.github.raw" repos/ainigh/JUST-super-mac-tts-ONLY-service/contents/extras/library.py > ~/Scripts/utilities/library.py && chmod +x ~/Scripts/utilities/library.py
+   ```
 
 **Update**: the menu shows **Update to …** when there's a newer release (or `POST /api/update
 {"install": true}`); running the install line again works too.
@@ -49,60 +80,62 @@ far it has got.
 
 | To | Do |
 |---|---|
-| Show or hide the avatar | Click the menu bar icon, or press **⌘⇧A** anywhere |
-| Make it talk | `curl -s localhost:8769/api/speak -d '{"text": "Hello!"}'` (it shows itself) |
-| Options | Right-click the icon, or the avatar: avatar, framing (head to toes, waist up, head and shoulders, face), voice, speed, resting mood, where expressions come from, size, hiding after it talks, captions, keep on top, the API on or off, copy its URL and docs, updates, open at login |
-| Move it | Drag the avatar |
+| Ask it anything | Just talk while it shows (no wake word), or type in the chat |
+| Open or hide the chat | Click the character |
+| Stop it talking / cancel what it's doing | Say "stop" / "cancel" (or "never mind"); or the red button in the chat |
+| Start over | Say "new chat", or **Mind › Start a new chat** |
+| Show or hide the character | Click the menu bar icon, or **⌘⇧A** anywhere |
+| Change character (and voice), size | The chat's top row; or right-click the icon or the character |
+| Model, thinking, listening while it talks, memory | The chat's **Mind** tab |
+| Move it | Drag it |
 
-Settings are kept in `~/Library/Application Support/Super Face/settings.json`.
+Its settings, chat, schedule and memory are kept in `~/Library/Application Support/Super Face/`.
 
 ## How it works
 
 ```
-any app ──POST /api/speak──▶ main process (API, the record of what's said, the window)
-                                   │  speak / stop / express
-                                   ▼
-                      the avatar's page (transparent window)
-                        text → sentences, cues taken out
-                        each sentence → HeadTTS (Kokoro) → audio + word and viseme timing
-                        each sentence → direction ◀── what was asked, Super Voice's model, rules
-                        → TalkingHead.speakAudio: lips on the visemes; mood, expression,
-                          gesture, nod at their moments
-                                   │  started / sentence / ended
-                                   ▼
-                      /api/said, /api/echo, /api/events ──▶ Super Voice (the ears)
+ mic ─▶ ears (Silero VAD + Moonshine, in a worker) ─▶ main process: was that its own voice? a command?
+                                                          │
+ chat window ── typed ──────────────────────────────────▶ assistant ◀── schedule (due tasks)
+                                                          │   ▲
+                                         one model (Ollama, streamed)   memory notes
+                                                          │   │ tool result
+                                                          ▼   │
+                      a tool call? ── schedule / remember ┤   │
+                                   └─ Tool Mac Tool Run (streamed run: card, click, output; cancellable)
+                                                          │
+                     its words, sentence by sentence ─────▶ the character's page: HeadTTS (Kokoro) +
+                                                            TalkingHead (lips, mood, gestures)
 ```
-
-Sentences are made one after another while the one before plays, so there's no wait between
-them; the next utterance is made while this one plays. The window is transparent and frameless:
-TalkingHead draws on a transparent canvas, so edges such as hair stay clean.
 
 ## Working on it
 
 ```bash
-npm install          # also downloads the two avatars into renderer/avatars
-npm test             # the API, the text and cues, the director, the echo check (no Electron)
+npm install          # also downloads the four characters into renderer/avatars
+npm test             # the assistant, its tools, the schedule, memory, the API, the text, the director, the echo check
 npm start            # the app
-npm run dev          # without Electron: open http://127.0.0.1:8769/renderer/index.html in Chrome
-npm run dist         # on a Mac: dist/SuperFace.zip (checks every file the page loads is in it)
-scripts/smoke-mac.sh # on a Mac, after dist: opens the app, waits for it, makes it speak
+npm run dev          # without Electron: http://127.0.0.1:8769/renderer/index.html and /renderer/chat.html in Chrome
+npm run dist         # on a Mac: dist/SuperFace.zip (checks every file the pages load is in it)
+scripts/smoke-mac.sh # on a Mac, after dist: opens the app, waits for it, makes it speak, asks its assistant
 ```
-
-The release build runs both: a build whose avatar doesn't load, or that doesn't speak, isn't
-released. If the avatar ever doesn't appear, it says why on the avatar's window (click the menu bar
-icon) and in the menu, and `curl -s localhost:8769/api/health` has the reason in `message`.
 
 | | |
 |---|---|
-| `main.mjs` | the Electron main process: the menu bar, the window, the commands to the page, the API server |
-| `src/main/` | the API (`api.mjs`), the record of what's said (`speech.mjs`), settings, the updater, the menu bar icon |
-| `src/shared/` | the catalog of what it can show, voices, text into sentences and cues, the director (rules and the model's question), the echo check: used by both sides |
-| `renderer/` | the avatar's page: TalkingHead, HeadTTS, the speaking queue |
-| `scripts/` | fetching the avatars, the browser dev server, packaging for the Mac |
-| `.github/workflows/build.yml`, `install.sh` | building and releasing (pushes to `main`), installing |
+| `main.mjs` | the Electron main process: the menu bar, the character's window and the chat beside it, the API server |
+| `src/main/core.mjs` | the assistant and what it works with, what's heard, the actions the chat and the API share |
+| `src/main/assistant.mjs` | the conversation: the model, tool calls, cancelling, the harness's notes, learning |
+| `src/main/prompt.mjs` | what the model is told (one model, the three habits), and the notes it gets when it slips |
+| `src/main/model.mjs`, `toolrun.mjs`, `scheduler.mjs`, `memory.mjs`, `calls.mjs` | Ollama, Tool Mac Tool Run, the schedule, memory, reading tool calls |
+| `src/main/api.mjs`, `speech.mjs` | the API; the record of what's said |
+| `src/shared/` | the characters, the catalog of what it can show, voices, text into sentences and cues, the director, the echo check |
+| `renderer/` | the character's page (TalkingHead, HeadTTS, the ears) and the chat |
+| `scripts/` | fetching the characters, the browser dev server, packaging for the Mac |
+| `extras/library.py` | the notes library script, as Tool Mac Tool Run ships it, for folders set up before it did |
 
 ## Licenses
 
-The code here may be used freely. TalkingHead, HeadTTS and three.js are MIT-licensed; Kokoro and
-transformers.js are Apache 2.0. The avatars: `brunette.glb` comes from TalkingHead's repository and
-`david.glb` from HeadAudio's; check their terms before any commercial use.
+The code here may be used freely. TalkingHead, HeadTTS and three.js are MIT-licensed; Kokoro,
+Moonshine, Silero VAD and transformers.js are Apache 2.0 / MIT. The characters: `brunette.glb`
+(Ready Player Me, CC BY-NC 4.0), `avaturn.glb` (Avaturn) and `avatarsdk.glb` (AvatarSDK) come from
+TalkingHead's repository, `david.glb` from HeadAudio's; they're for non-commercial use: check their
+terms before any commercial use.

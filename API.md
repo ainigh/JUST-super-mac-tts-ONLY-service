@@ -1,8 +1,10 @@
 # Super Face API
 
-Super Face is a menu bar app for the Mac: a 3D avatar, head to toes, with no window or background
-around it, that says whatever it's given, out loud and with feeling. It is the mouth and the face;
-[Super Voice](https://github.com/ainigh/super-mac-tts-stt-service) is the ears and the model.
+Super Face is a menu bar app for the Mac: a 3D character, head to toes, with no window or
+background around it, that you talk to. It hears you, thinks with one local model (Ollama's), does
+things with your scripts and flows through [Tool Mac Tool Run](https://github.com/ainigh/tool-mac-tool-run),
+sets itself reminders, learns, and answers out loud with feeling. Other apps can make it say
+anything, talk to its assistant, or use its voice alone.
 
 - **The voice**: Kokoro-82M through [HeadTTS](https://github.com/met4citizen/HeadTTS), in the app
   (on the GPU through WebGPU, else the CPU). Every word and viseme comes with its timing, so the
@@ -10,8 +12,10 @@ around it, that says whatever it's given, out loud and with feeling. It is the m
   leaves the Mac.
 - **The face and body**: [TalkingHead](https://github.com/met4citizen/TalkingHead): 8 moods, 27
   expressions, 8 hand gestures, nods and shakes, 10 body poses, eye contact.
-- **What it shows** while it talks: what the caller asks for; else Super Voice's model chooses,
-  sentence by sentence (the app has no model of its own); else rules on the words.
+- **What it shows** while it talks: what the caller asks for; else the model chooses, sentence by
+  sentence; else rules on the words. (The assistant's own words carry their cues, written by the
+  model as it answers.)
+- **The assistant**: [below](#the-assistant). One model, hand-rolled tool calls, a schedule, memory.
 
 This document is the contract for client apps. New fields may be added to responses, but nothing
 listed here changes meaning.
@@ -67,6 +71,15 @@ curl -s localhost:8769/api/echo -d '{"text": "nice to meet you"}'
 | `POST /api/tts` | text → audio (WAV, PCM, or JSON with word and viseme timing), not said |
 | `GET  /api/settings`, `POST /api/settings` | the avatar, framing, voice, speed, resting mood, … |
 | `GET  /api/update`, `POST /api/update` | whether there's a newer version; `{"install": true}` installs it |
+| `GET  /api/assistant` | the assistant: the character, what it's doing, the ears, the model, the tools |
+| `POST /api/chat`, `GET /api/chat` | a message to the assistant (`"wait": true` answers with its reply); the conversation |
+| `POST /api/chat/new` | a fresh conversation |
+| `POST /api/cancel` | cancels what the assistant is doing: its answer, a run waiting for its click or running |
+| `POST /api/heard` | a phrase heard by other ears, handled as if the character's own had heard it |
+| `GET  /api/tools`, `POST /api/tools` | every tool it has (built in, and Tool Mac Tool Run's scripts and flows); POST asks again |
+| `GET  /api/schedules`, `POST /api/schedules` | what it has set itself to do later; set one |
+| `POST /api/schedules/cancel` | cancels one (`{"id": "s3"}`) or all (`{"id": "all"}`) |
+| `GET  /api/memory`, `POST /api/memory` | what it has learned, and the user's standing instructions |
 | `GET  /` | a status page, with a box to try it |
 | `GET  /api.md` | this document |
 
@@ -118,8 +131,8 @@ An emoji right after a sentence ("Sorry. 😔") is how that sentence is said.
 Brackets that aren't one of these are read as they are.
 
 **What's shown otherwise.** For anything the request and the text leave out, the menu's
-*Expressions* setting decides: *From Super Voice's model* (the default) asks Super Voice
-(`POST /api/model/chat`) once per utterance to choose, for every sentence, from the catalog (until it
+*Expressions for other apps* setting decides: *From the model* (the default) asks the model (Ollama's,
+the assistant's) once per utterance to choose, for every sentence, from the catalog (until it
 answers, and whenever it can't be reached, the rules are used); *From the words only* uses the rules
 (greetings wave, thanks bow, "sorry" saddens, "yes" nods, "I don't know" shrugs, a question looks
 thoughtful…); *Only when asked* shows only what's asked for and written in.
@@ -168,14 +181,16 @@ An expression or gesture can also be named by its emoji. An unknown name is
 ```
 
 Eight Kokoro voices: Heart (f1), Bella (f2), Emma (f3, UK), Michael (m1), Fenrir (m2), Puck (m3), the
-same six as Super Voice with the same short names, and Nicole (f4) and George (m4, UK).
+same six as Super Voice with the same short names, and Nicole (f4) and George (m4, UK). Each
+character has its voice (Ivy: Heart, David: Michael, Sofia: Emma, Leo: Puck), and picking a
+character picks it; `voice` on a request still overrides it for that request.
 
 **Naming a voice**: the id (`af_heart`), the name (`heart`), the short name (`f1` … `m4`), `female` /
 `male`, `uk` / `us`; nothing means the default. An unknown name is `400 {"code": "unknown_voice"}`.
 
 ### `GET /api/said` and `POST /api/echo`: not hearing itself
 
-Super Face knows exactly what it said and when, so whatever is listening (Super Voice) can check
+Super Face knows exactly what it said and when, so whatever is listening (its own ears, or another app) can check
 each phrase it hears, without echo cancellation or anything else fancy:
 
 ```bash
@@ -229,7 +244,9 @@ Headers: `X-Voice`, `X-Sample-Rate`, `X-Duration`.
 ```json
 {"ok": true, "service": "superface", "version": "0.1.12", "port": 8769, "uptime": 3641,
  "visible": true, "speaking": false, "queued": 0, "avatar": "ready", "ready": true,
- "models": {"tts": {"state": "ready"}}, "expressions": "model", "superVoice": "http://127.0.0.1:8767"}
+ "models": {"tts": {"state": "ready"}}, "expressions": "model", "character": "Ivy",
+ "assistant": {"busy": false, "phase": "idle", "queued": 0, "tool": null, "model": "qwen3:8b", "error": null},
+ "ears": {"state": "listening", "device": "webgpu"}}
 ```
 
 `ready` is true when it can speak: the avatar loaded and the voice ready. Check it before handing
@@ -244,10 +261,13 @@ quiet on for a minute ends `failed`, so nobody waits on it for ever.
 
 ### Settings and updates
 
-`POST /api/settings` takes any of `avatar` (`brunette`, `david`), `view` (`full`, `mid`, `upper`,
+`POST /api/settings` takes any of `avatar` (the character: `brunette` Ivy, `david` David,
+`avaturn` Sofia, `avatarsdk` Leo; its voice comes with it), `view` (`full`, `mid`, `upper`,
 `head`), `voice`, `speed`, `mood` (the resting mood), `expressions` (`model`, `rules`, `off`),
-`captions` (true/false), `hideAfter` (seconds after speaking before it hides; 0 stays),
-`superVoiceUrl`, and answers all of them. `GET /api/update` says `{"state": "idle" | "checking" |
+`captions` (true/false), `hideAfter` (seconds after speaking before it hides; 0 stays), `model`
+(an Ollama model's name; empty: the best one Ollama has), `think` (true: it thinks before
+answering), `ollamaUrl`, `toolRunUrl`, `listening` (the ears on while it shows), and
+`listenWhileSpeaking` (it can be cut in on), and answers all of them. `GET /api/update` says `{"state": "idle" | "checking" |
 "upToDate" | "available" | "installing" | "failed", "version", "latest"}`; `POST /api/update` checks
 again, `{"install": true}` installs and restarts.
 
@@ -273,11 +293,77 @@ It listens on **127.0.0.1** only. Programs on this Mac are always answered; brow
 this machine (`http://localhost:*`, `http://127.0.0.1:*`), or origins added to `origins` in the
 settings file (`~/Library/Application Support/Super Face/settings.json`).
 
+## The assistant
+
+The character is an assistant on standby: as soon as it's showing it listens, and anything said to
+it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) are the same.
+
+- **One model**: Ollama's (`http://127.0.0.1:11434`), the one in `model`, else the best Ollama has
+  (Qwen 3, Qwen 2.5, Gemma 3, Llama 3.x… in that order). It talks, uses the tools, and writes the
+  emojis and `[tags]` its face shows, in one answer, streamed: each sentence is said as soon as
+  it's written.
+- **Tools, hand-rolled**: the model ends an answer with one line of JSON, `{"tool": "name",
+  "arguments": {…}}`; the app runs it and hands the result back as the next message, until the
+  model answers in words (ten tools for one request at most). Not Ollama's tool calling, so any
+  model can do it.
+- **Tool Mac Tool Run's tools**: `run_script`, `run_flow`, `run_flow_code`, `check_flow`,
+  `list_scripts`, `list_runs`, `read_run`, `stop_run`, over its API (`http://127.0.0.1:8768`). The
+  scripts and flows (with what each does and takes) are fetched as the app opens, every five
+  minutes, and on `POST /api/tools`, and put in the model's instructions. Every run puts a card on
+  the Mac and waits for the user's click on Run. Runs are streamed, so each can be **cancelled**
+  at any point: while the card waits (the card is taken away and nothing runs) or while it runs
+  (it's stopped). The user's notes live there too (`utilities/library.py`): this app keeps no
+  library of its own.
+- **Its own tools**: `schedule` (`in_minutes`, or `at`: a local date and time such as
+  `"2026-10-24 17:30"`, `"17:30"`, `"tomorrow 9:00"`, `"friday 8:00"`), `list_schedules`,
+  `cancel_schedule` (an id, or `"all"`); `remember` and `forget` (its memory).
+- **Later**: when something scheduled comes due, the character shows itself (if it wasn't showing)
+  and the model is given the task to do now. Kept across restarts; one due while the app was
+  closed is done as it opens, saying it's late.
+- **Its habits** (one model playing what Super Voice gave three): understand what's wanted and own
+  it until it's delivered; do it with a tool, never claiming what no tool did; check what came
+  back with suspicion before answering. The app steps in at the moments it matters: an answer
+  that promises work with no call is sent back; a tool call that can't be read is asked for again;
+  a run that failed brings a note to work out why before retrying; after a request that took work,
+  a quiet moment (nothing said) to save what it taught.
+- **Memory**: up to 60 short notes in three sections (`user`, `playbook`, `mistakes`), read every
+  turn, written by the model, shown in the chat window (where the user can delete them), plus the
+  user's standing instructions.
+- **Heard**: what the ears write down is first compared with what the character just said
+  (`/api/echo`'s comparison), so its own voice coming back is dropped; said over it, it cuts in.
+  "Stop" stops it talking, "cancel" (or "never mind") calls off whatever it's doing, "new chat"
+  starts over, all without the model. A phrase that sounds unfinished ("…and") waits a moment for
+  the rest.
+
+### `POST /api/chat`
+
+```bash
+curl -s localhost:8769/api/chat -d '{"text": "what is on my list for later?", "wait": true}'
+# {"ok":true,"id":"e12","reply":"You've one thing: stretch at 17:30.","tools":[{"name":"list_schedules","state":"done","result":"s1: today at 17:30 …"}]}
+```
+
+`text` is required; `wait: true` answers once the request is over (with `reply`, what was said;
+`tools`, each tool used and how it went; `error` if the model couldn't be reached), else at once
+with `202` and the entry's `id`. `show: false` keeps the character hidden. The reply is said out
+loud either way. `GET /api/chat?limit=50` gives the conversation's entries (`user`, `assistant`,
+`tool` with `name`, `args`, `state` (`working`, `sending`, `waiting` for the click, `running`,
+`done`, `failed`, `cancelled`), `output`, `result`; `schedule`, `note`, `error`, `divider`).
+
+### `POST /api/heard`
+
+`{"text": "what's the weather", "at": 1792812247715, "seconds": 1.4}` (`at` and `seconds`
+optional): for another app that listens. Answers what came of it: `{"said": "…"}`, `{"held":
+true}` (waiting for the rest), `{"dropped": "echo"}`, `{"command": "cancel"}`…
+
+### `GET /api/events`, for the assistant
+
+Besides the speech events, the stream carries `entry` (a conversation entry added or changed),
+`assistant` (what it's doing: `phase` is `idle`, `thinking`, `tool` or `learning`), `ears` (`off`,
+`loading`, `listening`, `hearing`, `writing`, `paused`, `failed`), `heard`, `schedules`, `memory`,
+`tools` and `status`.
+
 ## With Super Voice
 
-Super Voice (`127.0.0.1:8767`) is the ears and the model. With Super Face running, what Super Voice
-says (AI Listen's Tom, Jerry and Jane, and its `/api/say`) is said by the avatar, tagged
-`"source": "supervoice"`; each phrase it hears is checked with `POST /api/echo` first, so it doesn't
-take the avatar's voice for yours; and the avatar's expressions come from Super Voice's model
-(`POST /api/model/chat`), the one AI Listen talks with, so there's one model for both. When Super
-Face isn't running, Super Voice speaks with its own Kokoro voice as before.
+Super Voice's own Super Face link still works: it can make the character speak (`/api/speak`) and
+check what it hears with `/api/echo`. Run one assistant at a time, though: Super Face now listens
+and thinks for itself.

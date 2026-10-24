@@ -2,6 +2,8 @@
 // its answer, and the result goes back to it as the next message. Not Ollama's tool calling, so any
 // model can do it. This reads the calls out of an answer, and the words around them.
 
+import { tagCue } from '../shared/text.mjs';
+
 /** Where the JSON object starting at `from` ends (the index of its "}"), or -1 if it doesn't. */
 function objectEnd(s, from) {
   let depth = 0;
@@ -92,13 +94,48 @@ export function words(text) {
 }
 
 /**
- * The part of an answer still being written that is safe to say: everything before anything that
- * might become a tool call (a "{", or a code fence).
+ * The words without the asides written in brackets: stage directions like "(smiles)", "(looking
+ * puzzled)", "[pause]", "(nothing)". They're never meant to be said. What the face plays ([smile],
+ * [nod]) stays for it, and so do code and links, whose brackets are part of them.
  */
-export function sayable(partial) {
+export function withoutAsides(text) {
+  return String(text ?? '')
+    .split(/(```[\s\S]*?```|`[^`\n]*`|\[[^[\]\n]*\]\([^()\s]*\))/)
+    .map((part, i) => {
+      if (i % 2) return part; // code, or a link
+      for (let before; before !== part; ) {
+        before = part;
+        part = part.replace(/\([^()]*\)/g, '').replace(/\[([^[\]\n]*)\]/g, (all, inner) => (tagCue(inner) ? all : ''));
+      }
+      return part;
+    })
+    .join('');
+}
+
+/** Where an aside has begun and not yet ended (an "(" or "[" with no close after it), or -1. */
+function openAside(text) {
+  let depth = 0;
+  let from = -1;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '(' || c === '[') {
+      if (!depth++) from = i;
+    } else if ((c === ')' || c === ']') && depth) depth--;
+  }
+  return depth ? from : -1;
+}
+
+/**
+ * The part of an answer that is to be said: everything before anything that might become a tool
+ * call (a "{", or a code fence), without its asides. While it's still being written, it stops
+ * where an aside has begun, as there's no telling yet where it ends.
+ */
+export function sayable(partial, { final = false } = {}) {
   const s = String(partial ?? '');
   const cut = [s.indexOf('{'), s.indexOf('```')].filter((i) => i !== -1);
-  return cut.length ? s.slice(0, Math.min(...cut)) : s;
+  const prose = withoutAsides(cut.length ? s.slice(0, Math.min(...cut)) : s);
+  const open = final ? -1 : openAside(prose);
+  return open === -1 ? prose : prose.slice(0, open);
 }
 
 /** It looks like a call that couldn't be read: "tool" or "arguments" keys, but no call parsed. */
@@ -108,7 +145,18 @@ export function looksBroken(text) {
   return /"(tool|arguments)"\s*:/.test(s) || /^\s*\{\s*"/m.test(s) && /"\s*:/.test(s) && !/\}\s*$/.test(s.trim());
 }
 
-/** The answer says nothing is to be said: "(nothing)", "[silence]". */
+const SILENT = ['nothing', 'silence', 'silent', 'no reply', 'no answer', 'no response', 'none', 'nothing to say', 'nothing to add'];
+
+/** What's been written so far could still be the start of saying nothing is to be said. */
+export function maySayNothing(text) {
+  const s = String(text ?? '').trim().toLowerCase();
+  return SILENT.some((w) => w.startsWith(s));
+}
+
+/** The answer says nothing is to be said: "nothing", "(nothing)", "(looking puzzled) (nothing)", "[silence]". */
 export function isSilent(text) {
-  return /^[([]?\s*(nothing|silence|silent|no reply|no answer|no response|none|nothing to (say|add))\s*[)\]]?[.!]?$/i.test(String(text ?? '').trim());
+  const s = String(text ?? '').trim();
+  const left = withoutAsides(s).trim();
+  if (s && /^[\s.,;:!?…-]*$/.test(left)) return true; // only asides
+  return /^(nothing|silence|silent|no reply|no answer|no response|none|nothing to (say|add))[.!]?$/i.test(left);
 }

@@ -2,7 +2,7 @@
 // the speech record are handed in, so this is tested without Electron.
 
 import { characterOf } from '../shared/characters.mjs';
-import { catalogJSON, expressionName, gestureName, headName, moodName, poseName } from '../shared/catalog.mjs';
+import { LOOKS, TURNS, catalogJSON, expressionName, gestureName, headName, moodName, poseName } from '../shared/catalog.mjs';
 import { VOICES, resolveVoice, voiceJSON } from '../shared/voices.mjs';
 import { direct, merge } from '../shared/director.mjs';
 import { parse } from '../shared/text.mjs';
@@ -203,7 +203,7 @@ export function createApi({ speech, face, settings, version, updater = null, doc
       }
       case '/api/express': {
         const d = direction(await body(req));
-        if (!Object.keys(d).length) bad('send at least one of mood, expression, gesture, head, pose, look');
+        if (!Object.keys(d).length) bad('send at least one of mood, expression, gesture, head, pose, look, turn');
         const b = d;
         if (b.show !== false) face.show();
         delete b.show;
@@ -478,7 +478,7 @@ export function createApi({ speech, face, settings, version, updater = null, doc
   return handle;
 }
 
-/** The mood, expression, gesture, head movement, pose and look a request asks for (checked). */
+/** The mood, expression, gesture, head movement, pose, look and turn a request asks for (checked). */
 export function direction(b) {
   const d = {};
   const check = (key, fn, what) => {
@@ -493,8 +493,12 @@ export function direction(b) {
   check('head', headName, 'head movement');
   check('pose', poseName, 'pose');
   if (b.look !== undefined) {
-    if (!['camera', 'ahead', 'away'].includes(b.look)) bad('look is camera, ahead or away');
+    if (!LOOKS.includes(b.look)) bad(`look is ${LOOKS.join(', ')}`);
     d.look = b.look;
+  }
+  if (b.turn !== undefined) {
+    if (!TURNS.includes(b.turn)) bad(`turn is ${TURNS.join(', ')}`);
+    d.turn = b.turn;
   }
   if (b.duration !== undefined) {
     const n = Number(b.duration);

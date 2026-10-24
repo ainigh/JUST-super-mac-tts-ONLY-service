@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { calls, isSilent, looksBroken, sayable, words } from '../src/main/calls.mjs';
+import { calls, isSilent, looksBroken, maySayNothing, sayable, withoutAsides, words } from '../src/main/calls.mjs';
 import { Ollama, pick, stripThinking } from '../src/main/model.mjs';
 import { canonical, catalogPrompt, claimsInability, promisesWork, stamp, systemPrompt } from '../src/main/prompt.mjs';
 import { Scheduler, dueFrom, fromNow, longTime, parseAt, runTool } from '../src/main/scheduler.mjs';
@@ -30,7 +30,23 @@ test('what can be said of an answer while it is being written', () => {
   assert.equal(sayable('Plain words.'), 'Plain words.');
   assert.ok(looksBroken('{"tool": "run_script", "arguments": {"script": "a.sh"'));
   assert.ok(!looksBroken('All good.'));
-  assert.ok(isSilent('(nothing)') && isSilent('[silence].') && !isSilent('Nothing came back.'));
+  assert.ok(isSilent('(nothing)') && isSilent('[silence].') && isSilent('nothing') && isSilent('Nothing.') && !isSilent('Nothing came back.'));
+  assert.ok(isSilent('(looking puzzled) (nothing)') && isSilent('(shrugs)'), 'only asides: nothing to say');
+  assert.ok(maySayNothing('') && maySayNothing('Noth') && !maySayNothing('No, it') && !maySayNothing('Sure'));
+});
+
+test('asides in brackets are never said: stage directions go, cues for the face, code and links stay', () => {
+  assert.equal(withoutAsides('(looking puzzled) (nothing)').trim(), '');
+  assert.equal(withoutAsides('(smiles) Sure, done. [looks around] Anything else?'), ' Sure, done.  Anything else?');
+  assert.equal(withoutAsides('Done (well (mostly)) now.'), 'Done  now.', 'nested');
+  assert.equal(withoutAsides('Great! [thumbup] [mood: happy]'), 'Great! [thumbup] [mood: happy]', 'cues the face plays stay for it');
+  assert.equal(withoutAsides('Run `f(x)` or see [the docs](https://x.y/a).'), 'Run `f(x)` or see [the docs](https://x.y/a).');
+  assert.equal(withoutAsides('```js\nf(1)\n``` (smiles)'), '```js\nf(1)\n``` ');
+  // While it's written: what follows an aside that hasn't ended waits; once it ends, it's gone.
+  assert.equal(sayable('Sure. (smi'), 'Sure. ');
+  assert.equal(sayable('Sure. (smiles) It is'), 'Sure.  It is');
+  assert.equal(sayable('Sure. (it is', { final: true }), 'Sure. (it is', 'at the end, a bracket never closed is just a bracket');
+  assert.equal(sayable('Let me look. (checks) {"tool": "x"}'), 'Let me look.  ');
 });
 
 test('the harness knows promises and "I can\'t"', () => {
@@ -113,6 +129,7 @@ test('the prompt: the character, Tool Mac Tool Run\'s tools as it gives them, th
   };
   const p = systemPrompt({ character: CHARACTERS[2], catalog, notes: m, now: new Date(2026, 9, 24).getTime() });
   assert.match(p, /You are Sofia/);
+  assert.doesNotMatch(p, /3D|character|avatar|gesture|your (?:face|hands|body)|\[tags?\]|dark suit/i, 'the model knows nothing of the character it is shown as: how it moves comes from its words, afterwards');
   assert.match(p, /^- web_fetch: Reads any web address\. Arguments: url \(string\): the address; find \(string, optional\): words\.$/m);
   assert.match(p, /^- run_script: Runs a script\. Arguments: script \(string\): its name\. \[waits for the user to click Run on the Mac\]$/m);
   assert.match(p, /^- teleport: A tool this app has never heard of\.$/m, 'what Tool Mac Tool Run adds is there the day it ships');

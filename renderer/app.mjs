@@ -2,8 +2,11 @@
 // HeadTTS makes the voice (Kokoro, in the page: WebGPU, else WASM), with the timing of every word
 // and viseme, so the lips follow the words exactly. Each sentence gets a mood, an expression, a
 // gesture and a head movement: what was asked, the cues written in the text, and what the director
-// reads in the sentences themselves (no model). While the assistant works it out, it turns away and
-// looks busy, and faces the user again the moment they talk or it speaks. The ears (ears.mjs) listen here too. The main process sends commands (speak, stop,
+// reads in the sentences themselves (no model), and the way it faces, sentence by sentence. While
+// the assistant works it out, it gets down to it (kneeling, sitting or bent over the work, turned
+// away; to the page, for the browser), and stands and faces the user again the moment they talk or
+// it speaks. Its hands are kept out of
+// its head (keep-clear.mjs). The ears (ears.mjs) listen here too. The main process sends commands (speak, stop,
 // express, tts, ears, settings) and is told how it goes; a click on the character opens the chat.
 
 import { TalkingHead } from 'talkinghead';
@@ -13,6 +16,8 @@ import { characterOf } from '/src/shared/characters.mjs';
 import { directOn, merge } from '/src/shared/director.mjs';
 import { parse, sentences } from '/src/shared/text.mjs';
 import { Ears } from './ears.mjs';
+import { bothHands } from './gestures.mjs';
+import { keepClear } from './keep-clear.mjs';
 
 const RATE = 24000; // Kokoro's: 24 kHz mono
 
@@ -23,6 +28,7 @@ const abs = (p) => new URL(p, location.href).href;
 
 let cfg = await bridge.getSettings();
 let head; // TalkingHead
+let clear = null; // keeps the hands out of the head, for the avatar shown
 let tts; // HeadTTS
 let backend = null;
 let ttsState = { state: 'loading' };
@@ -102,8 +108,36 @@ function createHead() {
     avatarIdleEyeContact: 0.3,
     avatarSpeakingEyeContact: 0.7,
     modelFPS: 30,
+    update: onFrame, // each frame, once the body is posed
   });
+  bothHands(head); // "wide" and "bothup", for both hands at once
   window.head = head; // handy in the developer tools
+}
+
+/** Each frame, once the body is posed: a hand in the head is moved out of it, and the head kept over the middle. */
+function onFrame(dt) {
+  try {
+    clear?.update();
+  } catch (err) {
+    console.warn('Keeping the hands clear of the head failed, so it stopped:', err);
+    clear = null;
+  }
+  keepCentred(dt);
+}
+
+// Kneeling or sitting and turned, the body swings round its feet and the head goes off to one side
+// of the narrow window: the whole body is slid back (smoothly) to keep the head over the middle.
+// Standing, the head is near enough over the feet, and nothing moves.
+const centre = { base: 0, head: null };
+const OFF_CENTRE = 0.05; // m the head may be off the middle before the body is slid back
+
+function keepCentred(dt) {
+  const body = head?.armature;
+  if (!body || !centre.head) return;
+  if (!clear?.arms) body.updateMatrixWorld(true); // else the hands' check just did
+  const off = centre.head.matrixWorld.elements[12] - body.position.x; // the head, from the feet
+  const over = Math.sign(off) * Math.max(0, Math.abs(off) - OFF_CENTRE);
+  body.position.x += (centre.base - over - body.position.x) * Math.min(1, dt / 250);
 }
 
 let avatarLoaded = Promise.resolve(); // settles once the avatar being loaded is in (or isn't)
@@ -115,9 +149,14 @@ async function loadAvatar() {
   avatarState = 'loading';
   report();
   const c = characterOf(cfg.avatar);
+  clear = null;
+  centre.head = null;
   try {
     await head.showAvatar({ url: `./avatars/${c.file}`, body: c.body, avatarMood: cfg.mood, lipsyncLang: 'en', ...(c.baseline ? { baseline: c.baseline } : {}) });
     head.setView(cfg.view);
+    clear = keepClear(head.armature);
+    centre.base = head.armature.position.x;
+    centre.head = head.armature.getObjectByName('Head');
     avatarState = 'ready';
   } catch (err) {
     console.error('The avatar didn’t load:', err);
@@ -254,29 +293,43 @@ function playExpression(name, seconds) {
   if (e) head.playGesture(e.emoji, Math.max(1.2, Math.min(seconds, 4)));
 }
 
-/** Shows `d` (mood, expression, gesture, head, pose, look) now. */
+/** Which way it faces as it talks, in radians about the vertical (as the user sees it: left is negative). */
+const TURN = { user: 0, left: -0.42, right: 0.42 };
+
+/** Shows `d` (mood, expression, gesture, head, pose, look, turn) now. */
 function show(d, seconds = 3) {
   if (d.mood && d.mood !== head.getMood()) head.setMood(d.mood);
   if (d.pose) head.playPose(d.pose, null, 30);
   if (d.expression) playExpression(d.expression, d.duration || seconds);
   if (d.head) head.playGesture(d.head);
   if (d.gesture) head.playGesture(d.gesture, d.duration || Math.min(3, Math.max(1.5, seconds)), Math.random() < 0.5);
+  if (d.turn in TURN) turnTo(TURN[d.turn] * between(0.8, 1.15), 900);
   if (d.look === 'camera') head.lookAtCamera(2000);
   else if (d.look === 'ahead') head.lookAhead(2000);
   else if (d.look === 'away') head.lookAhead(3500);
+  else if (d.look === 'down') head.lookAt(null, innerHeight * 1.3, 1500);
 }
 
 // ---------------------------------------------------------------- busy: while it works it out
 
-// While the assistant thinks or a tool runs, and nothing is being said, the character turns away
-// from the user and gets on with it: heads down, a look up, a frown of thought, a hand counting
-// things off, now and then turning to the other side, and a soft pip every so often says it's
-// busy, not gone. The moment the user talks, or it has something to say, it turns back and
-// faces them, and the pips stop.
+// While the assistant thinks or a tool runs, and nothing is being said, the character gets down to
+// it: it kneels, crouches, sits or bends over its work (never upright, and never looking up), turned
+// away from the user, and keeps at it: reading, glancing aside, frowning in thought, counting
+// things off, weighing something up, shaking its head at a dead end, a small "got it", shifting
+// how it sits, swaying. Working in the browser, it turns to the page (towards the middle of the
+// screen, where the page will be) and now and then to the side. A soft pip every so often says
+// it's busy, not gone. The moment the user talks, or it has something to say, it stands, turns
+// back and faces them, and the pips stop.
 
-const BUSY_TURN = 0.7; // radians: well turned away, the face still in view
-const BUSY_AFTER = 700; // ms of working before it turns away (a quick answer doesn't)
-const busy = { wanted: false, hearing: false, on: false, side: 1, eye: null, timers: [], startTimer: 0, turn: 0 };
+const BUSY_TURN = 0.75; // radians: turned well away, the face still in view
+const PAGE_TURN = 1.85; // to the page: mostly its back to the user
+const SIDE_TURN = 1.3; // side on to the user
+const BUSY_AFTER = 700; // ms of working before it gets down to it (a quick answer doesn't)
+/** The tools that work in the browser (by name): for them it turns to the page. */
+const BROWSER = /browser|chrome|safari|straw|web|fetch|url|page|site|search|navigate|click|scrape|google/i;
+/** How it gets down to work, by how much of it the window shows: low down when all of it shows. */
+const LOW_POSES = { full: ['kneel', 'oneknee', 'sitting', 'bend'], mid: ['bend'], upper: ['bend'], head: [] };
+const busy = { wanted: false, hearing: false, on: false, side: 1, eye: null, timers: [], startTimer: 0, turn: 0, browser: false, page: 0, toPage: true, pose: null };
 
 /** Turns the whole body to `angle` (radians about the vertical) over `ms`, eased. */
 function turnTo(angle, ms) {
@@ -300,16 +353,40 @@ function turnTo(angle, ms) {
 
 const later = (ms, fn) => busy.timers.push(setTimeout(fn, ms));
 const between = (a, b) => a + Math.random() * (b - a);
+const oneOf = (list) => list[Math.floor(Math.random() * list.length)];
+
+/** Gets down to work in one of the low poses the window shows (a different one from the last). */
+function getDown() {
+  const poses = LOW_POSES[cfg.view] || LOW_POSES.full;
+  const choices = poses.filter((p) => p !== busy.pose);
+  if (!choices.length) return;
+  busy.pose = oneOf(choices);
+  head.playPose(busy.pose, null, 600);
+}
+
+/** Which way it faces while it works: the page (or the side, now and then) for the browser, else turned away. */
+function workAngle() {
+  if (!busy.browser) return busy.side * BUSY_TURN * between(0.85, 1.15);
+  const toward = busy.page || busy.side;
+  return toward * (busy.toPage ? PAGE_TURN : SIDE_TURN) * between(0.92, 1.06);
+}
+
+/** Looks down at the work, never up: `deep` how far down (1 straight ahead, 2 well down). */
+const lookDown = (deep, ms) => head.lookAt(null, innerHeight * deep, ms);
 
 /** What it does next while it works, weighted; never the same twice running. */
 const BEATS = [
-  [3, 'down', () => head.lookAt(null, innerHeight * 1.6, 3200)], // heads down, reading
-  [2, 'up', () => (head.lookAt(null, -innerHeight * 0.4, 2200), playExpression('thinking', 2.2))], // a look up, thinking
-  [2, 'aside', () => head.lookAhead(2600)],
-  [2, 'serious', () => playExpression(Math.random() < 0.5 ? 'thinking' : 'pensive', 2.5)],
+  [4, 'read', () => lookDown(between(1.3, 1.9), 3200)], // head down, reading
+  [2, 'aside', () => head.lookAhead(2600)], // a look along the way it faces
+  [2, 'serious', () => playExpression(oneOf(['thinking', 'pensive', 'unamused']), 2.5)],
+  [1, 'glance', () => playExpression('glance', 1.6)],
   [1, 'count', () => head.playGesture('index', 1.8, busy.side < 0)], // counting things off
-  [1, 'nod', () => (head.lookAt(null, innerHeight * 1.4, 1800), head.playGesture('yes'))], // that checks out
-  [1, 'pose', () => head.playPose(Math.random() < 0.5 ? 'hip' : 'side', null, 5)],
+  [1, 'weigh', () => head.playGesture('side', 1.8, Math.random() < 0.5)], // weighing it up
+  [1, 'got it', () => (head.playGesture('ok', 1.6, busy.side > 0), playExpression('smile', 1.4))],
+  [1, 'nod', () => (lookDown(1.4, 1800), head.playGesture('yes'))], // that checks out
+  [1, 'not that', () => (playExpression('thinking', 1.5), head.playGesture('no'))], // a dead end
+  [1, 'shift', () => getDown()], // sits another way
+  [1, 'sway', () => turnTo(workAngle() + between(-0.25, 0.25), 1500)],
 ];
 let lastBeat = '';
 
@@ -324,7 +401,7 @@ function beat() {
   } catch (err) {
     console.warn('A busy beat failed:', err);
   }
-  later(between(2200, 4200), beat);
+  later(between(1800, 3800), beat);
 }
 
 // The busy tone. A pip is shorter than the ears take for speech (250 ms), and the pips are further
@@ -355,28 +432,31 @@ function pips() {
   later(PIP_EVERY, pips);
 }
 
-/** Now and then it turns to the other side, as someone busy shifts about. */
+/** Now and then it shifts: to the other side, or, at the browser, from the page to the side and back. */
 function swapSides() {
   if (!busy.on) return;
-  busy.side = -busy.side;
+  if (busy.browser) busy.toPage = !busy.toPage;
+  else busy.side = -busy.side;
   head.lookAhead(1600);
-  turnTo(busy.side * BUSY_TURN * between(0.8, 1.1), 1600);
-  later(between(8000, 13000), swapSides);
+  turnTo(workAngle(), 1600);
+  later(busy.browser ? between(5000, 9000) : between(8000, 13000), swapSides);
 }
 
 function startBusy() {
   busy.on = true;
   busy.side = -busy.side; // not always the same way round
+  busy.toPage = true;
   busy.eye = head.opt.avatarIdleEyeContact;
   head.opt.avatarIdleEyeContact = 0; // it isn't looking at the user now
-  turnTo(busy.side * BUSY_TURN, 1100);
-  head.lookAt(null, innerHeight * 1.5, 2500);
+  getDown();
+  turnTo(workAngle(), 1100);
+  lookDown(1.5, 2500);
   later(900, beat);
   later(300, pips);
-  later(between(8000, 12000), swapSides);
+  later(between(6000, 10000), swapSides);
 }
 
-/** Back to the user: quickly when they've started talking. */
+/** Back to the user: it stands, turns and looks at them (quickly when they've started talking). */
 function endBusy() {
   busy.on = false;
   busy.timers.forEach(clearTimeout);
@@ -389,8 +469,19 @@ function endBusy() {
   } catch {
     /* none playing */
   }
+  if (busy.pose) head.playPose(oneOf(['straight', 'side']), null, 5);
+  busy.pose = null;
   turnTo(0, busy.hearing ? 450 : 700);
   head.lookAtCamera(busy.hearing ? 2500 : 1800);
+}
+
+/** At the browser or not: it turns to the page, or back from it, as the tool changes. */
+function setBrowser(on, page) {
+  busy.page = page || 0;
+  if (busy.browser === on) return;
+  busy.browser = on;
+  busy.toPage = true;
+  if (busy.on) turnTo(workAngle(), 1200);
 }
 
 /** Busy only while it works, nobody is talking, and nothing is being said. */
@@ -520,10 +611,11 @@ async function perform(u, gen) {
     if (gen !== generation) return;
     inFlight.delete(u.id);
     if (!queue.length && !inFlight.size) {
-      // Nothing more to say: back to the resting mood; a sentence soon after still carries on.
+      // Nothing more to say: back to the resting mood, facing the user; a sentence soon after still carries on.
       if (head.getMood() !== cfg.mood) head.setMood(cfg.mood);
+      if (!busy.on) turnTo(0, 800);
       if (carried) {
-        carried.state.mood = cfg.mood;
+        Object.assign(carried.state, { mood: cfg.mood, facing: 'user', squareOn: 0 });
         carried.until = performance.now() + 3000;
       }
     }
@@ -549,7 +641,10 @@ function stop(ids) {
   inFlight.clear();
   queue.unshift(...again);
   caption('');
-  if (!queue.length) head.setMood(cfg.mood);
+  if (!queue.length) {
+    head.setMood(cfg.mood);
+    turnTo(0, 600);
+  }
   updateBusy();
   pump();
 }
@@ -607,11 +702,12 @@ const COMMANDS = {
       ears.turn(on && avatarState === 'ready');
     }
   },
-  /** What the assistant is doing, on the face: thinking while it works out an answer. */
-  attend: async ({ state }) => {
+  /** What the assistant is doing, on the body: at work while it thinks or a tool runs (`tool`, by name; `page`, which way the page is). */
+  attend: async ({ state, tool, page }) => {
     await avatarLoaded; // the voice may still be downloading: the body needn't wait for it
     if (avatarState !== 'ready') return;
     busy.wanted = state === 'thinking' || state === 'tool';
+    setBrowser(state === 'tool' && BROWSER.test(tool || ''), page);
     if (state === 'thinking' && !inFlight.size && !busy.on) playExpression('thinking', 2.5);
     if (state === 'listening') head.lookAtCamera(1500);
     updateBusy();
@@ -679,10 +775,13 @@ const ears = new Ears({
   onState: (state) => {
     bridge.event({ type: 'ears', state });
     document.body.dataset.ears = state.state;
-    // Someone's talking: it stops what it's doing, turns, and looks at them.
+    // Someone's talking: it stops what it's doing, stands, turns, and looks at them.
     busy.hearing = state.state === 'hearing';
     updateBusy();
-    if (busy.hearing && avatarState === 'ready' && !inFlight.size) head.lookAtCamera(2000);
+    if (busy.hearing && avatarState === 'ready' && !inFlight.size) {
+      head.lookAtCamera(2000);
+      turnTo(0, 450);
+    }
   },
   onHeard: (p) => bridge.event({ type: 'heard', ...p }),
 });

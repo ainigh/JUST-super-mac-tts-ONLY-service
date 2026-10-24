@@ -6,7 +6,12 @@
 // (kept until the feeling changes), an expression, a hand gesture, a head movement, where to look
 // and, in a long answer, a pose; what's said later in a sentence ("…, but it failed") is shown at
 // that word. It's kept varied (the same gesture twice running is dropped) and quiet when the
-// sentence is just facts.
+// sentence is just facts. The small words carry it the rest of the way: who is meant ("you", "we",
+// "they"), where and when ("here", "up", "later", "ago"), how much and how sure ("all", "a bit",
+// "maybe", "definitely"), "not", "because", "if"… each moves the hands, the head or the body a
+// little at its word. And it doesn't stand square-on the whole time: it faces the user for what's
+// said to them, and turns aside for thinking aloud, for other people, for what's past or to come,
+// and now and then anyway. The model writing the words knows nothing of any of this.
 
 import { STANDING_POSES } from './catalog.mjs';
 
@@ -80,7 +85,60 @@ const KINDS = [
   { kind: 'contrast', re: any(String.raw`but|however|on the other hand|alternatively|whereas|instead|although|though|still|then again|that said|even so`), strength: 1, gesture: 'side' },
   { kind: 'offer', re: start(String.raw`would you like|do you want|want me to|shall i|should i|can i|may i|how about|what about|if you (?:like|want)|i can (?:also )?|i could`), strength: 2, expression: ['smile', 'warm'], gesture: 'side', look: 'camera' },
   { kind: 'self', re: start(String.raw`i'?m [a-z]+,? your|my name is|i'?m your|this is [a-z]+ speaking|it'?s me`), strength: 2, expression: 'warm', gesture: 'side', look: 'camera' },
+  { kind: 'stop', re: start(String.raw`stop(?: right there)?|halt|hold it|freeze|whoa there|wait a (?:sec(?:ond)?|minute|moment)`), strength: 2, gesture: 'bothup', look: 'camera', turn: 'user' },
+
+  // ---- the small words, each a small touch at its word. Phrases above have first claim on them.
+  // Who's meant.
+  { kind: 'you', re: any(String.raw`you(?:rs?|rself|rselves|'ll|'re|'ve|'d)?`), strength: 1, gesture: 'side', look: 'camera', turn: 'user' },
+  { kind: 'we', re: any(String.raw`we|us|our|ours|ourselves|let'?s|together|both of us`), strength: 1, expression: 'warm', gesture: ['wide', 'side'], turn: 'user' },
+  { kind: 'they', re: any(String.raw`they|them|their|theirs|themselves|he|him|his|she|her|hers|someone|somebody|people|others|everyone else`), strength: 1, look: 'ahead', turn: 'aside' },
+  // Here and there.
+  { kind: 'this', re: any(String.raw`this|these|here|right here|this one`), strength: 1, gesture: 'index' },
+  { kind: 'that', re: any(String.raw`those|over there|out there|that one|that way|elsewhere|somewhere else`), strength: 1, gesture: 'side', look: 'ahead', turn: 'aside' },
+  { kind: 'far', re: any(String.raw`far(?: away| off)?|distant|remote|miles (?:away|off)|abroad|overseas`), strength: 1, gesture: 'side', look: 'ahead', turn: 'aside' },
+  { kind: 'near', re: any(String.raw`near(?:by)?|close (?:to|by)|next to|beside|right by|around the corner`), strength: 1, gesture: 'ok' },
+  { kind: 'up', re: new RegExp(String.raw`(?<!\b(?:set|look|pick|sign|make|end|show|come|turn|give|wake|back|line|catch|hang|fill|clean|open|wrap|bring|follow|keep|speak|cheer|mix|break|split|warm|shut|start|boot|load|call|hold|pull|bring|put|sum|top|speed|catch) )\b(?:up(?! to\b)|above|on top|upwards?|higher|highest|rise|rising|rose|raised?|climb(?:s|ed|ing)?|soar(?:s|ed|ing)?|peak(?:s|ed)?)\b`, 'g'), strength: 1, gesture: 'handup' },
+  { kind: 'down', re: any(String.raw`down(?:wards?)?|below|beneath|under(?:neath)?|lower|lowest|fall(?:s|ing)?|fell|drop(?:s|ped|ping)?|sink(?:s|ing)?|sank`), strength: 1, look: 'down' },
+  { kind: 'inside', re: any(String.raw`inside|into|within|contains?|included?|including`), strength: 1, gesture: 'namaste' },
+  { kind: 'outside', re: any(String.raw`outside|out of|away from|apart from|except|excluding`), strength: 1, gesture: 'side', turn: 'aside' },
+  { kind: 'around', re: any(String.raw`across|throughout|everywhere|all over|worldwide|anywhere|all around`), strength: 1, gesture: 'wide' },
+  { kind: 'between', re: any(String.raw`between|among|versus|vs|compared (?:to|with)|either|on (?:one|each) side`), strength: 1, gesture: 'side' },
+  // When.
+  { kind: 'past', re: any(String.raw`ago|earlier|previously|yesterday|last (?:time|night|week|month|year)|back then|used to|formerly|before that|originally|at first`), strength: 1, look: 'ahead', turn: 'left' },
+  { kind: 'future', re: any(String.raw`later|afterwards?|after that|soon|tomorrow|next (?:time|week|month|year)|in the future|eventually|upcoming|tonight|from now on|ahead`), strength: 1, gesture: 'side', turn: 'right' },
+  { kind: 'now', re: any(String.raw`now|today|right now|currently|at the moment|at once|immediately|right away|instantly|straight away`), strength: 1, gesture: 'index', look: 'camera' },
+  // How much.
+  { kind: 'approx', re: any(String.raw`(?:about|around|roughly|approximately|nearly|almost|close to) (?=\d|one|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty|a (?:few|dozen|hundred|thousand|million)|half)|more or less|give or take|kind of|sort of|or so|somewhat`), strength: 1, expression: 'thinking', look: 'ahead' },
+  { kind: 'big', re: any(String.raw`big(?:ger|gest)?|huge|enormous|massive|giant|gigantic|vast|large(?:r|st)?|tons|loads|lots|a lot|plenty|so (?:much|many)|many|much|whole|entire(?:ly)?|everything|everyone|everybody|all(?! right)|every|completely|totally|fully|infinite|endless|countless|maximum`), strength: 1, gesture: 'wide' },
+  { kind: 'small', re: any(String.raw`small(?:er|est)?|tiny|little|a bit|bit|slight(?:ly)?|barely|hardly|only|just a|few|a few|short|brief(?:ly)?|minor|minimal|minimum|mini`), strength: 1, gesture: 'ok' },
+  { kind: 'more', re: any(String.raw`more|most|increase[sd]?|increasing|grow(?:s|ing|n)?|grew|gain(?:s|ed)?|extra|additional|further|plus`), strength: 1, gesture: 'handup' },
+  { kind: 'less', re: any(String.raw`less|least|fewer|decrease[sd]?|decreasing|shrink(?:s|ing)?|shrank|reduce[sd]?|reducing|minus`), strength: 1, gesture: 'ok', look: 'down' },
+  { kind: 'none', re: any(String.raw`nothing|nobody|no one|none|neither|nor|zero|nowhere|without`), strength: 1, head: 'no' },
+  // How good.
+  { kind: 'better', re: any(String.raw`better|best|improve[sd]?|improving|upgrade[sd]?`), strength: 1, expression: 'smile', gesture: 'thumbup', valence: 1 },
+  { kind: 'good', re: any(String.raw`good|nice|fine|cool|neat|handy|useful|easy|easier|simple|simply`), strength: 1, expression: 'smile', valence: 1 },
+  { kind: 'bad', re: any(String.raw`worse|worst|bad|poor(?:ly)?|wrong|hard(?:er)?|difficult|tricky|complicated|tough|messy|slow(?:er)?|annoying`), strength: 1, expression: ['grimace', 'frown'], valence: -1 },
+  // How sure.
+  { kind: 'sure', re: any(String.raw`definitely|certainly|surely|clearly|obviously|of course|no doubt|for sure|always|guaranteed|exactly|precisely|indeed`), strength: 1, head: 'yes', look: 'camera' },
+  { kind: 'maybe', re: any(String.raw`maybe|perhaps|possibly|probably|might|may|could be|likely|unlikely|seems?|apparently`), strength: 1, expression: 'thinking', look: 'ahead', turn: 'aside' },
+  { kind: 'very', re: any(String.raw`very|really|extremely|incredibly|super|truly|highly|deeply|absolutely|totally|seriously|such a|quite`), strength: 1, head: 'yes' },
+  { kind: 'not', re: any(String.raw`not|never|(?:do|does|did|is|are|was|were|ca|wo|could|should|would|have|has|had|must|need|ai)n'?t|cannot|no longer|no more`), strength: 1, head: 'no' },
+  // How it hangs together.
+  { kind: 'because', re: any(String.raw`because|since|so that|therefore|thus|hence|that'?s why|which means|that means|as a result|due to`), strength: 1, gesture: 'index', look: 'camera' },
+  { kind: 'if', re: any(String.raw`if|unless|in case|as long as|provided|whether|otherwise|suppose|assuming`), strength: 1, expression: 'thinking', gesture: 'side' },
+  { kind: 'example', re: any(String.raw`for example|for instance|such as|e\.g\.|like this|like that`), strength: 1, gesture: 'index', turn: 'aside' },
+  { kind: 'sum', re: any(String.raw`in short|basically|essentially|overall|in the end|all in all|to sum up|in summary|anyway|in a nutshell|bottom line`), strength: 1, gesture: 'wide', look: 'camera', turn: 'user' },
+  { kind: 'also', re: any(String.raw`also|too|as well|besides|moreover|furthermore|in addition|on top of that`), strength: 1, gesture: 'side' },
+  // How.
+  { kind: 'fast', re: any(String.raw`quick(?:ly|er|est)?|fast(?:er|est)?|rapid(?:ly)?|hurry|asap|in no time|in a flash|speedy`), strength: 1, expression: 'grin', gesture: 'index' },
+  { kind: 'gentle', re: any(String.raw`slowly|gently|careful(?:ly)?|calm(?:ly)?|gradual(?:ly)?|step by step|take your time|bit by bit`), strength: 1, expression: 'warm', gesture: 'namaste' },
+  { kind: 'joined', re: any(String.raw`combine[sd]?|join(?:s|ed)?|merge[sd]?|both|each other|in common`), strength: 1, gesture: 'namaste' },
+  { kind: 'apart', re: any(String.raw`apart|separate(?:ly)?|each|split|divide[sd]?|alone|individually|one by one|different`), strength: 1, gesture: 'side' },
+  { kind: 'aha', re: any(String.raw`aha|ooh|eureka|there it is|got it now`), strength: 1, expression: 'delighted', gesture: 'index' },
 ];
+
+/** What's said to the user: said facing them. */
+const TO_THEM = new Set(['greeting', 'farewell', 'welcome', 'thanks', 'empathy', 'apology', 'please', 'reassure', 'praise', 'offer', 'self', 'reminder', 'important', 'instruct', 'wait', 'stop', 'you', 'sum', 'yes', 'no']);
 
 /** Words that turn what follows round: "not great", "not bad". */
 const NEGATED = /\b(?:not|never|no|hardly|barely|isn'?t|aren'?t|wasn'?t|weren'?t|don'?t|doesn'?t|didn'?t|won'?t|can'?t|couldn'?t|shouldn'?t|wouldn'?t)\s+(?:\w+\s+)?$/;
@@ -114,9 +172,13 @@ export function read(sentence) {
       if (to === from || taken.some(([a, b]) => from < b && to > a)) continue;
       taken.push([from, to]);
       let hit = { ...k, at: from / len, start: from };
-      if (k.valence && NEGATED.test(s.slice(Math.max(0, from - 24), from))) {
-        // "not great" is a small letdown; "not bad" a small smile.
-        hit = k.valence > 0 ? { kind: `not ${k.kind}`, strength: 1, expression: 'disappointed', at: hit.at, start: from } : { kind: `not ${k.kind}`, strength: 1, expression: 'smile', at: hit.at, start: from };
+      const before = s.slice(Math.max(0, from - 24), from);
+      const negated = k.valence && before.match(NEGATED);
+      if (negated) {
+        // "not great" is a small letdown; "not bad" a small smile. The "not" is part of it.
+        const at = from - before.length + negated.index;
+        taken.push([at, from]);
+        hit = { kind: `not ${k.kind}`, strength: 1, expression: k.valence > 0 ? 'disappointed' : 'smile', at: at / len, start: at };
       }
       hits.push(hit);
       break; // one of each kind a sentence
@@ -152,6 +214,9 @@ export function directOn(texts, { mood: resting = 'neutral', from = null } = {})
   let calm = from?.calm ?? 0; // sentences in a row that showed no feeling
   let prev = from?.prev ?? {}; // what the sentence before showed
   let said = from?.said ?? 0; // sentences said so far
+  let facing = from?.facing ?? 'user'; // where it faces: the user, or turned to the left or right
+  let squareOn = from?.squareOn ?? 0; // sentences in a row facing the user
+  let side = from?.side ?? 'right'; // the way it turns aside, this time
   texts.forEach((text) => {
     const t = String(text ?? '').trim();
     const s = norm(t);
@@ -159,26 +224,40 @@ export function directOn(texts, { mood: resting = 'neutral', from = null } = {})
     const hits = read(t);
     const d = { timed: [], kinds: hits.map((h) => h.kind) };
 
-    // What leads: the strongest kind said early (in its first 40%); later ones are shown at their word.
-    const early = hits.filter((h) => h.at <= 0.4);
-    const lead = early.length ? early.reduce((a, b) => (b.strength > a.strength ? b : a)) : hits[0];
+    // What leads: the strongest kind said early (in its first 40%, or its first few words); later
+    // ones are shown at their word.
+    const early = hits.filter((h) => h.at <= 0.4 || h.start <= 12);
+    // With nothing said early, a kind that matters leads anyway; a small word waits for its word.
+    const lead = early.length ? early.reduce((a, b) => (b.strength > a.strength ? b : a)) : hits[0]?.strength > 1 ? hits[0] : undefined;
     const set = (target, h, k, avoid) => {
       if (h[k] === undefined) return false;
       target[k] = pick(h[k], seed, avoid);
       return true;
     };
     for (const h of [lead, ...early.filter((x) => x !== lead)].filter(Boolean)) {
-      for (const k of ['mood', 'expression', 'gesture', 'head', 'look']) if (d[k] === undefined) set(d, h, k, prev[k]);
+      for (const k of ['mood', 'expression', 'gesture', 'head', 'look', 'turn']) if (d[k] === undefined) set(d, h, k, prev[k]);
     }
     const carried = new Set(); // what a "but" already shows
-    for (const h of hits.filter((x) => x.at > 0.4 && x !== lead).slice(0, 2)) {
+    let lastAt = 0;
+    for (const h of hits.filter((x) => !early.includes(x) && x !== lead)) {
+      if (d.timed.length >= 2) break;
       if (carried.has(h)) continue;
-      // Later in the sentence: a turn of feeling ("…, but it failed"), a "but", or a strong kind, at its word.
+      // Later in the sentence, at its word: a turn of feeling ("…, but it failed"), a "but", a strong
+      // kind, or, a little apart from the last, a small word that moves the hands, the head or the body.
       const turns = h.valence && Math.sign(h.valence) !== Math.sign(lead?.valence || 0);
-      if (!turns && h.strength < 3 && h.kind !== 'contrast') continue;
+      const strong = turns || h.strength >= 3 || h.kind === 'contrast';
+      if (!strong && h.at - lastAt < 0.25) continue;
       const c = { at: Math.round(Math.min(0.95, h.at) * 100) / 100 };
-      for (const k of ['mood', 'expression', 'gesture', 'head']) if (h[k] !== undefined) c[k] = pick(h[k], seed, d[k] ?? prev[k]);
-      if (Object.keys(c).length > 1) d.timed.push(c);
+      for (const k of ['mood', 'expression', 'gesture', 'head', 'turn', 'look']) {
+        if (h[k] === undefined || (!strong && (k === 'mood' || k === 'expression'))) continue;
+        const showing = k === 'mood' ? d.mood ?? mood : d[k] ?? prev[k];
+        const v = pick(h[k], seed, showing);
+        if (v !== showing) c[k] = v;
+      }
+      if (Object.keys(c).length > 1) {
+        d.timed.push(c);
+        lastAt = h.at;
+      }
       // A "but …" carries the feeling of what follows it.
       if (h.kind === 'contrast') {
         const after = hits.find((x) => x.start > h.start && x.valence);
@@ -198,6 +277,7 @@ export function directOn(texts, { mood: resting = 'neutral', from = null } = {})
       } else if (WH_QUESTION.test(s)) d.expression ??= 'thinking';
       else d.expression ??= 'smile';
       d.look ??= 'camera';
+      d.turn = 'user';
     }
     if (/!\s*["'”’)]*$/.test(t) && d.expression === undefined) d.expression = ['sad', 'fear', 'angry'].includes(d.mood ?? mood) ? 'shocked' : 'grin';
     if (/(?:\.\.\.|…)\s*$/.test(t) && d.expression === undefined) d.expression = (d.mood ?? mood) === 'sad' ? 'pensive' : 'thinking';
@@ -213,21 +293,43 @@ export function directOn(texts, { mood: resting = 'neutral', from = null } = {})
       calm = 0;
     }
 
-    // Kept varied, and not busy: no gesture or face twice running (unless it really matters), and
-    // a small gesture only after a sentence without one.
+    // Kept varied: no gesture or face twice running (unless it really matters).
     const strengthOf = (k) => Math.max(0, ...hits.filter((h) => h[k] !== undefined).map((h) => h.strength));
-    if (d.gesture && (d.gesture === prev.gesture || (strengthOf('gesture') < 2 && prev.gesture))) delete d.gesture;
+    if (d.gesture && d.gesture === prev.gesture) delete d.gesture;
     if (d.expression && d.expression === prev.expression && strengthOf('expression') < 3) delete d.expression;
     if (d.head && d.head === prev.head && !hits.some((h) => h.head && h.at <= 0.1)) delete d.head;
+
+    // Where it faces: the user for what's said to them, aside for thinking aloud and the like; and
+    // after a couple of sentences square-on, now and then aside anyway, back after one.
+    if (d.turn === undefined && hits.some((h) => TO_THEM.has(h.kind))) d.turn = 'user';
+    const ownTurn = d.timed.some((c) => c.turn); // a word of its own turns it, later on
+    if (d.turn === undefined && !ownTurn) d.turn = facing === 'user' ? (squareOn >= 2 && seed % 3 !== 0 ? 'aside' : 'user') : 'user';
+    if (d.turn === 'aside') {
+      if (facing === 'user') side = seed % 2 ? 'left' : 'right';
+      d.turn = side;
+    }
+    let now = d.turn ?? facing;
+    for (const c of d.timed) {
+      if (c.turn === 'aside') c.turn = now === 'user' ? side : now;
+      if (c.turn === now) delete c.turn;
+      now = c.turn ?? now;
+    }
+    d.timed = d.timed.filter((c) => Object.keys(c).length > 1);
+    const faced = [...d.timed].reverse().find((c) => c.turn)?.turn ?? d.turn;
+    squareOn = faced === 'user' ? (d.turn === facing ? squareOn + 1 : 1) : 0;
+    if (d.turn === facing) delete d.turn;
+    facing = faced;
+    // Turned aside, the eyes go the way it faces; back to the user, they look at them.
+    if (d.turn && d.look === undefined) d.look = d.turn === 'user' ? 'camera' : 'ahead';
     if (d.look && d.look === prev.look) delete d.look;
 
-    // A long answer: a change of stance at its fourth sentence.
-    if (++said === 4) d.pose = STANDING_POSES[1 + (seed % (STANDING_POSES.length - 1))];
+    // A long answer: a change of stance every few sentences.
+    if (++said % 4 === 0) d.pose = STANDING_POSES[1 + (seed % (STANDING_POSES.length - 1))];
 
     prev = d;
     out.push(clean(d));
   });
-  return { directions: out, state: { mood, calm, prev, said } };
+  return { directions: out, state: { mood, calm, prev, said, facing, squareOn, side } };
 }
 
 /** One sentence on its own: what it shows (as the first sentence of an utterance). */
@@ -248,7 +350,7 @@ function clean(d) {
  */
 export function merge({ asked = {}, auto = null, cues = [] }) {
   const out = {};
-  for (const k of ['mood', 'expression', 'gesture', 'head', 'pose', 'look']) {
+  for (const k of ['mood', 'expression', 'gesture', 'head', 'pose', 'look', 'turn']) {
     if (asked[k]) out[k] = asked[k];
     else if (cues.some((c) => c[k])) continue; // played at its own time
     else if (auto && auto[k]) out[k] = auto[k];

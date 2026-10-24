@@ -93,6 +93,16 @@ export class Assistant {
     this.save();
   }
 
+  /** Clears the chat: the conversation and all the window shows of it (what it has learned stays). */
+  clear() {
+    if (this.turn) this.turn.cleared = true;
+    this.cancel();
+    this.history = [];
+    this.log = [];
+    this.emit({ type: 'cleared' });
+    this.save();
+  }
+
   get busy() {
     return !!this.turn;
   }
@@ -156,6 +166,7 @@ export class Assistant {
         this.finishWords(answer, said);
         const call = canonical(found[0], this.toolrun.catalog);
         let { text, failed, cancelled } = await this.execute(turn, call);
+        if (turn.cleared) break;
         if (found.length > 1) text += `\n\n${NOTE.onlyFirst(call.name, found.slice(1).map((c) => c.name))}`;
         rounds++;
         if (failed && !cancelled && turn.failures <= 2) text += `\n\n${NOTE.review}`;
@@ -169,7 +180,9 @@ export class Assistant {
       }
       this.lastError = { code: null, at: 0 };
     } catch (err) {
-      if (turn.ctrl.signal.aborted) {
+      if (turn.cleared) {
+        // The chat was cleared under it: nothing of this request stays.
+      } else if (turn.ctrl.signal.aborted) {
         if (turn.interrupted && !turn.cancelled && !turn.spoke && !turn.calls) {
           // Nothing said or done yet: asked again with what came after it, as one request.
           this.history.length = mark;
@@ -383,7 +396,7 @@ export class Assistant {
   }
 
   update(entry, patch) {
-    if (!entry) return;
+    if (!entry || !this.log.includes(entry)) return; // cleared away
     Object.assign(entry, patch);
     this.emit({ type: 'entry', entry });
     this.save();

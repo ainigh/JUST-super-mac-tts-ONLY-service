@@ -90,7 +90,8 @@ voice again without restarting the app.
 | Ask it anything | Just talk while it shows (no wake word), or type in the chat |
 | Open or hide the chat | Click the character |
 | Stop it talking / cancel what it's doing | Say "stop" / "cancel" (or "never mind"); or the red button in the chat |
-| Start over | Say "new chat", or **Mind › Start a new chat** |
+| Start over | Say "new chat", or **Mind › Start a new chat** (what was said stays, behind a line) |
+| Clear the chat | Say "clear the chat", or the bin at the top of the chat (what it has learned stays) |
 | Show or hide the character | Click the menu bar icon, or **⌘⇧A** anywhere |
 | Change character (and voice), size | The chat's top row; or right-click the icon or the character |
 | Model, thinking, listening while it talks, memory | The chat's **Mind** tab |

@@ -21,6 +21,19 @@ const MEMORY_OPS = ['upcoming', 'categories', 'members', ...LIBRARY_OPS.filter((
 /** The mind's: asking, and adding (compacting the log, and deleting a scope, are the person's). */
 const MIND_OPS = ['about', 'find', 'path', 'neighbors', 'query', 'edges', 'notes', 'dates', 'nodes', 'stats', 'add', 'note', 'rename', 'forget', 'check', 'append', 'comment'];
 const BROWSER_OPS = ['url', 'tabs', 'page', 'has', 'find', 'highlight', 'outline'];
+/** What a model tends to call the browser's ops. */
+const BROWSER_ALIASES = {
+  read: 'page', text: 'page', content: 'page', read_page: 'page', get_page: 'page', get_text: 'page', page_text: 'page',
+  title: 'url', address: 'url', current: 'url', current_url: 'url', get_url: 'url', tab: 'url',
+  list_tabs: 'tabs', windows: 'tabs',
+  contains: 'has', check: 'has', exists: 'has', is_there: 'has',
+  search: 'find', locate: 'find', where: 'find', find_text: 'find', look_for: 'find',
+  show: 'highlight', point: 'highlight', ring: 'highlight', mark: 'highlight', show_where: 'highlight',
+  headings: 'outline', structure: 'outline', layout: 'outline',
+  state: 'status', is_open: 'status', chrome: 'status',
+};
+/** What the browser tool can't do: it only reads. */
+const BROWSER_ACTS = /^(click|press|tap|type|fill|enter|input|submit|scroll|open|go|goto|go_to|navigate|visit|load|close|select|choose|hover|back|forward|refresh|reload|download|upload)(_|$)/;
 export const MEMORY_FILES = ['PEOPLE', 'ORGANIZATIONS', 'EVENT-DATES', 'BIRTHDAYS', 'LOCATIONS', 'IDEAS', 'LEVERAGE', 'STRATEGIES', 'OTHERS'];
 
 /** The ops the model is told of (it may use any of the rest too; each answers with what it takes). */
@@ -451,9 +464,12 @@ export class ToolRun {
 
   /** Chrome's page: reading it, never acting on it. */
   async browser(args, { signal, log }) {
-    const op = str(args.op ?? args.what)?.toLowerCase() || (args.text ? 'find' : 'url');
-    if (!BROWSER_OPS.includes(op)) return `There's no browser op called ${op}. The ops: ${BROWSER_OPS.join(', ')}.`;
-    const text = str(args.text ?? args.q ?? args.find);
+    const text = str(args.text ?? args.q ?? args.query ?? args.words ?? args.find ?? args.label ?? args.search);
+    const said = str(args.op ?? args.what ?? args.action)?.toLowerCase().replace(/[\s-]+/g, '_');
+    const op = said ? (BROWSER_ALIASES[said] ?? said) : text ? 'find' : 'url';
+    if (BROWSER_ACTS.test(op)) return `The browser tool only reads Chrome's page: it can't ${said.replace(/_/g, ' ')}. Tell the user what to do (find, then highlight, shows them where), then read the page again.`;
+    if (op === 'status') return this.answer('GET', '/api/browser', null, { signal, log });
+    if (!BROWSER_OPS.includes(op)) return `There's no browser op called ${said}. The ops: ${BROWSER_OPS.join(', ')}.`;
     if (['has', 'find', 'highlight'].includes(op) && !text) return `Say what to look for: text (for ${op}).`;
     if (op === 'highlight') return this.answer('POST', '/api/browser/highlight', { text, ...(args.seconds ? { seconds: Number(args.seconds) } : {}) }, { signal, log });
     const q = new URLSearchParams();

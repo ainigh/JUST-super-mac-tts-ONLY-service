@@ -65,6 +65,10 @@ async function fakeToolRun({ search = false } = {}) {
       if (/route|api/i.test(q)) results.push({ kind: 'route', method: 'GET', path: '/api/search', summary: 'find', group: 'about' });
       return json(200, { ok: true, q, count: results.length, results, next: [{ method: 'GET', path: '/api/endpoints?brief=true', why: 'the groups' }] });
     }
+    if (url.pathname.startsWith('/api/browser')) {
+      (seen.browser ||= []).push(`${req.method} ${url.pathname}${url.search}`);
+      return json(200, { request: 'B1', ok: true, url: 'https://example.com', next: [{ method: 'GET', path: '/api/browser/page' }] });
+    }
     if (url.pathname === '/api/library') {
       seen.library = b;
       if (b.name === 'Ghost') return json(404, { error: 'no note called Ghost', code: 'not_found', fix: 'There is Groceries', request: 'L2' });
@@ -254,6 +258,28 @@ test('where Tool Mac Tool Run searches, the scripts are only named, what fits th
     assert.equal(fake.seen.runs.at(-1).script, 'utilities/weather.py');
     // A route that isn't one: found, rather than picked from a list there isn't.
     assert.match(await t.run('call_api', { path: '/api/nowhere' }), /find the right one by a few words/);
+  } finally {
+    fake.close();
+  }
+});
+
+test("Chrome's page: the ops and words a model reaches for are taken as meant; acting on the page is said plainly", async () => {
+  const fake = await fakeToolRun();
+  try {
+    const t = new ToolRun({ url: () => fake.url });
+    await t.refresh();
+    await t.run('browser', { op: 'read' });
+    await t.run('browser', { op: 'search', query: 'Compute' });
+    await t.run('browser', { op: 'show where', words: 'Compute' });
+    await t.run('browser', { op: 'status' });
+    await t.run('browser', { text: 'Compute' });
+    await t.run('browser', {});
+    assert.deepEqual(fake.seen.browser, ['GET /api/browser/page?max=6000', 'GET /api/browser/find?text=Compute', 'POST /api/browser/highlight', 'GET /api/browser', 'GET /api/browser/find?text=Compute', 'GET /api/browser/url']);
+    assert.deepEqual(JSON.parse(await t.run('browser', { op: 'url' })), { url: 'https://example.com' }, 'no request id, no "next"');
+    assert.match(await t.run('browser', { op: 'click', text: 'Compute' }), /^The browser tool only reads Chrome's page: it can't click\. Tell the user/);
+    assert.match(await t.run('browser', { op: 'go_to', text: 'example.com' }), /can't go to\./);
+    assert.match(await t.run('browser', { op: 'teleport' }), /^There's no browser op called teleport\. The ops: url, tabs/);
+    assert.match(await t.run('browser', { op: 'find' }), /^Say what to look for/);
   } finally {
     fake.close();
   }

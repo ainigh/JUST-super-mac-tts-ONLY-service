@@ -25,8 +25,8 @@ export const DEFAULTS = {
   listening: true,
   /** Listening while it talks too, so it can be cut in on (its own voice is told apart by its words). */
   listenWhileSpeaking: true,
-  /** A few words while it works something out ("On it.", "Still on it."), so a pause doesn't feel like it went away. */
-  fillers: true,
+  /** A soft tone, now and then, while it works something out: it's busy, not gone. */
+  busyTone: true,
   /** Showing the character as the app opens (on standby, listening). */
   showAtLaunch: true,
   captions: true,

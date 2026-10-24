@@ -62,7 +62,7 @@ function renderStatus() {
   $('toolCount').textContent = status.tools.reachable ? String(status.tools.scripts + status.tools.flows + 5) : '5';
   $('laterCount').textContent = status.schedules ? String(status.schedules) : '';
   $('listenWhileSpeaking').checked = status.listenWhileSpeaking;
-  $('fillers').checked = status.fillers !== false;
+  $('busyTone').checked = status.busyTone !== false;
   $('retryVoice').hidden = status.face?.tts?.state !== 'failed';
   $('think').checked = status.think;
 }
@@ -675,7 +675,7 @@ addEventListener('unhandledrejection', (e) => act('reportError', { source: 'chat
 $('model').onchange = () => act('set', { model: $('model').value });
 $('think').onchange = () => act('set', { think: $('think').checked });
 $('listenWhileSpeaking').onchange = () => act('set', { listenWhileSpeaking: $('listenWhileSpeaking').checked });
-$('fillers').onchange = () => act('set', { fillers: $('fillers').checked });
+$('busyTone').onchange = () => act('set', { busyTone: $('busyTone').checked });
 $('saveInstructions').onclick = () => act('instructions', { text: $('instructions').value });
 $('newChat').onclick = () => {
   act('newChat');

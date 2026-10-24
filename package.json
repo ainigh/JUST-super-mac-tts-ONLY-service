@@ -2,7 +2,7 @@
   "name": "super-face",
   "productName": "Super Face",
   "version": "0.1.0",
-  "description": "The mouth and the face: a full-body 3D avatar on the Mac desktop that speaks what it's given (Kokoro, through HeadTTS) with lip-sync, expressions and gestures (TalkingHead), served over HTTP to any app. Super Voice is the ears and the model.",
+  "description": "A character on the Mac desktop you talk to: it hears you (Moonshine), thinks with one local model (Ollama), uses your scripts and flows through Tool Mac Tool Run, sets itself reminders, learns, and answers out loud with lip-sync and expressions (Kokoro through HeadTTS, TalkingHead). Served over HTTP to any app.",
   "main": "main.mjs",
   "private": true,
   "scripts": {
@@ -27,6 +27,7 @@
     "files": [
       "main.mjs",
       "preload.cjs",
+      "preload-chat.cjs",
       "src/**",
       "renderer/**",
       "API.md",
@@ -45,7 +46,8 @@
       "category": "public.app-category.productivity",
       "identity": null,
       "extendInfo": {
-        "LSUIElement": true
+        "LSUIElement": true,
+        "NSMicrophoneUsageDescription": "Super Face listens for what you say to it while it's showing."
       }
     }
   }

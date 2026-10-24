@@ -37,8 +37,9 @@
     <script type="module" src="./app.mjs" onerror="faceFailed('a file it needs is missing from the app')"></script>
   </head>
   <body data-state="loading">
-    <main id="stage" aria-label="The avatar. Drag to move, right-click for options."></main>
+    <main id="stage" aria-label="The character. Click to chat, drag to move, right-click for options."></main>
     <p id="caption" hidden aria-live="polite"></p>
     <p id="status" role="status">Loading…</p>
+    <span id="ear" aria-hidden="true"></span>
   </body>
 </html>

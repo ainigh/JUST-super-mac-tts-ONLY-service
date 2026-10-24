@@ -86,3 +86,48 @@ body[data-problem] #status {
   font-size: 13px;
   box-shadow: 0 0 0 1px var(--line), 0 6px 18px rgba(0, 0, 0, 0.18);
 }
+
+/* The ears: a small light at its feet. Green while listening, brighter while someone talks, amber
+   while what was said is written down. Nothing while they're off. */
+#ear {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border-radius: 50%;
+  background: transparent;
+  pointer-events: none;
+  transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+body[data-ears='listening'] #ear {
+  background: rgba(52, 199, 89, 0.55);
+}
+
+body[data-ears='hearing'] #ear {
+  background: rgb(52, 199, 89);
+  box-shadow: 0 0 10px rgba(52, 199, 89, 0.9);
+  transform: scale(1.3);
+}
+
+body[data-ears='writing'] #ear {
+  background: rgb(255, 179, 64);
+  box-shadow: 0 0 8px rgba(255, 179, 64, 0.8);
+}
+
+body[data-ears='paused'] #ear {
+  background: rgba(160, 160, 160, 0.5);
+}
+
+body[data-ears='loading'] #ear {
+  background: rgba(10, 132, 255, 0.6);
+  animation: ear-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ear-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}

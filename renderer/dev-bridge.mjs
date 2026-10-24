@@ -22,6 +22,12 @@ export function bridge() {
       post('/dev/reply', { id, ok, result, error });
     },
     event: (ev) => post('/dev/event', ev),
+    direct: (texts, who) =>
+      fetch('/dev/direct', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texts, who }) }).then((r) => {
+        if (!r.ok) throw new Error(`direct ${r.status}`);
+        return r.json().then((j) => j.content);
+      }),
+    toggleChat: () => window.open('/renderer/chat.html', 'superface-chat', 'width=380,height=640'),
     dragStart() {},
     dragMove() {},
     dragEnd() {},

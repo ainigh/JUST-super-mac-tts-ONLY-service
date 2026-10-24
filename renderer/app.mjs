@@ -1,20 +1,19 @@
-// The avatar's page: TalkingHead draws the avatar (head to toes, on a transparent canvas) and moves
-// it; HeadTTS makes the voice (Kokoro, in the page: WebGPU, else WASM), with the timing of every
-// word and viseme, so the lips follow the words exactly. Each sentence gets a mood, an expression,
-// a gesture and a head movement from the director (what was asked, Super Voice's model, rules).
-// The main process sends commands (speak, stop, express, tts, settings) and is told how it goes.
+// The character's page: TalkingHead draws it (head to toes, on a transparent canvas) and moves it;
+// HeadTTS makes the voice (Kokoro, in the page: WebGPU, else WASM), with the timing of every word
+// and viseme, so the lips follow the words exactly. Each sentence gets a mood, an expression, a
+// gesture and a head movement from the director (what was asked, cues in the words, the model,
+// rules). The ears (ears.mjs) listen here too. The main process sends commands (speak, stop,
+// express, tts, ears, settings) and is told how it goes; a click on the character opens the chat.
 
 import { TalkingHead } from 'talkinghead';
 import { HeadTTS } from 'headtts';
 import { EXPRESSIONS } from '/src/shared/catalog.mjs';
-import { merge, modelRequest, readAnswer, rules } from '/src/shared/director.mjs';
+import { characterOf } from '/src/shared/characters.mjs';
+import { merge, readAnswer, rules } from '/src/shared/director.mjs';
 import { parse, sentences } from '/src/shared/text.mjs';
+import { Ears } from './ears.mjs';
 
 const RATE = 24000; // Kokoro's: 24 kHz mono
-const AVATARS = {
-  brunette: { url: './avatars/brunette.glb', body: 'F' },
-  david: { url: './avatars/david.glb', body: 'M' },
-};
 
 const $ = (id) => document.getElementById(id);
 const bridge = window.face || (await import('./dev-bridge.mjs')).bridge();
@@ -86,12 +85,16 @@ function createHead() {
   window.head = head; // handy in the developer tools
 }
 
+let avatarLoaded = Promise.resolve(); // settles once the avatar being loaded is in (or isn't)
+
 async function loadAvatar() {
+  let done;
+  avatarLoaded = new Promise((r) => (done = r));
   avatarState = 'loading';
   report();
-  const a = AVATARS[cfg.avatar] || AVATARS.brunette;
+  const c = characterOf(cfg.avatar);
   try {
-    await head.showAvatar({ url: a.url, body: a.body, avatarMood: cfg.mood, lipsyncLang: 'en' });
+    await head.showAvatar({ url: `./avatars/${c.file}`, body: c.body, avatarMood: cfg.mood, lipsyncLang: 'en', ...(c.baseline ? { baseline: c.baseline } : {}) });
     head.setView(cfg.view);
     avatarState = 'ready';
   } catch (err) {
@@ -100,6 +103,7 @@ async function loadAvatar() {
     avatarMessage = err?.message || String(err);
   }
   report();
+  done();
 }
 
 // ---------------------------------------------------------------- the voice
@@ -203,19 +207,14 @@ async function synthesize(text) {
 
 let modelDownUntil = 0;
 
-/** The model's direction for every sentence, through Super Voice (null when off or unreachable). */
+/**
+ * The model's direction for every sentence (null when off or unreachable). Not for the assistant's
+ * own words (director: 'rules'): they carry their cues, written by the same model as it answered.
+ */
 async function askModel(texts, u) {
-  if (cfg.expressions !== 'model' || u.auto === false || Date.now() < modelDownUntil || !texts.length) return null;
+  if (cfg.expressions !== 'model' || u.auto === false || u.director === 'rules' || Date.now() < modelDownUntil || !texts.length) return null;
   try {
-    const res = await fetch(`${cfg.superVoiceUrl}/api/model/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(modelRequest(texts, { who: u.who })),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) throw new Error(`Super Voice ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const data = await res.json();
-    return readAnswer(data.message?.content ?? data.content, texts.length);
+    return readAnswer(await bridge.direct(texts, u.who), texts.length);
   } catch (err) {
     // Not running, no model, too slow: rules for a minute, then it's asked again.
     console.warn('Expressions from the model: none this time:', err.message);
@@ -284,6 +283,8 @@ async function pump() {
  * next is being made); resolves once it's all queued, so the next utterance is made meanwhile.
  */
 async function perform(u, gen) {
+  // Another character being put on (it was just picked): what's to be said waits for it.
+  if (avatarState === 'loading') await avatarLoaded;
   if (avatarState !== 'ready') throw new Error('the avatar didn’t load');
   if (!tts) throw new Error(`the voice didn’t load: ${ttsState.message || ''}`);
   const { sentences: list } = parse(u.text);
@@ -422,6 +423,20 @@ const COMMANDS = {
     show(d, d.duration || 3);
   },
   tts: (d) => textToSpeech(d),
+  ears: async ({ on, paused }) => {
+    if (paused !== undefined) ears.pause(paused);
+    if (on !== undefined) {
+      await readyNow;
+      ears.turn(on && avatarState === 'ready');
+    }
+  },
+  /** What the assistant is doing, on the face: thinking while it works out an answer. */
+  attend: async ({ state }) => {
+    await readyNow;
+    if (avatarState !== 'ready') return;
+    if (state === 'thinking' && !inFlight.size) playExpression('thinking', 2.5);
+    if (state === 'listening') head.lookAtCamera(1500);
+  },
   settings: async (patch) => {
     const before = cfg;
     cfg = { ...cfg, ...patch };
@@ -449,16 +464,25 @@ function wireInput() {
   let drag = null;
   stage.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
-    drag = { x: e.screenX, y: e.screenY };
+    drag = { x: e.screenX, y: e.screenY, at: performance.now(), moved: false };
     stage.setPointerCapture(e.pointerId);
     bridge.dragStart();
     head?.audioCtx.resume();
   });
-  stage.addEventListener('pointermove', (e) => drag && bridge.dragMove(e.screenX - drag.x, e.screenY - drag.y));
-  const end = () => {
+  stage.addEventListener('pointermove', (e) => {
     if (!drag) return;
+    const dx = e.screenX - drag.x;
+    const dy = e.screenY - drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
+    if (drag.moved) bridge.dragMove(dx, dy);
+  });
+  const end = (e) => {
+    if (!drag) return;
+    const click = !drag.moved && performance.now() - drag.at < 600 && e.type === 'pointerup';
     drag = null;
     bridge.dragEnd();
+    // A click (not a drag) on the character shows or hides the chat.
+    if (click) bridge.toggleChat();
   };
   stage.addEventListener('pointerup', end);
   stage.addEventListener('pointercancel', end);
@@ -467,6 +491,19 @@ function wireInput() {
     bridge.showMenu();
   });
 }
+
+// ---------------------------------------------------------------- the ears
+
+const ears = new Ears({
+  transformers: abs('/node_modules/@huggingface/transformers/dist/transformers.min.js'),
+  onState: (state) => {
+    bridge.event({ type: 'ears', state });
+    document.body.dataset.ears = state.state;
+    // Someone's talking: it looks at them.
+    if (state.state === 'hearing' && avatarState === 'ready' && !inFlight.size) head.lookAtCamera(2000);
+  },
+  onHeard: (p) => bridge.event({ type: 'heard', ...p }),
+});
 
 // ---------------------------------------------------------------- go
 

@@ -70,7 +70,13 @@ queue.push(
   '/node_modules/@met4citizen/headtts/dictionaries/en-us.txt',
   '/renderer/avatars/brunette.glb',
   '/renderer/avatars/david.glb',
+  '/renderer/avatars/avaturn.glb',
+  '/renderer/avatars/avatarsdk.glb',
   '/renderer/style.css',
+  '/renderer/ears-worker.mjs', // the ears' worker, started by URL
+  '/renderer/chat.html', // the chat window, and what it loads
+  '/renderer/chat.mjs',
+  '/renderer/chat.css',
 );
 while (queue.length) {
   const p = queue.shift();

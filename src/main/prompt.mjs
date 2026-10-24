@@ -29,7 +29,14 @@ const ALIASES = {
   unschedule: 'cancel_schedule', cancel_timer: 'cancel_schedule',
   memorize: 'remember', memorise: 'remember', save_memory: 'remember', note_to_self: 'remember', learn: 'remember', add_memory: 'remember',
   unlearn: 'forget', delete_memory: 'forget', remove_memory: 'forget',
+  notes: 'library', file_library: 'library', library_op: 'library',
+  api: 'call_api', http: 'call_api', request: 'call_api', call_route: 'call_api',
 };
+
+/** The tools the model is told of now: the library and call_api only when Tool Mac Tool Run has them. */
+export function toolsFor(catalog) {
+  return ALL_TOOLS.filter((t) => (t.name === 'library' ? runTools.hasLibrary(catalog) : t.name === 'call_api' ? runTools.otherGroups(catalog).length > 0 : true));
+}
 
 /**
  * The tool a call means: { name, arguments } with the name made canonical. A script's own name used
@@ -86,6 +93,14 @@ export function catalogPrompt(catalog) {
     lines.push('The flows you can run with run_flow:');
     for (const f of catalog.flows) lines.push(`- ${f.name}${f.summary ? `: ${f.summary}` : ''}`);
   }
+  const others = runTools.otherGroups(catalog);
+  if (others.length) {
+    lines.push('Other routes, for call_api (method path: what it does):');
+    for (const g of others) {
+      lines.push(`${g.title}${g.about ? ` (${g.about})` : ''}${g.on ? '' : ': turned off in Tool Mac Tool Run right now'}`);
+      if (g.on) for (const r of g.routes) lines.push(`- ${r.method} ${r.path}: ${r.summary}${r.asks ? ' [asks on the Mac]' : ''}`);
+    }
+  }
   return lines.join('\n');
 }
 
@@ -96,13 +111,14 @@ export function catalogPrompt(catalog) {
 export function systemPrompt({ character, catalog, memory, now = Date.now(), typedOnly = false }) {
   const name = character.name;
   const libraryScript = (catalog?.scripts || []).find((s) => /(^|\/)(library|notes?)\.[a-z]+$/i.test(s.name));
+  const library = runTools.hasLibrary(catalog);
   const p = [];
   p.push(
     `You are ${name}, an assistant who lives on the user's Mac as a 3D character on their desktop (${character.looks}). The user talks to you out loud${typedOnly ? '' : ' (you hear them through the microphone)'} or types in your chat window, and everything you write is read aloud in your voice while your face and body act it out.`,
   );
   p.push(`How you talk:
 - Like a person speaking: short, plain sentences, usually one or two. No markdown, no lists, no headings, no links, no code (unless they ask to see some in the chat).
-- Your face shows feeling from your words, and from an emoji or a [tag] you put where it belongs: 😊 😄 😂 😉 🤔 😮 😔 👍 [nod] [shake] [shrug] [wave] [thumbup]. They aren't read out. One now and then, not in every sentence.
+- Your face and hands follow your words by themselves: say things the way you mean them (glad, sorry, unsure, pleased for them) and they show it. Write no emojis and no [tags].
 - What you hear was written down by speech recognition, so a word or a name may be off: take the likely meaning; ask only when it truly matters.
 - When what you heard clearly wasn't meant for you (people talking in the room, a TV, half a sentence), answer with only: (nothing)`);
   p.push(`How you work. You have three habits, and you go through them in order on every request:
@@ -113,7 +129,11 @@ What needs no tool (knowing, explaining, judging, deciding, writing) you answer 
   p.push(`Running things on the Mac:
 - Scripts and flows run through Tool Mac Tool Run. Each run puts a card on the Mac and waits for the user to click Run (you can't click): when you send one, tell them to click Run. If they click Don't Run, leave it unless they ask again.
 - The user can cancel a run, or what you're doing, at any time. When a result says it was cancelled, stop, say so in a few words, and don't send it again unless they ask.
-- This app keeps no notes or library of its own: to keep, find, change or remove notes, lists and anything else, use the scripts${libraryScript ? ` (${libraryScript.name} is the user's notes library)` : ' (a notes or library script, when there is one)'}.`);
+- This app keeps no notes or library of its own: to keep, find, change or remove notes, lists and anything else, ${
+      library
+        ? "use library: the user's notes in Tool Mac Tool Run, which answers at once (no card, no click). Look before you write: find or read the note first, then append to it or write it whole"
+        : `use the scripts${libraryScript ? ` (${libraryScript.name} is the user's notes library)` : ' (a notes or library script, when there is one)'}`
+    }.`);
   p.push(`Time:
 - Each message says when it was said, to the second. For anything later (a reminder, a check, a follow-up) use schedule, with in_minutes or at. Write its task as an instruction to your future self with every detail, since then you'll get only the task.
 - A message starting "Scheduled task" is one you set earlier, due now: do it now (say the reminder, run what it asks) and tell the user, as if you'd just remembered.`);
@@ -121,7 +141,7 @@ What needs no tool (knowing, explaining, judging, deciding, writing) you answer 
 - Your memory, below, is what you've learned. Read it before you act and follow it. The moment you learn something that will matter next time (a preference of the user's, which script and arguments worked for what, a mistake and how to avoid it), save it with remember, in one short line. Correct or remove notes that turn out wrong with forget. Request ids and one-off facts don't belong there.`);
   p.push(`Tool calls: to use a tool, end your answer with the call as one line of JSON on its own line: {"tool": "name", "arguments": {...}}. One call per answer. Its result comes back as the next message, marked as a tool result (it's from the Mac, not the user); then you go on: another call, or your answer to the user. Never write that JSON unless you mean to call the tool, and don't name tools to the user.
 The tools:
-${ALL_TOOLS.map(manualLine).join('\n')}
+${toolsFor(catalog).map(manualLine).join('\n')}
 
 ${catalogPrompt(catalog)}`);
   p.push(`An example, for the shape only (the scripts you really have are the ones listed above).
@@ -129,16 +149,24 @@ The user says: what's the weather in Lagos?
 You answer: Let me check. Click Run on your Mac.
 {"tool": "run_script", "arguments": {"script": "utilities/weather.py", "args": ["Lagos"], "why": "You asked for the weather in Lagos"}}
 The tool result: weather.py succeeded, printing "Lagos: 28°C, sunny, high 31, low 24".
-You answer: It's 28 degrees and sunny in Lagos, with a high of 31. ☀️
+You answer: It's 28 degrees and sunny in Lagos, with a high of 31.
 The user says: remind me to call Sam in 20 minutes
 You answer: {"tool": "schedule", "arguments": {"in_minutes": 20, "task": "Remind the user to call Sam."}}
 The tool result: Scheduled s1 for today at 15:40.
-You answer: Sure, I'll remind you at 15:40. [nod]
+You answer: Sure, I'll remind you at 15:40.
 Later, the message: Scheduled task s1, set at 15:20: Remind the user to call Sam.
-You answer: It's time to call Sam! 📞
+You answer: It's time to call Sam!
 The user says: no, I always mean Celsius and my city is Leeds
 You answer: Got it.
-{"tool": "remember", "arguments": {"section": "user", "note": "Lives in Leeds; wants temperatures in Celsius"}}`);
+{"tool": "remember", "arguments": {"section": "user", "note": "Lives in Leeds; wants temperatures in Celsius"}}${
+    library
+      ? `
+The user says: put eggs on my shopping list
+You answer: {"tool": "library", "arguments": {"op": "append", "name": "Shopping", "text": "- eggs"}}
+The tool result: {"name": "Shopping", "action": "appended", …}
+You answer: Eggs are on your shopping list.`
+      : ''
+  }`);
   if (memory) {
     p.push(memory.prompt());
     if (memory.instructions?.trim()) p.push(`The user's standing instructions (follow them):\n${memory.instructions.trim()}`);
@@ -185,7 +213,7 @@ export const NOTE = {
   outOfRounds: (n) => `Note from the Mac (not the user): that's ${n} tool calls for this one request, as many as one gets. Answer the user now with what you have, saying what's left undone.`,
   onlyFirst: (done, rest) => `Note from the Mac (not the user): only your first call (${done}) was made; ${rest.join(', ')} wasn't, since it's one call per answer. Make it next if it's still wanted.`,
   unknownTool: (name, catalog) =>
-    `There's no tool called ${name}. The tools: ${ALL_TOOLS.map((t) => t.name).join(', ')}.${catalog?.scripts?.length ? ' To run a script, call run_script with its name as listed.' : ''}`,
+    `There's no tool called ${name}. The tools: ${toolsFor(catalog).map((t) => t.name).join(', ')}.${catalog?.scripts?.length ? ' To run a script, call run_script with its name as listed.' : ''}`,
   /** After a tool that failed: the critic's moment. */
   review:
     "Note from the Mac (not the user): that didn't work. Before anything else, look at why: the wrong script, the wrong arguments, something the error or the output tells you? Try once more a different way if one could work; otherwise tell the user plainly what went wrong and what would fix it. Don't repeat the same call unchanged.",

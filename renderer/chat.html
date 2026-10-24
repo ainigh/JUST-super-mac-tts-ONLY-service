@@ -32,11 +32,7 @@
 
     <section id="looks">
       <div id="characters" role="radiogroup" aria-label="Character (and its voice)"></div>
-      <div id="size" aria-label="Character size">
-        <button id="smaller" class="icon small" title="Smaller (goes round)">−</button>
-        <button id="sizeName" title="Next size">Medium</button>
-        <button id="bigger" class="icon small" title="Bigger (goes round)">+</button>
-      </div>
+      <div id="size" role="radiogroup" aria-label="Character size"></div>
     </section>
 
     <nav id="tabs" role="tablist">
@@ -44,6 +40,8 @@
       <button role="tab" data-tab="tools">Tools <span class="count" id="toolCount"></span></button>
       <button role="tab" data-tab="later">Later <span class="count" id="laterCount"></span></button>
       <button role="tab" data-tab="mind">Mind</button>
+      <button role="tab" data-tab="model">Model <span class="count" id="modelCount"></span></button>
+      <button role="tab" data-tab="calls">Calls <span class="count" id="callCount"></span></button>
       <button role="tab" data-tab="prompts">Prompts</button>
       <button role="tab" data-tab="errors">Errors <span class="count bad" id="errorCount"></span></button>
     </nav>
@@ -87,6 +85,22 @@
         <div class="row end"><button id="saveInstructions">Save</button></div>
         <h3>Conversation</h3>
         <button id="newChat" class="quiet">Start a new chat</button>
+      </section>
+
+      <section id="model" class="pane" role="tabpanel" hidden>
+        <div class="row">
+          <p class="hint grow">Every request to the model, newest first: the messages it was sent, word for word, and what came back (before the app takes out its thinking and tool calls). Kept while the app runs.</p>
+          <button id="clearModel" class="quiet">Clear</button>
+        </div>
+        <ol id="modelList" class="traces"></ol>
+      </section>
+
+      <section id="calls" class="pane" role="tabpanel" hidden>
+        <div class="row">
+          <p class="hint grow">Every tool the model called, newest first: its arguments, each request it made (the address, what was sent, what came back) and what went back to the model. Kept while the app runs.</p>
+          <button id="clearCalls" class="quiet">Clear</button>
+        </div>
+        <ol id="callList" class="traces"></ol>
       </section>
 
       <section id="prompts" class="pane" role="tabpanel" hidden>

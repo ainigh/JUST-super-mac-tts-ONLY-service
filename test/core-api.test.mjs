@@ -78,12 +78,13 @@ const idle = async () => {
 
 test('chat over the API, waiting for the answer; the character speaks it in its own voice', async () => {
   replies = ['Hello! 👋 Nice to meet you.'];
+  const before = asked.length;
   const [status, r] = await post('/api/chat', { text: 'hi there', wait: true });
   assert.equal(status, 200);
   assert.equal(r.reply, 'Hello! 👋 Nice to meet you.');
   assert.equal(asked.at(-1).model, 'qwen3:8b', 'the best model Ollama has');
   assert.equal(spoken.at(-1).voice, 'af_heart');
-  assert.equal(spoken.at(-1).director, 'rules', "its own words carry their cues: the model isn't asked again for expressions");
+  assert.equal(asked.length, before + 1, 'one question to the model: the face is read from the words, not asked of it');
   assert.equal(spoken.at(-1).who, 'Ivy');
   const [, log] = await get('/api/chat?limit=5');
   assert.deepEqual(log.entries.map((e) => e.kind), ['user', 'assistant']);
@@ -91,6 +92,19 @@ test('chat over the API, waiting for the answer; the character speaks it in its 
   assert.equal(a.character.name, 'Ivy');
   assert.equal(a.tools.reachable, false);
   assert.match(a.tools.error, /isn't answering/);
+});
+
+test('what went to the model, over the API; a size by name', async () => {
+  const [, m] = await get('/api/trace/model?limit=1');
+  assert.equal(m.items.length, 1);
+  assert.equal(m.items[0].purpose, 'answer');
+  assert.match(m.items[0].messages.at(-1).content, /hi there$/);
+  const [, c] = await get('/api/trace/calls');
+  assert.ok(Array.isArray(c.items));
+  assert.deepEqual(core.actions.setSize({ size: 'Large' }), { size: 'Large' });
+  assert.equal(settings.get().size, 'Large');
+  assert.throws(() => core.actions.setSize({ size: 'Tiny' }), /no size called Tiny/);
+  core.actions.setSize({ size: 'Medium' });
 });
 
 test('picking a character picks its voice, and its name', async () => {
@@ -226,6 +240,6 @@ test('the prompts as they stand: the system prompt built now, and every note the
   assert.equal(list[0].id, 'system');
   assert.match(list[0].text, /^You are Ivy/);
   assert.match(list[0].text, /Today is \w+day/);
-  assert.deepEqual(list.map((p) => p.id), ['system', 'promised', 'broken', 'cannot', 'review', 'reflect', 'onlyFirst', 'outOfRounds', 'unknownTool', 'expressions']);
+  assert.deepEqual(list.map((p) => p.id), ['system', 'promised', 'broken', 'cannot', 'review', 'reflect', 'onlyFirst', 'outOfRounds', 'unknownTool']);
   for (const p of list) assert.ok(p.title && p.when && p.text, p.id);
 });

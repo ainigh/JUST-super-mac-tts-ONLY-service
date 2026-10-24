@@ -162,17 +162,6 @@ http
         return res.end(JSON.stringify({ error: err.message }));
       }
     }
-    if (p === '/dev/direct') {
-      const { texts, who } = await readJSON(req);
-      try {
-        const content = await core.direct(texts, who);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ content }));
-      } catch (err) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: err.message }));
-      }
-    }
     if (/^\/(renderer|src\/shared|node_modules)\//.test(p)) {
       const file = path.normalize(path.join(ROOT, decodeURIComponent(p)));
       if (!file.startsWith(ROOT)) return res.writeHead(404).end();

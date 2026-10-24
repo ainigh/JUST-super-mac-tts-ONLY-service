@@ -18,10 +18,12 @@ export class Ollama {
    * @param {object} o
    * @param {() => {url: string, model: string, think?: boolean}} o.current - read fresh for every call
    * @param {typeof fetch} [o.fetch]
+   * @param {import('./trace.mjs').Trace} [o.trace] - where each request and its answer are noted
    */
-  constructor({ current, fetch: f = globalThis.fetch }) {
+  constructor({ current, fetch: f = globalThis.fetch, trace = null }) {
     this.current = current;
     this.fetch = f;
+    this.trace = trace;
     this.picked = '';
   }
 
@@ -56,9 +58,24 @@ export class Ollama {
 
   /**
    * One answer to `messages`. With `onText`, it's streamed: onText(textSoFar) as it grows.
+   * `purpose` names it in the trace (answer, learning).
    * @returns {Promise<string>} the answer, without any thinking
    */
-  async chat(messages, { signal, onText, format, temperature, think } = {}) {
+  async chat(messages, { purpose = 'answer', ...o } = {}) {
+    const started = Date.now();
+    const rec = this.trace?.open({ purpose, model: this.current().model || this.picked || '', url: `${this.url}/api/chat`, messages: messages.map((m) => ({ role: m.role, content: m.content })), state: 'asking', text: '' });
+    const note = (patch, final) => this.trace?.change(rec, { ms: Date.now() - started, ...patch }, { final });
+    try {
+      const text = await this.ask(messages, o, (patch) => note(patch));
+      note({ state: 'done' }, true);
+      return text;
+    } catch (err) {
+      note({ state: o.signal?.aborted ? 'cancelled' : 'failed', error: err.message || String(err) }, true);
+      throw err;
+    }
+  }
+
+  async ask(messages, { signal, onText, format, temperature, think } = {}, note = () => {}) {
     const model = await this.model(signal);
     const wantThink = think ?? !!this.current().think;
     const body = (sendThink) => {
@@ -68,12 +85,16 @@ export class Ollama {
       if (sendThink) b.think = /gpt-oss/i.test(model) ? (wantThink ? 'medium' : 'low') : wantThink;
       return b;
     };
+    const sent = ({ messages: _, ...rest }) => rest; // the request as sent, but for its messages (noted apart)
+    note({ model, request: sent(body(true)) });
     let res = await this.post(body(true), signal);
     if (res.status === 400) {
       const text = await res.text();
       // Models that don't think say so when told not to: asked again without it.
-      if (/think/i.test(text)) res = await this.post(body(false), signal);
-      else throw new ModelError('failed', `Ollama: ${errorText(text)}`);
+      if (/think/i.test(text)) {
+        note({ request: sent(body(false)) });
+        res = await this.post(body(false), signal);
+      } else throw new ModelError('failed', `Ollama: ${errorText(text)}`);
     }
     if (res.status === 404) {
       this.picked = '';
@@ -82,6 +103,7 @@ export class Ollama {
     if (!res.ok) throw new ModelError('failed', `Ollama answered ${res.status}: ${errorText(await res.text())}`);
     if (!onText) {
       const data = await res.json();
+      note({ text: data.message?.content ?? '' });
       return stripThinking(data.message?.content ?? '');
     }
     let text = '';
@@ -104,6 +126,7 @@ export class Ollama {
         const piece = ev.message?.content ?? '';
         if (piece) {
           text += piece;
+          note({ text });
           onText(stripThinking(text, true));
         }
       }

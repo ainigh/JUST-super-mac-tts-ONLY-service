@@ -9,8 +9,8 @@ import { Ollama } from './model.mjs';
 import { NOTE, systemPrompt } from './prompt.mjs';
 import { Scheduler, fromNow, longTime } from './scheduler.mjs';
 import { ToolRun } from './toolrun.mjs';
-import { CHARACTERS, SIZES, characterOf, nextSize, resolveCharacter } from '../shared/characters.mjs';
-import { SYSTEM as EXPRESSIONS_PROMPT, modelRequest } from '../shared/director.mjs';
+import { Trace } from './trace.mjs';
+import { CHARACTERS, SIZES, characterOf, resolveCharacter } from '../shared/characters.mjs';
 import { words } from '../shared/text.mjs';
 
 /** Said alone, these stop it talking (and any answer still being written); a run carries on. */
@@ -49,8 +49,10 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
   const file = (name) => (dataDir ? path.join(dataDir, name) : null);
   const character = () => characterOf(settings.get().avatar);
 
-  const model = new Ollama({ current: () => ({ url: settings.get().ollamaUrl, model: settings.get().model, think: settings.get().think }), fetch: f });
-  const toolrun = new ToolRun({ url: () => settings.get().toolRunUrl, fetch: f });
+  // What went to the model and came back, and every tool call with its requests: the Model and Calls tabs.
+  const traces = { model: new Trace({ name: 'model', keep: 40, emit, now }), calls: new Trace({ name: 'calls', keep: 80, emit, now }) };
+  const model = new Ollama({ current: () => ({ url: settings.get().ollamaUrl, model: settings.get().model, think: settings.get().think }), fetch: f, trace: traces.model });
+  const toolrun = new ToolRun({ url: () => settings.get().toolRunUrl, fetch: f, trace: traces.calls });
   const memory = new Memory({ file: file('memory.json'), onChange: (m) => emit({ type: 'memory', memory: m }) });
   const scheduler = new Scheduler({
     file: file('schedule.json'),
@@ -69,7 +71,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     const c = character();
     const s = settings.get();
     host.show?.();
-    return speech.enqueue({ text, voice: c.voice, speed: s.speed, auto: true, director: 'rules', source: 'assistant', who: c.name });
+    return speech.enqueue({ text, voice: c.voice, speed: s.speed, auto: true, source: 'assistant', who: c.name });
   }
 
   const assistant = new Assistant({
@@ -82,6 +84,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     stopSpeaking: () => speech.stop('assistant'),
     emit,
     file: file('chat.json'),
+    trace: traces.calls,
     now,
   });
 
@@ -216,7 +219,6 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       { id: 'onlyFirst', title: 'More than one tool call in an answer', when: 'Added to the result when an answer has several calls: only the first is made.', text: NOTE.onlyFirst('run_script', ['schedule']) },
       { id: 'outOfRounds', title: 'Ten tool calls for one request', when: 'Added to the tenth tool result of one request.', text: NOTE.outOfRounds(10) },
       { id: 'unknownTool', title: 'A tool that doesn’t exist', when: 'The result of a call to a tool there isn’t.', text: NOTE.unknownTool('fly_to_mars', toolrun.catalog) },
-      { id: 'expressions', title: 'Expressions, for what other apps send', when: 'Asked of the model when another app makes the character speak (POST /api/speak) with expressions from the model. Not used for the assistant’s own words: they carry their cues.', text: EXPRESSIONS_PROMPT },
     ];
   }
 
@@ -279,6 +281,20 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       assistant.clear();
       return { ok: true };
     },
+    trace: ({ log }) => {
+      if (!traces[log]) throw new Error(`no log called ${log}: model or calls`);
+      return { items: traces[log].list() };
+    },
+    clearTrace: ({ log }) => {
+      if (!traces[log]) throw new Error(`no log called ${log}: model or calls`);
+      traces[log].clear();
+      return { ok: true };
+    },
+    setSize: ({ size }) => {
+      if (!SIZES[size]) throw new Error(`no size called ${size}: ${Object.keys(SIZES).join(', ')}`);
+      host.resize ? host.resize(size) : settings.set({ size });
+      return { size };
+    },
     tools: () => assistant.tools(),
     refreshTools,
     schedules,
@@ -301,11 +317,6 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       if (!c) throw new Error(`no character called ${id}`);
       settings.set({ avatar: c.id, voice: c.voice });
       return status();
-    },
-    cycleSize: ({ step = 1 } = {}) => {
-      const name = nextSize(settings.get().size, step < 0 ? -1 : 1);
-      host.resize ? host.resize(name) : settings.set({ size: name });
-      return { size: name };
     },
     errors: () => ({ errors, report: errorReport() }),
     clearErrors: () => {
@@ -340,12 +351,6 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     },
   };
 
-  /** The model's direction for a client's sentences (POST /api/speak with expressions from the model). */
-  async function direct(texts, who) {
-    const req = modelRequest(texts, { who });
-    return model.chat(req.messages, { format: req.format, temperature: 0, think: false, signal: AbortSignal.timeout(10_000) });
-  }
-
   function setEars(state) {
     ears = { ...ears, ...state };
     emit({ type: 'ears', ears });
@@ -359,7 +364,6 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     memory,
     actions,
     heard,
-    direct,
     speakAs,
     setEars,
     reportError,

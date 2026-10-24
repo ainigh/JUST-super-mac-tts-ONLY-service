@@ -14,6 +14,4 @@ contextBridge.exposeInMainWorld('face', {
   dragEnd: () => ipcRenderer.send('drag:end'),
   showMenu: () => ipcRenderer.send('menu:show'),
   toggleChat: () => ipcRenderer.send('chat:toggle'),
-  /** The model's direction for a client's sentences (expressions), asked in the main process. */
-  direct: (texts, who) => ipcRenderer.invoke('direct', texts, who),
 });

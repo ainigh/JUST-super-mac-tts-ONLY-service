@@ -12,8 +12,8 @@ export const DEFAULTS = {
   voice: 'af_heart',
   speed: 1,
   mood: 'neutral',
-  /** For what clients send to /api/speak: model (the model picks expressions, rules until it answers), rules, off. */
-  expressions: 'model',
+  /** What the character shows while it talks, for what's left out: rules (read from the words), off (only what's asked). */
+  expressions: 'rules',
   /** The one model: Ollama's. Empty: the best one Ollama has. */
   ollamaUrl: 'http://127.0.0.1:11434',
   model: '',
@@ -41,6 +41,8 @@ export class Settings {
   constructor(file) {
     this.file = file;
     this.value = { ...DEFAULTS, ...read(file) };
+    // Expressions came from the model once: they're read from the words now.
+    if (this.value.expressions === 'model') this.value.expressions = 'rules';
     this.listeners = new Set();
   }
 

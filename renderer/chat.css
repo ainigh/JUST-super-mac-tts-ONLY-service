@@ -239,11 +239,18 @@ body[data-ears='writing'] #face::after {
   flex: none;
 }
 
-#sizeName {
-  min-width: 58px;
-  padding: 3px 6px;
+#size button {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border-radius: 7px;
   font-size: 12px;
-  background: transparent;
+  font-weight: 600;
+}
+
+#size button[aria-checked='true'] {
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 #tabs {
@@ -300,7 +307,7 @@ main {
 }
 
 .msg {
-  max-width: 86%;
+  max-width: 78%;
   padding: 7px 11px;
   border-radius: var(--radius);
   white-space: pre-wrap;
@@ -756,4 +763,83 @@ select {
   color: var(--muted);
   font-size: 11.5px;
   margin-top: 3px;
+}
+
+/* ---------------------------------------------------------------- the model's log, and the calls */
+
+.traces {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.trace .head .meta {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.trace .meta[class*='state-'] {
+  border-radius: 999px;
+  padding: 0 7px;
+  background: var(--theirs);
+}
+
+.trace .state-done {
+  color: var(--ok);
+}
+
+.trace .state-failed {
+  color: var(--bad);
+}
+
+.trace .state-asking,
+.trace .state-working,
+.trace .state-sending,
+.trace .state-streaming {
+  color: var(--warn);
+}
+
+.trace .url {
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.trace .bad {
+  color: var(--bad);
+}
+
+.trace details {
+  margin-top: 6px;
+}
+
+.trace summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.trace .messages {
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+  margin-top: 4px;
+}
+
+.trace .http {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--theirs);
+}
+
+.trace .http .line {
+  font: 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.trace .http pre {
+  background: var(--panel);
 }

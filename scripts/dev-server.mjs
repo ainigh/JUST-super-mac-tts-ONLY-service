@@ -42,7 +42,17 @@ function ask(type, data, timeout = 120_000) {
 
 const speech = new Speech({ send });
 const dataDir = process.env.SUPERFACE_DATA || path.join(os.tmpdir(), 'superface-dev');
-const core = createCore({ settings, speech, dataDir, host: { show: () => (visible = true) } });
+const core = createCore({
+  settings,
+  speech,
+  dataDir,
+  host: {
+    show: () => (visible = true),
+    face: () => face,
+    about: () => ({ version: JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version + '-dev', os: `${os.type()} ${os.release()}`, arch: process.arch, electron: '(browser)', chrome: '(browser)' }),
+    retryVoice: () => ask('retryVoice', {}, 10 * 60_000),
+  },
+});
 const uiClients = new Set();
 const toUi = (ev) => {
   for (const res of uiClients) res.write(`data: ${JSON.stringify(ev)}\n\n`);
@@ -121,10 +131,13 @@ http
       const ev = await readJSON(req);
       if (ev.type === 'state') {
         if (ev.state.avatar === 'loading' && face.avatar !== 'loading') earsOn = null; // the page started again
+        const was = face;
         face = { ...face, ...ev.state };
+        if (face.avatar !== was.avatar || face.tts?.state !== was.tts?.state) toUi({ type: 'status', status: core.status() });
         updateEars();
       } else if (ev.type === 'ears') core.setEars(ev.state);
       else if (ev.type === 'heard') core.heard(ev);
+      else if (ev.type === 'error') core.reportError(ev);
       else speech.event(ev);
       if (process.env.VERBOSE) console.log('event', JSON.stringify(ev));
       return res.writeHead(204).end();

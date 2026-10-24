@@ -28,12 +28,32 @@ let ttsState = { state: 'loading' };
 let avatarState = 'loading';
 let avatarMessage = '';
 let ready; // resolves once the avatar and the voice are both ready
+let gpuInfo = 'not asked';
+let voiceErrors = null; // while the voice is starting: what its worker says went wrong
+
+/** Something went wrong: it goes to the main process, for the chat's Errors tab (and a report to copy). */
+function problem(source, message, detail = '') {
+  bridge.event({ type: 'error', source, message: String(message).slice(0, 500), detail: String(detail || '').slice(0, 8000) });
+}
+
+// What goes wrong inside the voice's worker (voice-glue.mjs) is heard here.
+// While the voice is starting, it goes into that try's one entry; after, each is an entry of its own.
+new BroadcastChannel('superface-errors').onmessage = ({ data }) => {
+  if (voiceErrors) voiceErrors.push([data.message, data.detail].filter(Boolean).join('\n'));
+  else problem(data.source || 'worker', data.message, data.detail);
+};
+addEventListener('error', (e) => {
+  // The voice's worker giving up on purpose (voice-glue.mjs): already said, with its reason.
+  if (String(e.filename || '').includes('voice-glue.mjs')) return;
+  problem('page', e.message || 'an error on the page', e.error?.stack || `${e.filename || ''}:${e.lineno || ''}`);
+});
+addEventListener('unhandledrejection', (e) => problem('page', String(e.reason?.message || e.reason), e.reason?.stack || ''));
 const readyNow = new Promise((r) => (ready = r));
 
 // ---------------------------------------------------------------- state, for the main process
 
 function report() {
-  bridge.event({ type: 'state', state: { avatar: avatarState, tts: ttsState, backend, message: avatarMessage } });
+  bridge.event({ type: 'state', state: { avatar: avatarState, tts: ttsState, backend, message: avatarMessage, gpu: gpuInfo, userAgent: navigator.userAgent } });
   const problem = avatarState === 'failed' || ttsState.state === 'failed';
   if (problem) document.body.dataset.problem = 'true';
   else delete document.body.dataset.problem;
@@ -101,6 +121,7 @@ async function loadAvatar() {
     console.error('The avatar didn’t load:', err);
     avatarState = 'failed';
     avatarMessage = err?.message || String(err);
+    problem('avatar', `${c.name} didn’t load: ${avatarMessage}`, err?.stack || '');
   }
   report();
   done();
@@ -123,7 +144,8 @@ async function connectVoice() {
     endpoints: [endpoint],
     audioCtx: head.audioCtx,
     workerModule: abs('/node_modules/@met4citizen/headtts/modules/worker-tts.mjs'),
-    transformersModule: abs('/node_modules/@huggingface/transformers/dist/transformers.min.js'),
+    // transformers.js through the glue: what goes wrong in the worker is heard here (voice-glue.mjs).
+    transformersModule: abs('/renderer/voice-glue.mjs'),
     dictionaryURL: abs('/node_modules/@met4citizen/headtts/dictionaries/'),
     voices: [cfg.voice],
     splitSentences: false, // it's cut into sentences here, each with its own direction
@@ -136,38 +158,58 @@ async function connectVoice() {
     ttsState = { ...ttsState, progress: Math.round((ev.loaded / ev.total) * 100) / 100 };
     report();
   };
-  let lastError = null;
   // WebGPU only when there's a GPU to be had (a page can see navigator.gpu with no adapter).
   let gpu = false;
   try {
-    gpu = !!(await navigator.gpu?.requestAdapter());
-  } catch {
-    /* no WebGPU */
+    const adapter = await navigator.gpu?.requestAdapter();
+    gpu = !!adapter;
+    gpuInfo = adapter ? [adapter.info?.vendor, adapter.info?.architecture, adapter.info?.description].filter(Boolean).join(' ') || 'yes' : 'no adapter';
+  } catch (err) {
+    gpuInfo = `failed: ${err?.message || err}`;
   }
-  for (const endpoint of gpu ? ['webgpu', 'wasm'] : ['wasm']) {
-    const t = new HeadTTS(options(endpoint));
-    t.onmessage = () => {};
-    t.onerror = (e) => console.error('HeadTTS:', e);
-    try {
-      // A start that fails is reported to onerror, not thrown: it's connected, or it isn't.
-      await t.connect(null, onprogress);
-      if (!t.isConnected) throw new Error(`the voice model didn’t start on ${endpoint}`);
-      tts = t;
-      backend = endpoint;
-      break;
-    } catch (err) {
-      lastError = err;
-      console.warn(`HeadTTS on ${endpoint} didn’t start:`, err);
+  const endpoints = gpu ? ['webgpu', 'wasm'] : ['wasm'];
+  const why = {}; // endpoint → why it didn't start, the last time
+  // Twice round: what the first try downloaded is cached, so a second goes quicker.
+  for (let round = 1; round <= 2 && !tts; round++) {
+    for (const endpoint of endpoints) {
+      const heard = []; // what the worker said went wrong
+      voiceErrors = heard;
+      const started = performance.now();
+      const t = new HeadTTS(options(endpoint));
+      t.onmessage = () => {};
+      t.onerror = (e) => heard.push(String(e?.message || e));
       try {
-        t.clear();
-        t.ww?.terminate();
-      } catch {
-        /* already gone */
+        // A start that fails is reported to onerror, not thrown: it's connected, or it isn't.
+        await t.connect(null, onprogress);
+        if (!t.isConnected) throw new Error('it didn’t start');
+        tts = t;
+        backend = endpoint;
+        break;
+      } catch (err) {
+        const seconds = Math.round((performance.now() - started) / 100) / 10;
+        await new Promise((r) => setTimeout(r, 400)); // what the worker said may still be on its way
+        // What the worker said, the most telling first (its real error, not HeadTTS's "failed to start").
+        const said = [...new Set(heard)].filter((h) => !/^HeadTTS connection failed/.test(h));
+        const detail = [...said, ...heard.filter((h) => /^HeadTTS connection failed/.test(h))].join('\n\n') || String(err?.message || err);
+        const cause = said.map((h) => h.match(/(TypeError|Error|RangeError|SyntaxError): [^\n]+/)?.[0]).find((m) => m && !/Loading models failed/.test(m));
+        why[endpoint] = cause || (said.length ? said[0].split('\n')[0] : `no answer from the voice's worker (after ${seconds}s)`);
+        console.warn(`HeadTTS on ${endpoint} didn’t start (try ${round}):`, detail);
+        problem('voice', `The voice didn’t start on ${endpoint === 'webgpu' ? 'the GPU (WebGPU)' : 'the CPU (WebAssembly)'}, try ${round} of 2, after ${seconds}s: ${why[endpoint]}`, detail);
+        try {
+          t.clear();
+          t.ww?.terminate();
+        } catch {
+          /* already gone */
+        }
+      } finally {
+        voiceErrors = null;
       }
     }
   }
   clearTimeout(slow);
-  ttsState = tts ? { state: 'ready' } : { state: 'failed', message: String(lastError?.message || lastError || 'no backend') };
+  ttsState = tts
+    ? { state: 'ready' }
+    : { state: 'failed', message: `the voice model didn’t start (${Object.entries(why).map(([e, m]) => `${e}: ${m}`).join('; ')})` };
   report();
 }
 
@@ -269,6 +311,7 @@ async function pump() {
         await perform(u, generation);
       } catch (err) {
         console.error('Couldn’t say it:', err);
+        problem('speech', `Couldn’t say “${String(u.text).slice(0, 60)}”: ${err.message || err}`);
         inFlight.delete(u.id);
         bridge.event({ type: 'ended', id: u.id, error: err.message || String(err) });
       }
@@ -423,6 +466,12 @@ const COMMANDS = {
     show(d, d.duration || 3);
   },
   tts: (d) => textToSpeech(d),
+  /** The voice, started again (after it failed), without reloading the character. */
+  retryVoice: async () => {
+    if (tts || !head) return { ok: !!tts };
+    await connectVoice();
+    return { ok: !!tts, message: ttsState.message };
+  },
   ears: async ({ on, paused }) => {
     if (paused !== undefined) ears.pause(paused);
     if (on !== undefined) {
@@ -495,7 +544,8 @@ function wireInput() {
 // ---------------------------------------------------------------- the ears
 
 const ears = new Ears({
-  transformers: abs('/node_modules/@huggingface/transformers/dist/transformers.min.js'),
+  transformers: abs('/renderer/ort-local.mjs'),
+  onError: (message, detail) => problem('ears', message, detail),
   onState: (state) => {
     bridge.event({ type: 'ears', state });
     document.body.dataset.ears = state.state;
@@ -515,6 +565,7 @@ try {
   console.error('The avatar couldn’t start:', err);
   avatarState = 'failed';
   avatarMessage = `the 3D view couldn’t start (${err?.message || err})`;
+  problem('avatar', avatarMessage, err?.stack || '');
   ttsState = { state: 'failed', message: 'the avatar couldn’t start' };
 }
 if (head) await Promise.all([loadAvatar(), connectVoice()]);

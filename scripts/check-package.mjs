@@ -6,7 +6,7 @@
 //   node scripts/check-package.mjs --source   this checkout, as `npm run dev` and `npm start` serve it
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { builtinModules, createRequire } from 'node:module';
 import { dirname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -47,6 +47,7 @@ const imports = JSON.parse(page.match(/<script type="importmap">([\s\S]*?)<\/scr
 /** A module specifier, from the module at `from`, to a path in the app (null: not ours to check). */
 function resolve(spec, from) {
   if (/^(https?:|data:|blob:|node:)/.test(spec)) return null; // node: only in HeadTTS's Node.js server
+  if (builtinModules.includes(spec)) return null; // Node.js only (ONNX Runtime's, behind a check it's in Node)
   if (imports[spec]) return imports[spec];
   for (const [prefix, target] of Object.entries(imports)) {
     if (prefix.endsWith('/') && spec.startsWith(prefix)) return target + spec.slice(prefix.length);
@@ -74,6 +75,9 @@ queue.push(
   '/renderer/avatars/avatarsdk.glb',
   '/renderer/style.css',
   '/renderer/ears-worker.mjs', // the ears' worker, started by URL
+  '/renderer/voice-glue.mjs', // what HeadTTS's worker loads transformers.js through (and ort-local.mjs)
+  '/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.mjs', // ONNX Runtime, from the app, not a CDN
+  '/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm',
   '/renderer/chat.html', // the chat window, and what it loads
   '/renderer/chat.mjs',
   '/renderer/chat.css',

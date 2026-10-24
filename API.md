@@ -80,6 +80,7 @@ curl -s localhost:8769/api/echo -d '{"text": "nice to meet you"}'
 | `GET  /api/schedules`, `POST /api/schedules` | what it has set itself to do later; set one |
 | `POST /api/schedules/cancel` | cancels one (`{"id": "s3"}`) or all (`{"id": "all"}`) |
 | `GET  /api/memory`, `POST /api/memory` | what it has learned, and the user's standing instructions |
+| `GET  /api/errors` | what went wrong (the voice, the ears, the avatar, the model, the app), and `report`: all of it with versions and state, as text to paste |
 | `GET  /` | a status page, with a box to try it |
 | `GET  /api.md` | this document |
 
@@ -355,12 +356,21 @@ loud either way. `GET /api/chat?limit=50` gives the conversation's entries (`use
 optional): for another app that listens. Answers what came of it: `{"said": "…"}`, `{"held":
 true}` (waiting for the rest), `{"dropped": "echo"}`, `{"command": "cancel"}`…
 
+### `GET /api/errors`
+
+`{"errors": [{"id", "at", "source", "message", "detail", "count"}], "report": "Super Face 0.1.7, report made …"}`.
+`source` is `voice`, `ears`, `avatar`, `speech`, `page`, `chat`, `model`, `api` or `app`; the same
+error again within a minute is counted (`count`), not listed twice. A voice that doesn't start says
+why, from inside its worker (a download that failed, a model that didn't load), for each try (the
+GPU, then the CPU; twice round). The chat's **Errors** tab shows them, with **Copy report** and
+**Try the voice again**.
+
 ### `GET /api/events`, for the assistant
 
 Besides the speech events, the stream carries `entry` (a conversation entry added or changed),
 `assistant` (what it's doing: `phase` is `idle`, `thinking`, `tool` or `learning`), `ears` (`off`,
 `loading`, `listening`, `hearing`, `writing`, `paused`, `failed`), `heard`, `schedules`, `memory`,
-`tools` and `status`.
+`tools`, `errors` and `status`.
 
 ## With Super Voice
 

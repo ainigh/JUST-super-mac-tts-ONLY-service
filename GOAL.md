@@ -24,3 +24,29 @@ a 3d with no background that shows up in full head to toes and is the face of wh
 there is an exaple implementation in the repo. take only as rough idea. re-implement the mac app, have icon in menu, click or client call aoi should make it show up. 
 
 we want to update the  https://github.com/ainigh/super-mac-tts-stt-service/tree/main  as well accordingly
+
+## Then: one assistant, simply
+
+In this repo we want it to:
+
+* be able to hear
+* use a model
+* only 1, not 3. only 1 model
+* call any tool it needs from https://github.com/ainigh/tool-mac-tool-run
+* use that tool to manage the library, so no library like the other super voice has
+* combine the prompt in a way that it uses the 'intelligence' of the 3 that Super Voice had (Tom,
+  Jerry, Jane), like at certain times etc
+* clicking on the character should toggle show/hide the chat interface; the interface contains
+  buttons to cycle through character size
+* the chat interface should list all available tools, obtained via the API when the character loads
+* unlike Super Voice, when the character loads, it should be on standby to take any instruction
+* selecting an avatar is selecting a voice
+* add 2 more avatars, male and female, distinct
+* let the model schedule a time x minutes from now, or a specific date/time; then the system shows
+  the avatar and calls the model at that time (if it's not already shown). Multiple at once, and
+  cancelling. Likely the only tool that's in this system and not over the API
+* craft the prompts well, such that the model can learn
+* when it calls the API for tool use, it should be able to cancel it
+
+Basically this is just a chat with access to tools. Not the typical Ollama tools: hand-rolled, like
+in Super Voice.

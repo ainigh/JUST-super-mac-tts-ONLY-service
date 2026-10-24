@@ -1,25 +1,29 @@
 // Super Face: the Electron main process. A menu bar icon; a frameless, transparent window with the
-// avatar in it, head to toes, hidden until it's called (a click on the icon, or a client's call);
-// the HTTP API on 127.0.0.1:8769. The renderer does the speaking (HeadTTS) and the moving
-// (TalkingHead); this process keeps the record of it, owns the window, and answers the API.
+// character in it, head to toes, on standby as the app opens (listening, ready for anything); the
+// chat beside it, shown and hidden by a click on the character; the HTTP API on 127.0.0.1:8769.
+// The character's page does the speaking (HeadTTS), the moving (TalkingHead) and the hearing
+// (Moonshine); this process holds the assistant (the core: the model, the tools, the schedule,
+// memory), owns the windows, and answers the API.
 
-import { app, BrowserWindow, Menu, Tray, clipboard, globalShortcut, ipcMain, nativeImage, screen, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, clipboard, globalShortcut, ipcMain, nativeImage, screen, shell, systemPreferences } from 'electron';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApi } from './src/main/api.mjs';
+import { createCore } from './src/main/core.mjs';
 import { iconPixels } from './src/main/icon.mjs';
 import { Settings } from './src/main/settings.mjs';
 import { Speech } from './src/main/speech.mjs';
 import { Updater } from './src/main/updater.mjs';
 import { MOODS } from './src/shared/catalog.mjs';
-import { VOICES } from './src/shared/voices.mjs';
+import { CHARACTERS, SIZES, characterOf } from './src/shared/characters.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
-const AVATARS = { brunette: 'Brunette (woman)', david: 'David (man)' };
-const SIZES = { Small: [260, 560], Medium: [340, 720], Large: [440, 920] };
+const AVATARS = Object.fromEntries(CHARACTERS.map((c) => [c.id, `${c.name} (${c.body === 'F' ? 'woman' : 'man'})`]));
+const CHAT = [360, 600]; // the chat window: width, and height at most
+const STATIC_PORT = 18769; // the page's address stays the same, so what it downloads stays cached
 const VIEWS = { full: 'Head to toes', mid: 'Waist up', upper: 'Head and shoulders', head: 'Face' };
 
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -27,6 +31,7 @@ app.setName('Super Face');
 app.dock?.hide();
 
 let win = null;
+let chat = null;
 let tray = null;
 let rendererUrl = null;
 let apiServer = null;
@@ -68,6 +73,36 @@ ipcMain.on('reply', (_e, { id, ok, result, error }) => {
 });
 
 const speech = new Speech({ send: (type, data) => send(type, data) });
+const core = createCore({ settings, speech, dataDir: app.getPath('userData'), host: { show: () => show(), resize: (name) => (win ? resize(name) : settings.set({ size: name })) } });
+
+// What the core says goes to the chat (and the speaking state, so it can offer to stop).
+let lastPhase = 'idle';
+core.subscribe((ev) => {
+  chat?.webContents.send('ui:event', ev);
+  if (ev.type === 'assistant') {
+    const phase = ev.state.phase;
+    if (phase === 'thinking' && lastPhase !== 'thinking') send('attend', { state: 'thinking' });
+    lastPhase = phase;
+  }
+});
+speech.subscribe((ev) => {
+  if (['started', 'ended', 'stopped', 'failed'].includes(ev.type)) {
+    chat?.webContents.send('ui:event', { type: 'speech', speaking: speech.speaking || speech.queued > 0 });
+    updateEars();
+  }
+});
+
+/** The ears are on while the character is shown, it has loaded, and listening is on; paused while it talks, if so set. */
+let earsSent = null;
+function updateEars() {
+  const s = settings.get();
+  const on = !!(s.listening && win?.isVisible() && face.avatar === 'ready');
+  const paused = !s.listenWhileSpeaking && (speech.speaking || speech.queued > 0);
+  const key = `${on}/${paused}`;
+  if (key === earsSent) return;
+  earsSent = key;
+  send('ears', { on, paused });
+}
 
 ipcMain.on('event', (_e, ev) => {
   if (ev.type === 'state') {
@@ -81,6 +116,16 @@ ipcMain.on('event', (_e, ev) => {
       show();
     }
     if (face.avatar === 'ready' && face.tts.state === 'ready' && !settings.get().welcomed) welcome();
+    if (face.avatar === 'loading' && was.avatar !== 'loading') earsSent = null; // the page started again
+    updateEars();
+    return;
+  }
+  if (ev.type === 'ears') {
+    core.setEars(ev.state);
+    return;
+  }
+  if (ev.type === 'heard') {
+    core.heard(ev);
     return;
   }
   speech.event(ev);
@@ -99,14 +144,8 @@ speech.subscribe((ev) => {
 function welcome() {
   settings.set({ welcomed: true });
   show();
-  const s = settings.get();
-  speech.enqueue({
-    text: "Hi! I'm Super Face. 👋 Click the little person in the menu bar to show or hide me, and right-click it for my settings.",
-    voice: s.voice,
-    speed: s.speed,
-    auto: true,
-    source: 'superface',
-  });
+  const c = characterOf(settings.get().avatar);
+  core.speakAs(`Hi! I'm ${c.name}. 👋 Just talk to me, I'm listening. Click me to open our chat, and drag me anywhere.`);
 }
 
 function afterSpeaking() {
@@ -118,6 +157,14 @@ function afterSpeaking() {
 }
 
 ipcMain.handle('settings:get', () => ({ ...settings.get(), avatars: AVATARS, version: VERSION }));
+ipcMain.handle('direct', (_e, texts, who) => core.direct(texts, who));
+ipcMain.handle('ui', async (_e, name, args) => {
+  const fn = core.actions[name];
+  if (!fn) throw new Error(`no action called ${name}`);
+  return fn(args || {});
+});
+ipcMain.on('chat:toggle', () => toggleChat());
+ipcMain.on('chat:hide', () => chat?.hide());
 ipcMain.handle('settings:set', (_e, patch) => settings.set(patch));
 ipcMain.on('menu:show', () => menu().popup({ window: win }));
 let dragStart = null;
@@ -128,14 +175,16 @@ ipcMain.on('drag:move', (_e, dx, dy) => {
 ipcMain.on('drag:end', () => {
   dragStart = null;
   if (win) settings.set({ bounds: win.getBounds() });
+  placeChat();
 });
 
 // What the renderer is told when a setting it uses changes.
 settings.onChange((s, before) => {
-  const changed = ['avatar', 'view', 'voice', 'speed', 'mood', 'expressions', 'superVoiceUrl', 'captions'].filter((k) => s[k] !== before[k]);
+  const changed = ['avatar', 'view', 'voice', 'speed', 'mood', 'expressions', 'captions'].filter((k) => s[k] !== before[k]);
   if (changed.length) send('settings', Object.fromEntries(changed.map((k) => [k, s[k]])));
   if (s.port !== before.port || s.serving !== before.serving) serve();
   if (s.alwaysOnTop !== before.alwaysOnTop) win?.setAlwaysOnTop(s.alwaysOnTop, 'floating');
+  if (s.listening !== before.listening || s.listenWhileSpeaking !== before.listenWhileSpeaking) updateEars();
   refreshMenu();
 });
 
@@ -171,16 +220,84 @@ function createWindow() {
   });
   win.setAlwaysOnTop(s.alwaysOnTop, 'floating');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  win.on('moved', () => settings.set({ bounds: win.getBounds() }));
+  win.on('moved', () => {
+    settings.set({ bounds: win.getBounds() });
+    placeChat();
+  });
   win.on('closed', () => (win = null));
-  win.on('show', refreshMenu);
-  win.on('hide', refreshMenu);
+  win.on('show', () => {
+    refreshMenu();
+    updateEars();
+  });
+  win.on('hide', () => {
+    refreshMenu();
+    chat?.hide();
+    updateEars();
+  });
   win.webContents.on('render-process-gone', (_e, d) => {
     console.error('Super Face: the avatar crashed:', d.reason);
     for (const id of [...speech.order]) speech.finish(id, 'failed', 'the avatar crashed');
     setTimeout(() => win?.reload(), 1000);
   });
   win.loadURL(`${rendererUrl}/renderer/index.html`);
+}
+
+// ---------------------------------------------------------------- the chat, beside the character
+
+function createChat() {
+  chat = new BrowserWindow({
+    width: CHAT[0],
+    height: CHAT[1],
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    vibrancy: 'popover',
+    visualEffectState: 'active',
+    roundedCorners: true,
+    resizable: true,
+    minWidth: 300,
+    minHeight: 360,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: settings.get().alwaysOnTop,
+    parent: win || undefined, // it moves with the character
+    title: 'Chat',
+    webPreferences: { preload: path.join(ROOT, 'preload-chat.cjs'), contextIsolation: true, nodeIntegration: false },
+  });
+  chat.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  chat.on('closed', () => (chat = null));
+  chat.loadURL(`${rendererUrl}/renderer/chat.html`);
+}
+
+/** Beside the character: on its left when there's room (it usually stands at the right), else its right. */
+function placeChat() {
+  if (!chat || !win) return;
+  const b = win.getBounds();
+  const area = screen.getDisplayMatching(b).workArea;
+  const [w0] = chat.getSize();
+  const w = Math.min(w0, area.width - b.width);
+  const h = Math.min(CHAT[1], Math.max(400, b.height), area.height);
+  let x = b.x - w - 8;
+  if (x < area.x) x = b.x + b.width + 8;
+  x = Math.max(area.x, Math.min(x, area.x + area.width - w));
+  const y = Math.max(area.y, Math.min(b.y + b.height - h, area.y + area.height - h));
+  chat.setBounds({ x: Math.round(x), y: Math.round(y), width: Math.round(w), height: Math.round(h) });
+}
+
+function showChat() {
+  show();
+  if (!chat) createChat();
+  placeChat();
+  chat.show();
+  app.focus({ steal: true });
+  chat.focus();
+  chat.webContents.send('ui:event', { type: 'focus' });
+}
+
+function toggleChat() {
+  if (chat?.isVisible()) chat.hide();
+  else showChat();
 }
 
 const inside = (b, a) => b.x >= a.x - 50 && b.y >= a.y - 50 && b.x + b.width <= a.x + a.width + 50 && b.y + b.height <= a.y + a.height + 50;
@@ -192,6 +309,7 @@ function show() {
 }
 
 function hide() {
+  chat?.hide();
   win?.hide();
 }
 
@@ -208,8 +326,13 @@ function resize(name) {
   const [w, h] = SIZES[name];
   const b = win.getBounds();
   // Grow or shrink around the feet, where the avatar stands.
-  win.setBounds({ x: b.x + Math.round((b.width - w) / 2), y: b.y + b.height - h, width: w, height: h });
+  const area = screen.getDisplayMatching(b).workArea;
+  const height = Math.min(h, area.height);
+  const x = Math.max(area.x, Math.min(b.x + Math.round((b.width - w) / 2), area.x + area.width - w));
+  const y = Math.max(area.y, b.y + b.height - height);
+  win.setBounds({ x, y, width: w, height });
   settings.set({ size: name, bounds: win.getBounds() });
+  placeChat();
 }
 
 // ---------------------------------------------------------------- static files for the renderer
@@ -228,7 +351,7 @@ const MIME = {
 };
 const SERVED = ['renderer', 'src/shared', 'node_modules'];
 
-function startStatic() {
+function startStatic(port = STATIC_PORT) {
   const server = http.createServer((req, res) => {
     let rel;
     try {
@@ -244,7 +367,13 @@ function startStatic() {
       res.end(data);
     });
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)));
+  // The same port every time (the voices and the ears' models are cached by the page's address);
+  // any free one if it's taken.
+  return new Promise((resolve) => {
+    server.once('error', () => server.listen(0, '127.0.0.1'));
+    server.on('listening', () => resolve(`http://127.0.0.1:${server.address().port}`));
+    server.listen(port, '127.0.0.1');
+  });
 }
 
 // ---------------------------------------------------------------- the API
@@ -277,7 +406,7 @@ const docs = () => {
   }
 };
 
-const handle = createApi({ speech, face: faceApi, settings, version: VERSION, updater, docs, avatars: Object.keys(AVATARS) });
+const handle = createApi({ speech, face: faceApi, settings, version: VERSION, updater, docs, avatars: Object.keys(AVATARS), core });
 
 function serve() {
   const s = settings.get();
@@ -333,22 +462,34 @@ function menu() {
       : u.state === 'installing'
         ? { label: u.step || 'Updating…', enabled: false }
         : { label: u.state === 'checking' ? 'Checking for updates…' : u.state === 'failed' ? `Check for updates (${u.message})`.slice(0, 70) : 'Check for updates', enabled: u.state !== 'checking', click: () => updater.check(true) };
+  const a = core.assistant.state();
+  const ears = core.status().ears;
+  const earsLine = !s.listening
+    ? 'Not listening'
+    : ears.state === 'failed'
+      ? `Can't hear: ${ears.message || ''}`.slice(0, 70)
+      : ears.state === 'loading'
+        ? `Getting the ears ready…${ears.progress ? ` ${Math.round(ears.progress * 100)}%` : ''}`
+        : ears.state === 'off'
+          ? 'Listening while the character shows'
+          : 'Listening';
+  const tools = core.toolrun.catalog;
   return Menu.buildFromTemplate([
-    { label: visible ? 'Hide the avatar' : 'Show the avatar', accelerator: 'CommandOrControl+Shift+A', click: toggle },
-    { label: 'Say hello', click: () => {
-        show();
-        speech.enqueue({ text: 'Hi! I am Super Face. Send me words and I will say them, with feeling.', voice: s.voice, speed: s.speed, gesture: 'handup', auto: true, source: 'menu' });
-      },
-    },
-    { label: 'Stop talking', enabled: speech.speaking || speech.queued > 0, click: () => speech.stop() },
+    { label: visible ? 'Hide the character' : 'Show the character', accelerator: 'CommandOrControl+Shift+A', click: toggle },
+    { label: chat?.isVisible() ? 'Hide the chat' : 'Open the chat', click: toggleChat },
+    { label: 'Listen', type: 'checkbox', checked: s.listening, click: () => settings.set({ listening: !s.listening }) },
+    { label: a.busy ? 'Stop (cancel what it’s doing)' : 'Stop talking', enabled: a.busy || speech.speaking || speech.queued > 0, click: () => (a.busy ? core.assistant.cancel() : speech.stop()) },
     { type: 'separator' },
     { label: ttsLine, enabled: false },
-    radio('Avatar', AVATARS, s.avatar, (k) => settings.set({ avatar: k })),
+    { label: earsLine, enabled: false },
+    { label: a.error ? `Model: ${a.error}`.slice(0, 70) : `Model: ${a.model || 'the best Ollama has'}`, enabled: false },
+    { label: tools.reachable && !tools.error ? `Tools: ${tools.scripts.length} scripts, ${tools.flows.length} flows` : 'Tools: Tool Mac Tool Run isn’t running', enabled: false },
+    { type: 'separator' },
+    radio('Character (and voice)', AVATARS, s.avatar, (k) => settings.set({ avatar: k, voice: characterOf(k).voice })),
     radio('Framing', VIEWS, s.view, (k) => settings.set({ view: k })),
-    radio('Voice', Object.fromEntries(VOICES.map((v) => [v.id, `${v.name} · ${v.female ? 'woman' : 'man'}${v.id.startsWith('b') ? ', UK' : ''}`])), s.voice, (k) => settings.set({ voice: k })),
     radio('Speed', { 0.8: 'Slower', 0.9: 'A little slower', 1: 'Normal', 1.1: 'A little faster', 1.25: 'Faster' }, String(s.speed), (k) => settings.set({ speed: Number(k) })),
     radio('Mood at rest', Object.fromEntries(Object.keys(MOODS).filter((m) => m !== 'sleep').map((m) => [m, m[0].toUpperCase() + m.slice(1)])), s.mood, (k) => settings.set({ mood: k })),
-    radio('Expressions', { model: "From Super Voice's model", rules: 'From the words only', off: 'Only when asked' }, s.expressions, (k) => settings.set({ expressions: k })),
+    radio('Expressions for other apps', { model: 'From the model', rules: 'From the words only', off: 'Only when asked' }, s.expressions, (k) => settings.set({ expressions: k })),
     radio('Size', Object.fromEntries(Object.keys(SIZES).map((k) => [k, k])), s.size, (k) => win && resize(k)),
     radio('Hide after talking', { 0: 'Never', 10: 'After 10 seconds', 30: 'After 30 seconds', 120: 'After 2 minutes' }, String(s.hideAfter), (k) => settings.set({ hideAfter: Number(k) })),
     { label: 'Captions', type: 'checkbox', checked: s.captions, click: () => settings.set({ captions: !s.captions }) },
@@ -365,6 +506,7 @@ function menu() {
     { label: 'Open at login', type: 'checkbox', checked: app.getLoginItemSettings().openAtLogin, click: (i) => app.setLoginItemSettings({ openAtLogin: i.checked }) },
     { label: 'Reload the avatar', click: () => win?.reload() },
     { label: 'Developer tools', click: () => win?.webContents.openDevTools({ mode: 'detach' }) },
+    { label: 'Chat developer tools', enabled: !!chat, click: () => chat?.webContents.openDevTools({ mode: 'detach' }) },
     { label: 'Quit Super Face', role: 'quit' },
   ]);
 }
@@ -385,6 +527,8 @@ function refreshMenu() {
 app.on('second-instance', show);
 
 app.whenReady().then(async () => {
+  // The microphone: macOS asks the user once (Electron itself allows its pages everything they ask for).
+  if (process.platform === 'darwin' && !process.env.SUPERFACE_NO_MIC) systemPreferences.askForMediaAccess('microphone').catch(() => {});
   rendererUrl = await startStatic();
   tray = new Tray(nativeImage.createEmpty());
   setTrayIcon(false);
@@ -393,6 +537,9 @@ app.whenReady().then(async () => {
   tray.on('click', (e) => (e.ctrlKey ? tray.popUpContextMenu(menu()) : toggle()));
   tray.on('right-click', () => tray.popUpContextMenu(menu()));
   createWindow();
+  core.start();
+  // On standby as it opens: shown, listening, ready for anything.
+  if (settings.get().showAtLaunch) show();
   serve();
   setInterval(() => speech.watch(), 5000);
   updater.start();

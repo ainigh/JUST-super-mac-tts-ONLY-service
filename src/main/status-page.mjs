@@ -22,7 +22,7 @@ a{color:var(--accent)}
 <h1>Super Face</h1>
 <p>The avatar's API, at <code>http://127.0.0.1:${port}</code>. The whole contract is in <a href="/api.md">/api.md</a>.</p>
 <div class="card">
-<textarea id="text">Hello! I'm the face of Super Voice. [thumbup] Nice to meet you 😊</textarea>
+<textarea id="text">Hello! Nice to meet you. [thumbup] 😊</textarea>
 <div class="row">
 <select id="voice"></select>
 <select id="mood"><option value="">mood: auto</option></select>

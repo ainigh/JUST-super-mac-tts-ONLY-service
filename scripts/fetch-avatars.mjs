@@ -12,6 +12,10 @@ export const AVATAR_FILES = {
   // A man, from HeadAudio's demo.
   'david.glb':
     'https://raw.githubusercontent.com/met4citizen/HeadAudio/c6d8af35034068b1c98dcc0fa3ec9602d711e784/avatars/david.glb',
+  // A woman in a suit, made at Avaturn: TalkingHead's own example.
+  'avaturn.glb': 'https://raw.githubusercontent.com/met4citizen/TalkingHead/refs/tags/v1.8.0/avatars/avaturn.glb',
+  // A young man, made at AvatarSDK: TalkingHead's own example.
+  'avatarsdk.glb': 'https://raw.githubusercontent.com/met4citizen/TalkingHead/refs/tags/v1.8.0/avatars/avatarsdk.glb',
 };
 
 await mkdir(dir, { recursive: true });

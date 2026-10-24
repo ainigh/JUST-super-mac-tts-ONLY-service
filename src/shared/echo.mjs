@@ -1,12 +1,12 @@
 // Did the ears hear the mouth? Super Face knows exactly what it said and when, so whoever is
-// listening (Super Voice) can ask, for each phrase it heard: is this my own voice coming back
+// listening (its own ears, or another app) can ask, for each phrase it heard: is this my own voice coming back
 // through the microphone? It's the words that tell: what was heard, compared with what was said
 // around that time. Nothing fancier.
 
 import { words } from './text.mjs';
 
 /** Said first and alone, these are the user cutting in, even when the voice said them too. */
-const BARGE = new Set(['stop', 'wait', 'hold', 'quiet', 'pause', 'enough', 'tom', 'hey']);
+const BARGE = new Set(['stop', 'wait', 'hold', 'quiet', 'pause', 'enough', 'cancel', 'hey', 'ivy', 'david', 'sofia', 'leo']);
 /** Short words that tell nothing apart. */
 const STOP = new Set(
   'a an the and or of to in on at for is it i my me be was are this that with by as so s you we he she they its im'.split(' '),

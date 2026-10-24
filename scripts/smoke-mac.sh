@@ -8,7 +8,8 @@ cd "$(dirname "$0")/.."
 app="$(ls -d dist/*/"Super Face.app" | head -1)"
 [[ -d "$app" ]] || { echo "no built app in dist/"; exit 1; }
 log=dist/smoke.log
-"$app/Contents/MacOS/Super Face" > "$log" 2>&1 &
+# No microphone prompt on a build machine (nobody's there to answer it).
+SUPERFACE_NO_MIC=1 "$app/Contents/MacOS/Super Face" > "$log" 2>&1 &
 pid=$!
 trap 'kill $pid 2>/dev/null' EXIT
 
@@ -34,3 +35,14 @@ echo "✓ spoke: $answer"
 said="$(curl -s http://127.0.0.1:8769/api/said?seconds=300)"
 grep -q 'The release works' <<<"$said" || fail "what it said isn't logged: $said"
 echo "✓ logged what it said"
+
+# The assistant is there, with its own tools (Ollama and Tool Mac Tool Run aren't on the build machine).
+a="$(curl -s http://127.0.0.1:8769/api/assistant)"
+grep -q '"name":"Ivy"' <<<"$a" || fail "the assistant isn't answering: $a"
+t="$(curl -s http://127.0.0.1:8769/api/tools)"
+grep -q '"name":"schedule"' <<<"$t" || fail "its tools aren't listed: $t"
+s1="$(curl -s http://127.0.0.1:8769/api/schedules -d '{"in_minutes": 60, "task": "Check the release."}')"
+grep -q '"id":"s1"' <<<"$s1" || fail "it can't schedule: $s1"
+c="$(curl -s http://127.0.0.1:8769/api/schedules/cancel -d '{"id": "s1"}')"
+grep -q '"cancelled":\["s1"\]' <<<"$c" || fail "it can't cancel a schedule: $c"
+echo "✓ the assistant answers, lists its tools, schedules and cancels"

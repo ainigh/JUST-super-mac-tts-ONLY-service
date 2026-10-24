@@ -228,12 +228,19 @@ Headers: `X-Voice`, `X-Sample-Rate`, `X-Duration`.
 
 ```json
 {"ok": true, "service": "superface", "version": "0.1.12", "port": 8769, "uptime": 3641,
- "visible": true, "speaking": false, "queued": 0, "avatar": "ready",
+ "visible": true, "speaking": false, "queued": 0, "avatar": "ready", "ready": true,
  "models": {"tts": {"state": "ready"}}, "expressions": "model", "superVoice": "http://127.0.0.1:8767"}
 ```
 
+`ready` is true when it can speak: the avatar loaded and the voice ready. Check it before handing
+speech over. `avatar` is `loading`, `ready` or `failed` (then `message` says why).
 `models.tts.state` is `loading`, `downloading` (the first time, with `progress`), `ready` or
 `failed` (with `message`).
+
+A speak made while it's still starting (the first seconds after it opens) waits for it, up to 15
+seconds, and is then refused with `503 not_ready`. One it can't say (the avatar didn't load, or the
+voice didn't) is refused at once, so a caller can say it another way. An utterance the avatar goes
+quiet on for a minute ends `failed`, so nobody waits on it for ever.
 
 ### Settings and updates
 
@@ -256,6 +263,8 @@ again, `{"install": true}` installs and restarts.
 | 413 | `too_large` | text over 20,000 characters, or a body over 1 MB |
 | 503 | `model_loading` | the voice is still downloading, the first time; has `progress`, and `Retry-After` |
 | 503 | `model_failed` | the voice model didn't load |
+| 503 | `avatar_failed` | the avatar didn't load; `error` says why |
+| 503 | `not_ready` | still starting after 15 seconds; has `Retry-After` |
 | 500 | `failed` | anything else |
 
 ## Access

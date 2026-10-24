@@ -6,11 +6,11 @@
   "main": "main.mjs",
   "private": true,
   "scripts": {
-    "postinstall": "node scripts/fetch-avatars.mjs",
+    "postinstall": "node scripts/vendor.mjs && node scripts/fetch-avatars.mjs",
     "start": "electron .",
     "dev": "node scripts/dev-server.mjs",
     "test": "node --test test/*.test.mjs",
-    "dist": "electron-builder --mac dir --arm64 --publish never && node scripts/package-mac.mjs"
+    "dist": "node scripts/vendor.mjs && electron-builder --mac dir --arm64 --publish never && node scripts/check-package.mjs && node scripts/package-mac.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "4.3.1",
@@ -33,11 +33,9 @@
       "package.json",
       "node_modules/@met4citizen/**",
       "node_modules/three/build/**",
-      "node_modules/three/examples/jsm/**",
       "node_modules/@huggingface/transformers/dist/**",
       "!node_modules/@huggingface/transformers/dist/*.node.*",
       "!**/*.map",
-      "!renderer/dev-bridge.mjs",
       "!node_modules/onnxruntime-node/**",
       "!node_modules/sharp/**",
       "!node_modules/@img/**"

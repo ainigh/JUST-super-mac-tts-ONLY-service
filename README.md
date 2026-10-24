@@ -84,8 +84,13 @@ npm install          # also downloads the two avatars into renderer/avatars
 npm test             # the API, the text and cues, the director, the echo check (no Electron)
 npm start            # the app
 npm run dev          # without Electron: open http://127.0.0.1:8769/renderer/index.html in Chrome
-npm run dist         # on a Mac: dist/SuperFace.zip
+npm run dist         # on a Mac: dist/SuperFace.zip (checks every file the page loads is in it)
+scripts/smoke-mac.sh # on a Mac, after dist: opens the app, waits for it, makes it speak
 ```
+
+The release build runs both: a build whose avatar doesn't load, or that doesn't speak, isn't
+released. If the avatar ever doesn't appear, it says why on the avatar's window (click the menu bar
+icon) and in the menu, and `curl -s localhost:8769/api/health` has the reason in `message`.
 
 | | |
 |---|---|

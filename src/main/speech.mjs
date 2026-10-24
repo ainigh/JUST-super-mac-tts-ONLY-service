@@ -24,6 +24,7 @@ export class Speech {
     this.waiters = new Map(); // id → [resolve]
     this.listeners = new Set();
     this.current = null; // the id being said
+    this.lastEvent = now(); // when the renderer last said how it's going
   }
 
   get speaking() {
@@ -75,6 +76,7 @@ export class Speech {
 
   /** The renderer says how it's going. */
   event(e) {
+    this.lastEvent = this.now();
     const rec = this.records.get(e.id);
     switch (e.type) {
       case 'started':
@@ -113,6 +115,20 @@ export class Speech {
     for (const w of this.waiters.get(id) || []) w(rec);
     this.waiters.delete(id);
     this.emit({ type: state === 'done' ? 'ended' : state, id, source: rec.source, who: rec.who, ...(error ? { error } : {}) });
+  }
+
+  /**
+   * Called every few seconds: an utterance the renderer has gone quiet on (nothing started, or
+   * nothing heard of it, for `limit` ms) has failed, so nobody waits on it for ever.
+   */
+  watch(limit = 60_000) {
+    const id = this.order[0];
+    const rec = id && this.records.get(id);
+    if (!rec) return;
+    const since = this.now() - Math.max(rec.queuedAt, this.lastEvent);
+    if (since < limit) return;
+    this.send('stop', { ids: [...this.order] });
+    for (const x of [...this.order]) this.finish(x, 'failed', 'the avatar stopped answering');
   }
 
   /** What was said in the last `seconds`. */

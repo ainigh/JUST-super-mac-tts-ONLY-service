@@ -13,6 +13,8 @@ import { newer } from '../src/main/updater.mjs';
 let sent = [];
 let visible = false;
 let ttsState = { state: 'ready' };
+let avatar = 'ready';
+let avatarMessage = '';
 let speech;
 let server;
 let base;
@@ -37,8 +39,9 @@ before(async () => {
     version: '0.1.0-test',
     docs: () => '# Super Face API\n127.0.0.1:8769',
     avatars: ['brunette', 'david'],
+    readyWait: 600,
     face: {
-      status: () => ({ visible, avatar: 'ready', tts: ttsState }),
+      status: () => ({ visible, avatar, tts: ttsState, message: avatarMessage }),
       show: () => (visible = true),
       hide: () => (visible = false),
       toggle: () => (visible = !visible),
@@ -193,4 +196,46 @@ test('the menu bar icon is drawn', () => {
   assert.equal(px.length, 36 * 36 * 4);
   assert.ok(px.some((b, i) => i % 4 === 3 && b > 200));
   assert.notDeepEqual(iconPixels(36, true), px);
+});
+
+test('an avatar that did not load says so, rather than taking what it can never say', async () => {
+  avatar = 'failed';
+  avatarMessage = 'GLTFLoader.js is missing';
+  const r = await post('/api/speak', { text: 'Hi', wait: true });
+  assert.equal(r.status, 503);
+  const j = await r.json();
+  assert.equal(j.code, 'avatar_failed');
+  assert.match(j.error, /GLTFLoader/);
+  const h = await (await fetch(`${base}/api/health`)).json();
+  assert.equal(h.ready, false);
+  assert.match(h.message, /GLTFLoader/);
+  avatar = 'ready';
+  avatarMessage = '';
+});
+
+test('while it starts, a speak waits for it; if it does not start, it says so', async () => {
+  avatar = 'loading';
+  const t0 = Date.now();
+  const late = await post('/api/speak', { text: 'Hi' });
+  assert.equal(late.status, 503);
+  assert.equal((await late.json()).code, 'not_ready');
+  assert.ok(Date.now() - t0 >= 500);
+  setTimeout(() => (avatar = 'ready'), 200);
+  const r = await post('/api/speak', { text: 'Hi' });
+  assert.equal(r.status, 202);
+  assert.equal((await (await fetch(`${base}/api/health`)).json()).ready, true);
+});
+
+test('an utterance the avatar goes quiet on fails, so nobody waits for ever', () => {
+  let t = 0;
+  const s = new Speech({ send: () => {}, now: () => t });
+  const rec = s.enqueue({ text: 'Hello', voice: 'af_heart', speed: 1 });
+  const done = s.wait(rec.id);
+  t = 30_000;
+  s.watch();
+  assert.equal(s.get(rec.id).state, 'queued');
+  t = 61_000;
+  s.watch();
+  assert.equal(s.get(rec.id).state, 'failed');
+  return done.then((r) => assert.equal(r.state, 'failed'));
 });

@@ -18,6 +18,7 @@ const AVATARS = {
 
 const $ = (id) => document.getElementById(id);
 const bridge = window.face || (await import('./dev-bridge.mjs')).bridge();
+window.faceStarted = true; // the modules are in: from here on, failures are reported below
 const abs = (p) => new URL(p, location.href).href;
 
 let cfg = await bridge.getSettings();
@@ -26,20 +27,21 @@ let tts; // HeadTTS
 let backend = null;
 let ttsState = { state: 'loading' };
 let avatarState = 'loading';
+let avatarMessage = '';
 let ready; // resolves once the avatar and the voice are both ready
 const readyNow = new Promise((r) => (ready = r));
 
 // ---------------------------------------------------------------- state, for the main process
 
 function report() {
-  bridge.event({ type: 'state', state: { avatar: avatarState, tts: ttsState, backend } });
+  bridge.event({ type: 'state', state: { avatar: avatarState, tts: ttsState, backend, message: avatarMessage } });
   const problem = avatarState === 'failed' || ttsState.state === 'failed';
   if (problem) document.body.dataset.problem = 'true';
   else delete document.body.dataset.problem;
   document.body.dataset.state = avatarState === 'ready' && ttsState.state === 'ready' ? 'idle' : 'loading';
   $('status').textContent =
     avatarState === 'failed'
-      ? 'The avatar didn’t load. Right-click › Reload the avatar.'
+      ? `The avatar didn’t load: ${avatarMessage || 'unknown error'}. Right-click › Reload the avatar.`
       : ttsState.state === 'failed'
         ? `The voice didn’t load: ${ttsState.message}`
         : avatarState !== 'ready'
@@ -95,6 +97,7 @@ async function loadAvatar() {
   } catch (err) {
     console.error('The avatar didn’t load:', err);
     avatarState = 'failed';
+    avatarMessage = err?.message || String(err);
   }
   report();
 }
@@ -468,6 +471,15 @@ function wireInput() {
 // ---------------------------------------------------------------- go
 
 wireInput();
-createHead();
-await Promise.all([loadAvatar(), connectVoice()]);
+try {
+  createHead();
+} catch (err) {
+  // No WebGL (or no audio): nothing can be shown or said, and the main process is told why.
+  console.error('The avatar couldn’t start:', err);
+  avatarState = 'failed';
+  avatarMessage = `the 3D view couldn’t start (${err?.message || err})`;
+  ttsState = { state: 'failed', message: 'the avatar couldn’t start' };
+}
+if (head) await Promise.all([loadAvatar(), connectVoice()]);
+report();
 ready();

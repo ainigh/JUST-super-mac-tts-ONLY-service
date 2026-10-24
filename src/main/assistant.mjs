@@ -490,7 +490,7 @@ export class Assistant {
 
 /** A tool's answer means it didn't work. */
 export function isFailure(text) {
-  return /^[^\n]*: (failed|could_not_start|stopped)\b|^It didn't (run|work)|isn't answering|^Tool Mac Tool Run said|^The (Flow|Straw) code has a mistake|^There's no tool|^There's no [\w-]+ op called|^The browser tool only reads|^(Say|Give) (which|what|whose|the)\b|^call_api (only|is for)|^The method is|^body must be|wants its token|^No script|has no scripts folder|turned off in Tool Mac Tool Run/m.test(String(text));
+  return /^[^\n]*: (failed|could_not_start|stopped)\b|^It didn't (run|work)|isn't answering|^Tool Mac Tool Run said|^The (Flow|Straw) code has a mistake|^There's no tool|^There's no [\w-]+ op called|^chrome_page only reads|^(Say|Give) (which|what|whose|the)\b|^call_api (only|is for)|^The method is|^body must be|wants its token|^No script|has no scripts folder|turned off in Tool Mac Tool Run/m.test(String(text));
 }
 
 /** What the chat shows of the model's words: [tags] taken out (emojis stay). */

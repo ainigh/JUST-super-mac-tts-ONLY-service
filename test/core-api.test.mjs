@@ -201,7 +201,7 @@ test('memory and the tool list over the API', async () => {
   [, m] = await post('/api/memory', { forget: { note: 'tea' } });
   assert.deepEqual(m.notes.user, []);
   const [, tools] = await get('/api/tools');
-  assert.deepEqual(tools.builtin.map((t) => t.name), ['schedule', 'list_schedules', 'cancel_schedule', 'remember', 'forget']);
+  assert.deepEqual(tools.builtin.map((t) => t.name), ['schedule', 'list_schedules', 'cancel_schedule', 'learn', 'unlearn']);
   assert.equal(tools.reachable, false);
   const [, h] = await get('/api/health');
   assert.equal(h.character, 'Ivy');

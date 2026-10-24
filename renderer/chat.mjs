@@ -138,10 +138,24 @@ function toolLabel(e) {
       return 'Cancelling a schedule';
     case 'list_schedules':
       return "What's scheduled";
+    case 'learn':
+      return 'Taking a note';
+    case 'unlearn':
+      return 'Crossing out a note';
     case 'remember':
-      return 'Remembering';
-    case 'forget':
-      return 'Forgetting';
+      return a.about ? `Remembering ${a.about}` : 'Remembering';
+    case 'recall':
+      return a.name ? `Recalling ${a.name}` : 'Recalling';
+    case 'memory':
+      return a.op === 'upcoming' ? "What's coming up" : `Memory: ${a.op || '…'}`;
+    case 'mind':
+      return `The mind: ${a.op || '…'}`;
+    case 'show':
+      return a.title ? `Showing “${a.title}”` : 'Showing it on the Mac';
+    case 'copy':
+      return 'Copying to the clipboard';
+    case 'browser':
+      return a.op === 'highlight' ? `Pointing out “${a.text}” in Chrome` : `Chrome's page: ${a.op || '…'}`;
     default:
       return e.name.replace(/_/g, ' ');
   }
@@ -303,7 +317,7 @@ function renderTools() {
   }
   section('Flows', tools.flows.filter((f) => match(f.name, f.summary)).map((f) => item(f.name, f.summary, '', '', `Run the flow ${f.name} `)));
   // The routes it reaches with call_api (what Tool Mac Tool Run adds later shows up here by itself).
-  const covered = ['about', 'scripts', 'runs', ...((tools.mac || []).some((t) => t.name === 'library') ? ['library'] : [])];
+  const covered = tools.covered || ['about', 'scripts', 'runs'];
   for (const g of (tools.groups || []).filter((x) => !covered.includes(x.id))) {
     section(
       `${g.title}${g.on ? '' : ' (turned off)'}`,

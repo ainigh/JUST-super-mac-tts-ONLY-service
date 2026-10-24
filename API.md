@@ -342,12 +342,28 @@ it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) a
 - **Notes**: `library` (an `op`, with `name`, `text`, `q`, `to`…) is Tool Mac Tool Run's file
   library (`POST /api/library`), which answers at once, with no card: this app keeps no library of
   its own. An older Tool Mac Tool Run without it: the notes script (`utilities/library.py`).
-- **Every other route** Tool Mac Tool Run lists (Straw, automation, and whatever it adds later:
-  memory, mind, system docs…) is reached with `call_api` (`method`, `path`, `body`, `why`), only
-  under `/api/` on that server; one marked as asking on the Mac waits for the click there.
+- **Remembering the user's world**: Tool Mac Tool Run's MEMORY (a file for each kind of thing:
+  PEOPLE, ORGANIZATIONS, EVENT-DATES, BIRTHDAYS, LOCATIONS, IDEAS, LEVERAGE, STRATEGIES, OTHERS) and
+  its mind (what links to what), all answered at once. `remember` (`category`, `about`, `text`,
+  `links`, `notes` such as `"birthday 03-14"`), `recall` (`name`), `memory` (`upcoming`,
+  `members`, and its files as for the library), `mind` (`about`, `find`, `path`, `neighbors`,
+  `query` in its notation, `add` a link, `note`…; compacting is the person's). The model is told to
+  recall before it answers about a person, place, organization, plan or date, and to write only
+  what the user said. With every request, what the mind already has on what's being said
+  (`POST /api/mind/context`) goes in with the model's instructions, and the next week's dates
+  (`upcoming`) are fetched with the scripts.
+- **Showing and Chrome's page**: `show` (a window in front of everything, with copy buttons:
+  your text, a file, or a node of the mind), `copy` (to the clipboard), `browser` (`url`,
+  `tabs`, `page`, `has`, `find`, `highlight`, `outline`: reads Chrome's page to guide the user
+  through a site; it never clicks).
+- Each of these is offered only when Tool Mac Tool Run lists its group and has it switched on.
+- **Every other route** Tool Mac Tool Run lists (Straw, automation, system docs, and whatever it
+  adds later) is reached with `call_api` (`method`, `path`, `body`, `why`), only under `/api/` on
+  that server; one marked as asking on the Mac waits for the click there.
 - **Its own tools**: `schedule` (`in_minutes`, or `at`: a local date and time such as
   `"2026-10-24 17:30"`, `"17:30"`, `"tomorrow 9:00"`, `"friday 8:00"`), `list_schedules`,
-  `cancel_schedule` (an id, or `"all"`); `remember` and `forget` (its memory).
+  `cancel_schedule` (an id, or `"all"`); `learn` and `unlearn` (its own notes: how to work with
+  the user, which scripts work for what, its mistakes).
 - **Later**: when something scheduled comes due, the character shows itself (if it wasn't showing)
   and the model is given the task to do now. Kept across restarts; one due while the app was
   closed is done as it opens, saying it's late.

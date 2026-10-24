@@ -3,7 +3,8 @@
 // and viseme, so the lips follow the words exactly. Each sentence gets a mood, an expression, a
 // gesture and a head movement: what was asked, the cues written in the text, and what the director
 // reads in the sentences themselves (no model). While the assistant works it out, it turns away and
-// looks busy, and faces the user again the moment they talk or it speaks. The ears (ears.mjs) listen here too. The main process sends commands (speak, stop,
+// looks busy, and faces the user again the moment they talk or it speaks. Its hands are kept out of
+// its head (keep-clear.mjs). The ears (ears.mjs) listen here too. The main process sends commands (speak, stop,
 // express, tts, ears, settings) and is told how it goes; a click on the character opens the chat.
 
 import { TalkingHead } from 'talkinghead';
@@ -13,6 +14,7 @@ import { characterOf } from '/src/shared/characters.mjs';
 import { directOn, merge } from '/src/shared/director.mjs';
 import { parse, sentences } from '/src/shared/text.mjs';
 import { Ears } from './ears.mjs';
+import { keepClear } from './keep-clear.mjs';
 
 const RATE = 24000; // Kokoro's: 24 kHz mono
 
@@ -23,6 +25,7 @@ const abs = (p) => new URL(p, location.href).href;
 
 let cfg = await bridge.getSettings();
 let head; // TalkingHead
+let clear = null; // keeps the hands out of the head, for the avatar shown
 let tts; // HeadTTS
 let backend = null;
 let ttsState = { state: 'loading' };
@@ -102,8 +105,19 @@ function createHead() {
     avatarIdleEyeContact: 0.3,
     avatarSpeakingEyeContact: 0.7,
     modelFPS: 30,
+    update: keepHandsClear, // each frame, once the body is posed
   });
   window.head = head; // handy in the developer tools
+}
+
+/** Each frame: a hand in the head is moved out of it. If that ever fails, the avatar moves on without it. */
+function keepHandsClear() {
+  try {
+    clear?.update();
+  } catch (err) {
+    console.warn('Keeping the hands clear of the head failed, so it stopped:', err);
+    clear = null;
+  }
 }
 
 let avatarLoaded = Promise.resolve(); // settles once the avatar being loaded is in (or isn't)
@@ -115,9 +129,11 @@ async function loadAvatar() {
   avatarState = 'loading';
   report();
   const c = characterOf(cfg.avatar);
+  clear = null;
   try {
     await head.showAvatar({ url: `./avatars/${c.file}`, body: c.body, avatarMood: cfg.mood, lipsyncLang: 'en', ...(c.baseline ? { baseline: c.baseline } : {}) });
     head.setView(cfg.view);
+    clear = keepClear(head.armature);
     avatarState = 'ready';
   } catch (err) {
     console.error('The avatar didn’t load:', err);

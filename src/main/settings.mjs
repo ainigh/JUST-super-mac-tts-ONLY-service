@@ -12,9 +12,21 @@ export const DEFAULTS = {
   voice: 'af_heart',
   speed: 1,
   mood: 'neutral',
-  /** model: Super Voice's model picks expressions (rules until it answers); rules; off. */
+  /** For what clients send to /api/speak: model (the model picks expressions, rules until it answers), rules, off. */
   expressions: 'model',
-  superVoiceUrl: 'http://127.0.0.1:8767',
+  /** The one model: Ollama's. Empty: the best one Ollama has. */
+  ollamaUrl: 'http://127.0.0.1:11434',
+  model: '',
+  /** Thinking before answering: better answers on hard questions, slower on every one. */
+  think: false,
+  /** Where the tools are: Tool Mac Tool Run's API. */
+  toolRunUrl: 'http://127.0.0.1:8768',
+  /** Listening for what's said while the character is shown. */
+  listening: true,
+  /** Listening while it talks too, so it can be cut in on (its own voice is told apart by its words). */
+  listenWhileSpeaking: true,
+  /** Showing the character as the app opens (on standby, listening). */
+  showAtLaunch: true,
   captions: true,
   /** Seconds after it last spoke before it hides itself; 0: it stays. */
   hideAfter: 0,

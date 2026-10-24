@@ -1,6 +1,7 @@
 // The HTTP API (see API.md): requests in, answers out. The face (the window and the renderer) and
 // the speech record are handed in, so this is tested without Electron.
 
+import { characterOf } from '../shared/characters.mjs';
 import { catalogJSON, expressionName, gestureName, headName, moodName, poseName } from '../shared/catalog.mjs';
 import { VOICES, resolveVoice, voiceJSON } from '../shared/voices.mjs';
 import { recordJSON } from './speech.mjs';
@@ -38,6 +39,15 @@ const ROUTES = {
   '/api/tts': 'POST',
   '/api/settings': 'GET POST',
   '/api/update': 'GET POST',
+  '/api/assistant': 'GET',
+  '/api/chat': 'GET POST',
+  '/api/chat/new': 'POST',
+  '/api/cancel': 'POST',
+  '/api/heard': 'POST',
+  '/api/tools': 'GET POST',
+  '/api/schedules': 'GET POST',
+  '/api/schedules/cancel': 'POST',
+  '/api/memory': 'GET POST',
 };
 
 /** Settings a client may change through POST /api/settings, and how each is checked. */
@@ -50,7 +60,12 @@ const SETTABLE = {
   expressions: (v) => (['model', 'rules', 'off'].includes(v) ? v : bad('expressions is model, rules or off')),
   captions: (v) => !!v,
   hideAfter: (v) => (Number.isFinite(+v) && +v >= 0 && +v <= 3600 ? +v : bad('hideAfter is seconds, 0 to 3600')),
-  superVoiceUrl: (v) => (/^https?:\/\/[^\s]+$/.test(String(v)) ? String(v).replace(/\/+$/, '') : bad('superVoiceUrl is an http address')),
+  ollamaUrl: (v) => (/^https?:\/\/[^\s]+$/.test(String(v)) ? String(v).replace(/\/+$/, '') : bad('ollamaUrl is an http address')),
+  toolRunUrl: (v) => (/^https?:\/\/[^\s]+$/.test(String(v)) ? String(v).replace(/\/+$/, '') : bad('toolRunUrl is an http address')),
+  model: (v) => String(v ?? '').trim(),
+  think: (v) => !!v,
+  listening: (v) => !!v,
+  listenWhileSpeaking: (v) => !!v,
 };
 
 function bad(message, code = 'bad_request') {
@@ -93,8 +108,9 @@ export function allowedOrigin(origin, extra = []) {
  * @param {() => string} [o.docs] - API.md
  * @param {string[]} [o.avatars]
  * @param {number} [o.readyWait] - ms a speak waits for the avatar to finish starting
+ * @param {ReturnType<import('./core.mjs').createCore>} [o.core] - the assistant and its tools
  */
-export function createApi({ speech, face, settings, version, updater = null, docs = () => '', avatars = [], readyWait = 15_000 }) {
+export function createApi({ speech, face, settings, version, updater = null, docs = () => '', avatars = [], readyWait = 15_000, core = null }) {
   const started = Date.now();
 
   async function handle(req, res) {
@@ -211,7 +227,73 @@ export function createApi({ speech, face, settings, version, updater = null, doc
           if (!SETTABLE[k]) bad(`${k} can't be set here; these can: ${Object.keys(SETTABLE).join(', ')}`);
           clean[k] = SETTABLE[k](v, { avatars });
         }
+        // The character is its voice: choosing one chooses the other.
+        if (clean.avatar && !('voice' in clean)) clean.voice = characterOf(clean.avatar).voice;
         return [200, publicSettings(settings.set(clean))];
+      }
+      case '/api/assistant':
+        return [200, needCore().status()];
+      case '/api/chat': {
+        const c = needCore();
+        if (method === 'GET') {
+          const limit = Math.min(300, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+          return [200, { entries: c.actions.log().slice(-limit), state: c.assistant.state() }];
+        }
+        const b = await body(req);
+        const text = typeof b.text === 'string' ? b.text : '';
+        if (!text.trim()) throw new HTTPError(400, 'missing_text', 'missing text: what to ask');
+        if (text.length > MAX_TEXT) throw new HTTPError(413, 'too_large', `text is over ${MAX_TEXT} characters`);
+        const entry = c.assistant.say(text, { how: 'api' });
+        if (b.show !== false) face.show();
+        if (!b.wait) return [202, { ok: true, id: entry.id }];
+        const reply = await waitForReply(c, entry);
+        return [200, { ok: true, id: entry.id, ...reply }];
+      }
+      case '/api/chat/new':
+        needCore().actions.newChat();
+        return [200, { ok: true }];
+      case '/api/cancel':
+        return [200, needCore().actions.cancel()];
+      case '/api/heard': {
+        const c = needCore();
+        const b = await body(req);
+        const text = typeof b.text === 'string' ? b.text : '';
+        if (!text.trim()) throw new HTTPError(400, 'missing_text', 'missing text: what was heard');
+        const at = b.at === undefined ? Date.now() : Number(b.at);
+        return [200, { ok: true, ...c.heard({ text, at, seconds: Number(b.seconds) || 0 }) }];
+      }
+      case '/api/tools':
+        return [200, method === 'POST' ? await needCore().refreshTools() : needCore().actions.tools()];
+      case '/api/schedules': {
+        const c = needCore();
+        if (method === 'GET') return [200, { schedules: c.actions.schedules() }];
+        const b = await body(req);
+        const { dueFrom } = await import('./scheduler.mjs');
+        const due = dueFrom(b);
+        if (!Number.isFinite(due)) bad('say when: in_minutes, or at (a local date and time, e.g. "2026-10-24 17:30")');
+        try {
+          const t = c.scheduler.add({ task: b.task, due });
+          return [201, { ok: true, ...t }];
+        } catch (err) {
+          bad(err.message);
+        }
+        break;
+      }
+      case '/api/schedules/cancel': {
+        const b = await body(req);
+        if (b.id === undefined) bad('send the id (or "all")');
+        const gone = needCore().scheduler.cancel(b.id);
+        return [200, { ok: gone.length > 0, cancelled: gone.map((t) => t.id) }];
+      }
+      case '/api/memory': {
+        const c = needCore();
+        if (method === 'POST') {
+          const b = await body(req);
+          if (typeof b.instructions === 'string') c.memory.setInstructions(b.instructions);
+          if (b.remember) c.memory.remember(b.remember.section, b.remember.note);
+          if (b.forget) c.memory.forget(b.forget.section, b.forget.note);
+        }
+        return [200, c.memory.json()];
       }
       case '/api/update': {
         if (!updater) throw new HTTPError(503, 'unavailable', 'updates are only available in the app');
@@ -224,6 +306,28 @@ export function createApi({ speech, face, settings, version, updater = null, doc
       }
     }
     throw new HTTPError(404, 'not_found', 'no such route');
+  }
+
+  function needCore() {
+    if (!core) throw new HTTPError(503, 'unavailable', 'the assistant is only available in the app');
+    return core;
+  }
+
+  /** Waits for the request's turn to end, and gives what was said in answer. */
+  async function waitForReply(c, entry) {
+    const start = c.assistant.log.indexOf(entry);
+    for (let i = 0; i < 6000; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const pending = c.assistant.inbox.some((x) => x.entry === entry);
+      if (!pending && !c.assistant.busy) break;
+    }
+    const after = c.assistant.log.slice(start + 1);
+    const said = after.filter((e) => e.kind === 'assistant' && !e.hidden && e.text).map((e) => e.text);
+    return {
+      reply: said.join(' '),
+      tools: after.filter((e) => e.kind === 'tool').map((e) => ({ name: e.name, state: e.state, result: e.result })),
+      error: after.find((e) => e.kind === 'error')?.text,
+    };
   }
 
   function health(s) {
@@ -242,7 +346,7 @@ export function createApi({ speech, face, settings, version, updater = null, doc
       ready: f.avatar === 'ready' && f.tts?.state === 'ready',
       models: { tts: f.tts },
       expressions: s.expressions,
-      superVoice: s.superVoiceUrl,
+      ...(core ? { assistant: core.assistant.state(), ears: core.status().ears, character: core.character().name } : {}),
     };
   }
 
@@ -331,9 +435,11 @@ export function createApi({ speech, face, settings, version, updater = null, doc
     const write = (e) => res.write(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
     write({ type: 'hello', speaking: speech.speaking, current: speech.current, at: Date.now() });
     const off = speech.subscribe(write);
+    const offCore = core ? core.subscribe(write) : () => {};
     const ping = setInterval(() => res.write(': ping\n\n'), 15000);
     req.on('close', () => {
       off();
+      offCore();
       clearInterval(ping);
     });
   }

@@ -111,9 +111,7 @@ test('across an utterance: the mood holds until the feeling changes, and nothing
   assert.equal(d[1].gesture, undefined, 'no namaste twice running');
   assert.equal(d[3].mood, 'neutral', 'two calm sentences later, back to rest');
   const steps = direct(['First, open the folder.', 'Then pick the file.', 'Finally, click Save.']);
-  assert.equal(steps[0].gesture, 'index');
-  assert.equal(steps[1].gesture, undefined, 'a small gesture only after a sentence without one');
-  assert.equal(steps[2].gesture, 'side');
+  assert.deepEqual(steps.map((d) => d.gesture), ['index', 'side', 'index'], 'every step shows, and never the same twice running');
   assert.ok(direct(['One.', 'Two.', 'Three.', 'Four.'])[3].pose, 'a long answer changes stance');
   // Said a piece at a time (as an answer is, while it's written), it reads as one.
   const first = directOn(['Thank you!'], {});
@@ -121,6 +119,41 @@ test('across an utterance: the mood holds until the feeling changes, and nothing
   assert.deepEqual([first.directions, next.directions].flat(), d.slice(0, 4));
   assert.deepEqual(direct(['Hi!']), direct(['Hi!']), 'the same words, the same show');
   assert.equal(direct(['Hello.'], { mood: 'happy' })[0].mood, undefined, 'already in that mood');
+});
+
+test('the small words move it at their word: who, where, when, how much, how sure, "not", "because"', () => {
+  const kinds = (t) => rules(t).kinds;
+  assert.equal(rules('We can do it together.').gesture === 'wide' || rules('We can do it together.').gesture === 'side', true);
+  assert.equal(rules('Everything is in the box.').gesture, 'wide', '"everything": arms wide');
+  assert.equal(rules('Just a tiny bit more.').gesture, 'ok', '"a tiny bit": a pinch');
+  assert.equal(rules('Prices went down.').look, 'down');
+  assert.equal(rules('Maybe it rains.').expression, 'thinking');
+  assert.ok(['left', 'right'].includes(rules('They said it was fine.').turn), 'other people: it turns aside');
+  assert.equal(rules('It happened two years ago.').timed.at(-1).turn, 'left', 'the past is to one side, at "ago"…');
+  const later = rules('We can try it again tomorrow.');
+  assert.equal(later.turn, undefined, 'it starts facing the user…');
+  assert.equal(later.timed.at(-1).turn, 'right', '…and turns to what is to come at "tomorrow"');
+  assert.equal(direct(['I checked it.', 'I checked it.', 'It is raining tomorrow.'])[2].timed.at(-1).turn, 'right', 'what is to come, to the other side');
+  assert.equal(rules('It does not work.').head, 'no');
+  assert.equal(rules('That is definitely it.').head, 'yes');
+  const because = rules('The train is late, because the line is closed.');
+  assert.deepEqual(because.timed.map((c) => c.gesture), ['index'], '"because" points, at its word');
+  assert.ok(because.timed[0].at > 0.4);
+  assert.equal(rules('Stop right there!').gesture, 'bothup');
+  assert.ok(!kinds('They all stop in Paris.').includes('stop'), 'a stop on the way is not "stop!"');
+  assert.ok(!kinds('I want to point at the front.').includes('not'), 'words that end in "nt" are not "not"');
+});
+
+test('it turns aside now and then while it talks, and faces the user for what is said to them', () => {
+  const said = ['The file is open.', 'It has ten lines.', 'The last one is blank.', 'The first is a title.', 'Would you like me to fix it?'];
+  const d = direct(said);
+  const facing = [];
+  let now = 'user';
+  for (const x of d) facing.push((now = [...x.timed].reverse().find((c) => c.turn)?.turn ?? x.turn ?? now));
+  assert.ok(facing.some((f) => f !== 'user'), `some of it aside (${facing})`);
+  assert.ok(facing.filter((f) => f === 'user').length >= 3, `most of it to the user (${facing})`);
+  assert.equal(facing.at(-1), 'user', 'a question is asked facing them');
+  assert.deepEqual(direct(said), d, 'the same words, the same turns');
 });
 
 test('what was asked wins, then what is written in the text, then what the words show; each at its time', () => {

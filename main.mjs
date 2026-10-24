@@ -93,15 +93,28 @@ const core = createCore({
   },
 });
 
+/** Which way the page it's working on probably is, as the user sees it: towards the middle of the screen from the character (-1 left, 1 right, 0 straight on). */
+function pageSide() {
+  if (!win) return 0;
+  const b = win.getBounds();
+  const area = screen.getDisplayMatching(b).workArea;
+  const off = area.x + area.width / 2 - (b.x + b.width / 2);
+  return Math.abs(off) < area.width * 0.1 ? 0 : Math.sign(off);
+}
+
 // What the core says goes to the chat (and the speaking state, so it can offer to stop).
 let lastPhase = 'idle';
+let lastTool = null;
 core.subscribe((ev) => {
   chat?.webContents.send('ui:event', ev);
   if (ev.type === 'assistant') {
     const phase = ev.state.phase;
-    // The character looks busy while it thinks or a tool runs, and itself again after.
-    if (phase !== lastPhase) send('attend', { state: phase });
+    const tool = ev.state.tool?.name || null;
+    // The character gets down to work while it thinks or a tool runs (to the page, for the
+    // browser), and stands and faces the user again after.
+    if (phase !== lastPhase || tool !== lastTool) send('attend', { state: phase, tool, page: pageSide() });
     lastPhase = phase;
+    lastTool = tool;
   }
 });
 speech.subscribe((ev) => {

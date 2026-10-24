@@ -11,12 +11,18 @@ anything, talk to its assistant, or use its voice alone.
   lips follow the words exactly. The model downloads once (a few hundred MB); after that nothing
   leaves the Mac.
 - **The face and body**: [TalkingHead](https://github.com/met4citizen/TalkingHead): 8 moods, 27
-  expressions, 8 hand gestures, nods and shakes, 10 body poses, eye contact.
+  expressions, 8 hand gestures and 2 for both hands made of them, nods and shakes, 10 body poses,
+  turning to the side, eye contact. Its hands are kept out of its head.
 - **What it shows** while it talks: what the caller asks for; then what's written in the text (an
   emoji, a `[tag]`); then what the sentences themselves call for, read from their words (no model,
   no waiting): hello waves, thanks bows, sorry saddens, good news smiles with an OK, a question
   looks at you, an instruction points, "I don't know" shrugs, "one moment" holds up a hand, a "but"
-  turns the face at that word. The assistant's words are read the same way.
+  turns the face at that word; and the small words, at their word ("everything" opens the arms, "a
+  bit" pinches, "down" looks down, "ago" turns to one side). It faces you for what's said to you and
+  turns aside now and then. The assistant's words are read the same way: its model knows nothing of
+  the character. While the assistant works, the character gets down to it (kneeling, sitting or
+  bent over, turned away; to the page, at the browser), and stands and faces you when you talk or
+  it answers.
 - **The assistant**: [below](#the-assistant). One model, hand-rolled tool calls, a schedule, memory.
 
 This document is the contract for client apps. New fields may be added to responses, but nothing
@@ -145,9 +151,18 @@ mood sad), a warning (a grimace, a pointed finger), not knowing (a shrug), "one 
 up), thinking it over or "let me check" (a thoughtful look away), a yes or a no at the start (a nod
 or a shake), an instruction or a step (pointing), "but"/"however" (a hand to the side, and the face
 of what follows, at that word), an offer or a question (a smile and a look at you). "Not" turns a
-word round ("not great"). The mood holds until the feeling changes and comes back to rest after two
-calm sentences; no gesture or face is repeated twice running; a sentence of plain facts is said
-calmly. Nothing is asked of a model, so it's instant and the same every time for the same words.
+word round ("not great"). Then the small words, each at its word: who's meant ("you" opens a hand
+and faces you, "we" opens the arms, "they" turns aside), here and there ("this" points, "over
+there" and "far" turn aside, "up" raises a hand, "down" looks down, "inside", "across",
+"between"), when ("ago" and "earlier" turn to one side, "later" and "tomorrow" to the other, "now"
+points), how much ("all", "everything", "huge" open both arms; "a bit", "only", "tiny" pinch;
+"more", "less", "none"), how good ("better" a thumbs-up, "good" a smile, "hard" a grimace), how sure
+("definitely" nods, "maybe" thinks and turns aside, "not" shakes the head, "very" nods), how it
+hangs together ("because" points, "if" weighs it, "for example", "basically"), and how ("quickly",
+"gently", "together", "apart"). It faces you for what's said to you (a greeting, thanks, an offer,
+a question, "you") and, after a couple of sentences square-on, turns aside for one now and then.
+The mood holds until the feeling changes and comes back to rest after two calm sentences; no
+gesture or face is repeated twice running; a sentence of plain facts keeps a calm face. Nothing is asked of a model, so it's instant and the same every time for the same words.
 The menu's *Expressions* setting: *From the words* (the default), or *Only when asked* (only what's
 asked for and written in). `POST /api/expressions` shows what would be done, without saying it.
 
@@ -155,11 +170,11 @@ asked for and written in). `POST /api/expressions` shows what would be done, wit
 
 ```bash
 curl -s localhost:8769/api/expressions -d '{"text": "The run failed, sorry. Would you like me to try again?"}'
-# {"mood":"neutral","sentences":[{"text":"The run failed, sorry.","mood":"sad","expression":"disappointed","timed":[],"kinds":["failure","apology"]},
-#   {"text":"Would you like me to try again?","expression":"smile","gesture":"side","look":"camera","timed":[],"kinds":["offer"]}]}
+# {"mood":"neutral","sentences":[{"text":"The run failed, sorry.","mood":"sad","expression":"pensive","timed":[{"at":0.73,"expression":"embarrassed"}],"kinds":["failure","apology"]},
+#   {"text":"Would you like me to try again?","expression":"warm","gesture":"side","look":"camera","timed":[],"kinds":["offer"]}]}
 ```
 
-Each sentence: what it shows as it starts (`mood`, `expression`, `gesture`, `head`, `look`, `pose`),
+Each sentence: what it shows as it starts (`mood`, `expression`, `gesture`, `head`, `look`, `turn`, `pose`),
 what it shows later (`timed`, each at `at`, 0 to 1 through the sentence), and the `kinds` read in it.
 `mood` (optional) is the resting mood to start from (the settings' by default).
 
@@ -180,7 +195,8 @@ last 200 utterances are kept.
 {"mood": "love", "expression": "adoring", "gesture": "namaste", "head": "yes", "pose": "side", "look": "camera", "duration": 3}
 ```
 
-Any of them (at least one). `look` is `camera`, `ahead` or `away`; `duration` (seconds, up to 60)
+Any of them (at least one), and `turn`. `look` is `camera`, `ahead`, `away` or `down`; `turn` is
+`user` (facing you), `left` or `right` (turned a little that way, as you see it); `duration` (seconds, up to 60)
 is how long the expression or gesture is held. The avatar shows itself unless `"show": false`.
 Answers `{"ok": true, …what was shown}`.
 
@@ -192,9 +208,11 @@ Answers `{"ok": true, …what was shown}`.
 |---|---|
 | `mood` | neutral, happy, love, sad, fear, angry, disgust, sleep |
 | `expression` | neutral, smile, warm, grin, delighted, beaming, laughing, playful, wink, smirk, adoring, starstruck, kiss, thinking, glance, eyeroll, unamused, grimace, embarrassed, shocked, frown, disappointed, pensive, pleading, crying, angry, sleepy |
-| `gesture` | handup (also `wave`), index (also `point`), ok, thumbup, thumbdown, side, shrug, namaste |
+| `gesture` | handup (also `wave`), index (also `point`), ok, thumbup, thumbdown, side, shrug, namaste; for both hands, wide, bothup |
 | `head` | yes, no |
 | `pose` | straight, side, hip, turn, wide, back, bend, oneknee, kneel, sitting |
+| `look` | camera, ahead, away, down |
+| `turn` | user, left, right |
 
 An expression or gesture can also be named by its emoji. An unknown name is
 `400 {"code": "unknown_name"}`.

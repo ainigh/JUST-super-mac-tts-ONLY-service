@@ -46,7 +46,7 @@ export const EXPRESSIONS = {
   sleepy: { emoji: '😴', means: 'falling asleep' },
 };
 
-/** Hand gestures: TalkingHead's gesture templates. */
+/** Hand gestures: TalkingHead's gesture templates, and two for both hands made of them (renderer/gestures.mjs). */
 export const GESTURES = {
   handup: 'a hand raised: hello, goodbye, stop, or "one moment"',
   index: 'pointing with the index finger: "this", "here", "first", making a point',
@@ -56,7 +56,15 @@ export const GESTURES = {
   side: 'a hand out to the side: "on the other hand", presenting',
   shrug: 'a shrug: "I don\'t know", "who knows", "whatever"',
   namaste: 'hands together: thanks, please, respect',
+  wide: 'both arms open wide: "all", "everything", "huge", "we"',
+  bothup: 'both hands up: "stop", "whoa", "hold it"',
 };
+
+/** Where it looks: at the user, ahead (the way it faces), away (thinking), or down. */
+export const LOOKS = ['camera', 'ahead', 'away', 'down'];
+
+/** Which way it faces: the user, or turned a little to its left or right (as the user sees it). */
+export const TURNS = ['user', 'left', 'right'];
 
 /** Head movements: TalkingHead's yes / no emoji animations. */
 export const HEAD = {
@@ -150,6 +158,8 @@ export function catalogJSON() {
     gestures: GESTURES,
     head: HEAD,
     poses: POSES,
+    looks: LOOKS,
+    turns: TURNS,
     emoji: EMOJI,
   };
 }

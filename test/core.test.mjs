@@ -129,6 +129,7 @@ test('the prompt: the character, Tool Mac Tool Run\'s tools as it gives them, th
   };
   const p = systemPrompt({ character: CHARACTERS[2], catalog, notes: m, now: new Date(2026, 9, 24).getTime() });
   assert.match(p, /You are Sofia/);
+  assert.doesNotMatch(p, /3D|character|avatar|gesture|your (?:face|hands|body)|\[tags?\]|dark suit/i, 'the model knows nothing of the character it is shown as: how it moves comes from its words, afterwards');
   assert.match(p, /^- web_fetch: Reads any web address\. Arguments: url \(string\): the address; find \(string, optional\): words\.$/m);
   assert.match(p, /^- run_script: Runs a script\. Arguments: script \(string\): its name\. \[waits for the user to click Run on the Mac\]$/m);
   assert.match(p, /^- teleport: A tool this app has never heard of\.$/m, 'what Tool Mac Tool Run adds is there the day it ships');

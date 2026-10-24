@@ -459,6 +459,21 @@ test('words that promise work with no call are sent back once; "(nothing)" is ne
   assert.equal(said.length, 1);
 });
 
+test('asides in brackets are neither said nor shown; an answer of only asides is no answer', async () => {
+  const { a, said, idle } = await setup(['(looking puzzled) (nothing)', '(smiles) Sure, it is done. (nods) Anything else? [smile]', 'nothing']);
+  a.say('(the TV talking)');
+  await idle();
+  assert.deepEqual(said, []);
+  assert.ok(!a.log.some((e) => e.kind === 'assistant' && !e.hidden), 'nothing in the chat');
+  a.say('is it done?');
+  await idle();
+  assert.deepEqual(said.join(' ').replace(/\s+/g, ' '), 'Sure, it is done. Anything else? [smile]', 'the cue is left for the face');
+  assert.equal(a.log.filter((e) => e.kind === 'assistant').at(-1).text, 'Sure, it is done. Anything else?');
+  a.say('(more TV)');
+  await idle();
+  assert.equal(a.log.filter((e) => e.kind === 'assistant' && !e.hidden && e.text).length, 1, '"nothing" never shows, even while it is written');
+});
+
 test('a broken call is asked for again; a refused run brings the critic in; then it learns, quietly', async () => {
   const fake = await fakeToolRun();
   try {
@@ -632,6 +647,7 @@ test('no model: said once, shown in the chat, and the question kept for next tim
 
 test('what the chat shows', () => {
   assert.equal(display('Great job! [thumbup] 👍 [mood: happy]'), 'Great job! 👍');
+  assert.equal(display('(grins) Great job!'), 'Great job!');
 });
 
 test('every request to the model is noted for the Model tab: what was sent, and what came back as it streamed', async () => {

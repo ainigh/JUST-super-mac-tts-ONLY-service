@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { calls, isSilent, looksBroken, sayable, words } from './calls.mjs';
+import { calls, isSilent, looksBroken, maySayNothing, sayable, withoutAsides, words } from './calls.mjs';
 import { PLAYBOOK, THE_USER } from './notes.mjs';
 import { NOTE, LOCAL_TOOLS, canonical, claimsInability, promisesWork, systemPrompt, toolResult, userMessage } from './prompt.mjs';
 import * as scheduleTools from './scheduler.mjs';
@@ -221,8 +221,8 @@ export class Assistant {
     const messages = [{ role: 'system', content: system }, ...this.history];
     const out = { text: '', spokenTo: 0, entry: null, spokenAny: false };
     const flush = (final) => {
-      const prose = sayable(out.text);
-      if (!final && /^\s*[([]/.test(prose)) return; // "(nothing)" may be on its way
+      const prose = sayable(out.text, { final });
+      if (!final && maySayNothing(prose)) return; // "nothing" may be on its way
       if (isSilent(prose) || isSilent(words(out.text))) return;
       let upTo = out.spokenTo;
       if (final) upTo = prose.length;
@@ -480,9 +480,9 @@ export class Assistant {
   }
 }
 
-/** What the chat shows of the model's words: [tags] taken out (emojis stay). */
+/** What the chat shows of the model's words: asides in brackets and [tags] taken out (emojis stay). */
 export function display(text) {
-  return String(text ?? '')
+  return withoutAsides(text)
     .replace(/\[(mood|expression|face|gesture|hand|hands|head|pose)\s*[:=][^\]\n]{1,30}\]/gi, '')
     .replace(/\[(nod|shake|shrug|wave|thumbup|thumbdown|ok|index|side|namaste|handup|yes|no|smile|grin|wink|thinking|happy|sad|angry|love|fear|neutral|warm|laughing|playful|frown|pensive|shocked|delighted|beaming|starstruck|adoring)\]/gi, '')
     .replace(/[ \t]{2,}/g, ' ')

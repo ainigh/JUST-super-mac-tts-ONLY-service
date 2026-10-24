@@ -181,7 +181,6 @@ function afterSpeaking() {
 }
 
 ipcMain.handle('settings:get', () => ({ ...settings.get(), avatars: AVATARS, version: VERSION }));
-ipcMain.handle('direct', (_e, texts, who) => core.direct(texts, who));
 ipcMain.handle('ui', async (_e, name, args) => {
   const fn = core.actions[name];
   if (!fn) throw new Error(`no action called ${name}`);
@@ -515,7 +514,7 @@ function menu() {
     radio('Framing', VIEWS, s.view, (k) => settings.set({ view: k })),
     radio('Speed', { 0.8: 'Slower', 0.9: 'A little slower', 1: 'Normal', 1.1: 'A little faster', 1.25: 'Faster' }, String(s.speed), (k) => settings.set({ speed: Number(k) })),
     radio('Mood at rest', Object.fromEntries(Object.keys(MOODS).filter((m) => m !== 'sleep').map((m) => [m, m[0].toUpperCase() + m.slice(1)])), s.mood, (k) => settings.set({ mood: k })),
-    radio('Expressions for other apps', { model: 'From the model', rules: 'From the words only', off: 'Only when asked' }, s.expressions, (k) => settings.set({ expressions: k })),
+    radio('Expressions', { rules: 'From the words', off: 'Only when asked' }, s.expressions, (k) => settings.set({ expressions: k })),
     radio('Size', Object.fromEntries(Object.keys(SIZES).map((k) => [k, k])), s.size, (k) => win && resize(k)),
     radio('Hide after talking', { 0: 'Never', 10: 'After 10 seconds', 30: 'After 30 seconds', 120: 'After 2 minutes' }, String(s.hideAfter), (k) => settings.set({ hideAfter: Number(k) })),
     { label: 'Captions', type: 'checkbox', checked: s.captions, click: () => settings.set({ captions: !s.captions }) },

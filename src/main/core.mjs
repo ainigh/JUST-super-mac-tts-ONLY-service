@@ -11,7 +11,6 @@ import { Scheduler, fromNow, longTime } from './scheduler.mjs';
 import { ToolRun } from './toolrun.mjs';
 import { Trace } from './trace.mjs';
 import { CHARACTERS, SIZES, characterOf, resolveCharacter } from '../shared/characters.mjs';
-import { SYSTEM as EXPRESSIONS_PROMPT, modelRequest } from '../shared/director.mjs';
 import { words } from '../shared/text.mjs';
 
 /** Said alone, these stop it talking (and any answer still being written); a run carries on. */
@@ -72,7 +71,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     const c = character();
     const s = settings.get();
     host.show?.();
-    return speech.enqueue({ text, voice: c.voice, speed: s.speed, auto: true, director: 'rules', source: 'assistant', who: c.name });
+    return speech.enqueue({ text, voice: c.voice, speed: s.speed, auto: true, source: 'assistant', who: c.name });
   }
 
   const assistant = new Assistant({
@@ -220,7 +219,6 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       { id: 'onlyFirst', title: 'More than one tool call in an answer', when: 'Added to the result when an answer has several calls: only the first is made.', text: NOTE.onlyFirst('run_script', ['schedule']) },
       { id: 'outOfRounds', title: 'Ten tool calls for one request', when: 'Added to the tenth tool result of one request.', text: NOTE.outOfRounds(10) },
       { id: 'unknownTool', title: 'A tool that doesn’t exist', when: 'The result of a call to a tool there isn’t.', text: NOTE.unknownTool('fly_to_mars', toolrun.catalog) },
-      { id: 'expressions', title: 'Expressions, for what other apps send', when: 'Asked of the model when another app makes the character speak (POST /api/speak) with expressions from the model. Not used for the assistant’s own words: they carry their cues.', text: EXPRESSIONS_PROMPT },
     ];
   }
 
@@ -353,12 +351,6 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     },
   };
 
-  /** The model's direction for a client's sentences (POST /api/speak with expressions from the model). */
-  async function direct(texts, who) {
-    const req = modelRequest(texts, { who });
-    return model.chat(req.messages, { purpose: 'expressions', format: req.format, temperature: 0, think: false, signal: AbortSignal.timeout(10_000) });
-  }
-
   function setEars(state) {
     ears = { ...ears, ...state };
     emit({ type: 'ears', ears });
@@ -372,7 +364,6 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     memory,
     actions,
     heard,
-    direct,
     speakAs,
     setEars,
     reportError,

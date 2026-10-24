@@ -58,7 +58,7 @@ export class Ollama {
 
   /**
    * One answer to `messages`. With `onText`, it's streamed: onText(textSoFar) as it grows.
-   * `purpose` names it in the trace (answer, learning, expressions).
+   * `purpose` names it in the trace (answer, learning).
    * @returns {Promise<string>} the answer, without any thinking
    */
   async chat(messages, { purpose = 'answer', ...o } = {}) {

@@ -1,15 +1,15 @@
 // The character's page: TalkingHead draws it (head to toes, on a transparent canvas) and moves it;
 // HeadTTS makes the voice (Kokoro, in the page: WebGPU, else WASM), with the timing of every word
 // and viseme, so the lips follow the words exactly. Each sentence gets a mood, an expression, a
-// gesture and a head movement from the director (what was asked, cues in the words, the model,
-// rules). The ears (ears.mjs) listen here too. The main process sends commands (speak, stop,
+// gesture and a head movement: what was asked, the cues written in the text, and what the director
+// reads in the sentences themselves (no model). The ears (ears.mjs) listen here too. The main process sends commands (speak, stop,
 // express, tts, ears, settings) and is told how it goes; a click on the character opens the chat.
 
 import { TalkingHead } from 'talkinghead';
 import { HeadTTS } from 'headtts';
 import { EXPRESSIONS } from '/src/shared/catalog.mjs';
 import { characterOf } from '/src/shared/characters.mjs';
-import { merge, readAnswer, rules } from '/src/shared/director.mjs';
+import { directOn, merge } from '/src/shared/director.mjs';
 import { parse, sentences } from '/src/shared/text.mjs';
 import { Ears } from './ears.mjs';
 
@@ -247,29 +247,6 @@ async function synthesize(text) {
 
 // ---------------------------------------------------------------- what it shows
 
-let modelDownUntil = 0;
-
-/**
- * The model's direction for every sentence (null when off or unreachable). Not for the assistant's
- * own words (director: 'rules'): they carry their cues, written by the same model as it answered.
- */
-async function askModel(texts, u) {
-  if (cfg.expressions !== 'model' || u.auto === false || u.director === 'rules' || Date.now() < modelDownUntil || !texts.length) return null;
-  try {
-    return readAnswer(await bridge.direct(texts, u.who), texts.length);
-  } catch (err) {
-    // Not running, no model, too slow: rules for a minute, then it's asked again.
-    console.warn('Expressions from the model: none this time:', err.message);
-    modelDownUntil = Date.now() + 60_000;
-    return null;
-  }
-}
-
-/** Whatever answers first: the promise, or `fallback` after `ms`. */
-function within(promise, ms, fallback = null) {
-  return Promise.race([promise, new Promise((r) => setTimeout(() => r(fallback), ms))]);
-}
-
 function playExpression(name, seconds) {
   const e = EXPRESSIONS[name];
   if (e) head.playGesture(e.emoji, Math.max(1.2, Math.min(seconds, 4)));
@@ -291,6 +268,8 @@ function show(d, seconds = 3) {
 
 const queue = []; // utterances not started
 const inFlight = new Map(); // id → utterance being made or playing
+/** What the director's reading of the last utterance left (its mood, what it last showed), for the next of the same speaker. */
+let carried = null; // { state, source, who, until }
 let generation = 0;
 let pumping = false;
 
@@ -340,10 +319,13 @@ async function perform(u, gen) {
   tts.setup({ voice: u.voice, speed: u.speed, audioEncoding: 'pcm' });
   const made = list.map((s) => synthesize(s.text));
   made.forEach((p) => p.catch(() => {})); // reported in turn
-  const fromModel = askModel(list.map((s) => s.text), u);
-  const started = performance.now();
+  // What the words show, sentence by sentence, read from the whole utterance at once; carrying on
+  // from the one before when it's the same speaker going on (an answer said as it's written).
+  const auto = cfg.expressions !== 'off' && u.auto !== false;
+  const goingOn = carried && carried.source === u.source && carried.who === u.who && (inFlight.size > 1 || performance.now() < carried.until);
+  const { directions, state } = auto ? directOn(list.map((s) => s.text), { mood: cfg.mood, from: goingOn ? carried.state : null }) : { directions: [], state: null };
+  carried = state && { state, source: u.source, who: u.who, until: Infinity };
   const asked = { mood: u.mood, expression: u.expression, gesture: u.gesture, head: u.head, pose: u.pose };
-  let moodChanged = false;
   let failures = 0;
 
   for (let i = 0; i < list.length; i++) {
@@ -358,17 +340,7 @@ async function perform(u, gen) {
       continue;
     }
     if (gen !== generation) return;
-    // The model has until the first sentence is ready plus a moment; later ones, a moment more.
-    const wait = i === 0 ? Math.max(150, 1200 - (performance.now() - started)) : 250;
-    const model = await within(fromModel, wait);
-    const auto = cfg.expressions !== 'off' && u.auto !== false;
-    const d = merge({
-      asked: i === 0 ? asked : {},
-      model: auto && model ? model[i] : null,
-      rule: auto && !model ? rules(list[i].text) : {},
-      cues: list[i].cues,
-    });
-    if (gen !== generation) return;
+    const d = merge({ asked: i === 0 ? asked : {}, auto: directions[i] || null, cues: list[i].cues });
     const seconds = audio.ms / 1000;
     const markers = [];
     const mtimes = [];
@@ -377,7 +349,6 @@ async function perform(u, gen) {
       if (first) bridge.event({ type: 'started', id: u.id });
       bridge.event({ type: 'sentence', id: u.id, text: list[i].text, duration: seconds });
       caption(list[i].text);
-      if (d.mood) moodChanged = moodChanged || d.mood !== cfg.mood;
       const { timed: _t, ...now } = d;
       show(now, seconds);
     });
@@ -401,7 +372,14 @@ async function perform(u, gen) {
   head.speakMarker(() => {
     if (gen !== generation) return;
     inFlight.delete(u.id);
-    if (moodChanged && !queue.length) head.setMood(cfg.mood);
+    if (!queue.length && !inFlight.size) {
+      // Nothing more to say: back to the resting mood; a sentence soon after still carries on.
+      if (head.getMood() !== cfg.mood) head.setMood(cfg.mood);
+      if (carried) {
+        carried.state.mood = cfg.mood;
+        carried.until = performance.now() + 3000;
+      }
+    }
     caption(document.getElementById('caption').textContent, 2500);
     bridge.event({ type: 'ended', id: u.id });
   });
@@ -416,6 +394,7 @@ function stop(ids) {
   // What's been made and queued in TalkingHead can't be taken out one by one: everything stops,
   // and what wasn't to be stopped is said again from its start.
   generation++;
+  carried = null;
   head.stopSpeaking();
   tts.clear();
   const again = [...inFlight.values()].filter((u) => !drop.has(u.id));

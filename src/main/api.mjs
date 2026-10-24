@@ -4,6 +4,8 @@
 import { characterOf } from '../shared/characters.mjs';
 import { catalogJSON, expressionName, gestureName, headName, moodName, poseName } from '../shared/catalog.mjs';
 import { VOICES, resolveVoice, voiceJSON } from '../shared/voices.mjs';
+import { direct, merge } from '../shared/director.mjs';
+import { parse } from '../shared/text.mjs';
 import { recordJSON } from './speech.mjs';
 import { statusPage } from './status-page.mjs';
 
@@ -27,6 +29,7 @@ const ROUTES = {
   '/api/health': 'GET',
   '/api/voices': 'GET',
   '/api/catalog': 'GET',
+  '/api/expressions': 'POST',
   '/api/speak': 'POST',
   '/api/stop': 'POST',
   '/api/express': 'POST',
@@ -61,7 +64,8 @@ const SETTABLE = {
   voice: (v) => resolveVoice(v)?.id ?? bad(`no voice named ${v}`, 'unknown_voice'),
   speed: (v) => speedOf(v),
   mood: (v) => moodName(v) ?? bad(`no mood named ${v}`, 'unknown_name'),
-  expressions: (v) => (['model', 'rules', 'off'].includes(v) ? v : bad('expressions is model, rules or off')),
+  // "model" is what it was once: the words decide now.
+  expressions: (v) => (v === 'model' ? 'rules' : ['rules', 'off'].includes(v) ? v : bad('expressions is rules or off')),
   captions: (v) => !!v,
   hideAfter: (v) => (Number.isFinite(+v) && +v >= 0 && +v <= 3600 ? +v : bad('hideAfter is seconds, 0 to 3600')),
   ollamaUrl: (v) => (/^https?:\/\/[^\s]+$/.test(String(v)) ? String(v).replace(/\/+$/, '') : bad('ollamaUrl is an http address')),
@@ -176,6 +180,14 @@ export function createApi({ speech, face, settings, version, updater = null, doc
         return [200, { default: s.voice, speed: s.speed, voices: VOICES.map(voiceJSON) }];
       case '/api/catalog':
         return [200, catalogJSON()];
+      case '/api/expressions': {
+        // What the character would show for this text, sentence by sentence, with nothing said.
+        const b = await body(req);
+        const list = parse(textOf(b)).sentences;
+        const mood = moodName(b.mood) || s.mood;
+        const auto = direct(list.map((x) => x.text), { mood });
+        return [200, { mood, sentences: list.map((x, i) => ({ text: x.text, ...merge({ auto: auto[i], cues: x.cues }), kinds: auto[i].kinds })) }];
+      }
       case '/api/speak':
         return speak(await body(req), s);
       case '/api/speak/:id': {

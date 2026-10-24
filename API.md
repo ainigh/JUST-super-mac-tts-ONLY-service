@@ -12,9 +12,11 @@ anything, talk to its assistant, or use its voice alone.
   leaves the Mac.
 - **The face and body**: [TalkingHead](https://github.com/met4citizen/TalkingHead): 8 moods, 27
   expressions, 8 hand gestures, nods and shakes, 10 body poses, eye contact.
-- **What it shows** while it talks: what the caller asks for; else the model chooses, sentence by
-  sentence; else rules on the words. (The assistant's own words carry their cues, written by the
-  model as it answers.)
+- **What it shows** while it talks: what the caller asks for; then what's written in the text (an
+  emoji, a `[tag]`); then what the sentences themselves call for, read from their words (no model,
+  no waiting): hello waves, thanks bows, sorry saddens, good news smiles with an OK, a question
+  looks at you, an instruction points, "I don't know" shrugs, "one moment" holds up a hand, a "but"
+  turns the face at that word. The assistant's words are read the same way.
 - **The assistant**: [below](#the-assistant). One model, hand-rolled tool calls, a schedule, memory.
 
 This document is the contract for client apps. New fields may be added to responses, but nothing
@@ -60,6 +62,7 @@ curl -s localhost:8769/api/echo -d '{"text": "nice to meet you"}'
 | `GET  /api/health` | whether it's up, whether it's showing or speaking, how the voice model is doing |
 | `GET  /api/voices` | the voices, and the default voice and speed |
 | `GET  /api/catalog` | every mood, expression, gesture, head movement and pose, with what each means |
+| `POST /api/expressions` | what the character would show for a text, sentence by sentence (nothing is said) |
 | `POST /api/speak` | text → said by the avatar (queued after what's being said) |
 | `GET  /api/speak/{id}` | how an utterance is going (`?wait=true` answers once it's over) |
 | `POST /api/stop` | stops speaking and empties the queue (only one caller's, with `source`) |
@@ -134,12 +137,31 @@ An emoji right after a sentence ("Sorry. 😔") is how that sentence is said.
 
 Brackets that aren't one of these are read as they are.
 
-**What's shown otherwise.** For anything the request and the text leave out, the menu's
-*Expressions for other apps* setting decides: *From the model* (the default) asks the model (Ollama's,
-the assistant's) once per utterance to choose, for every sentence, from the catalog (until it
-answers, and whenever it can't be reached, the rules are used); *From the words only* uses the rules
-(greetings wave, thanks bow, "sorry" saddens, "yes" nods, "I don't know" shrugs, a question looks
-thoughtful…); *Only when asked* shows only what's asked for and written in.
+**What's shown otherwise.** For anything the request and the text leave out, the sentences are
+read for what kind each is, and where in it each kind is said: a greeting or goodbye (a wave), thanks
+(hands together), an apology or sympathy (a sad face, a nod), good news or something done (a smile,
+the OK sign), praise (a thumbs-up), wonder, joy, a joke, bad news or a failure (disappointed, the
+mood sad), a warning (a grimace, a pointed finger), not knowing (a shrug), "one moment" (a hand
+up), thinking it over or "let me check" (a thoughtful look away), a yes or a no at the start (a nod
+or a shake), an instruction or a step (pointing), "but"/"however" (a hand to the side, and the face
+of what follows, at that word), an offer or a question (a smile and a look at you). "Not" turns a
+word round ("not great"). The mood holds until the feeling changes and comes back to rest after two
+calm sentences; no gesture or face is repeated twice running; a sentence of plain facts is said
+calmly. Nothing is asked of a model, so it's instant and the same every time for the same words.
+The menu's *Expressions* setting: *From the words* (the default), or *Only when asked* (only what's
+asked for and written in). `POST /api/expressions` shows what would be done, without saying it.
+
+### `POST /api/expressions`
+
+```bash
+curl -s localhost:8769/api/expressions -d '{"text": "The run failed, sorry. Would you like me to try again?"}'
+# {"mood":"neutral","sentences":[{"text":"The run failed, sorry.","mood":"sad","expression":"disappointed","timed":[],"kinds":["failure","apology"]},
+#   {"text":"Would you like me to try again?","expression":"smile","gesture":"side","look":"camera","timed":[],"kinds":["offer"]}]}
+```
+
+Each sentence: what it shows as it starts (`mood`, `expression`, `gesture`, `head`, `look`, `pose`),
+what it shows later (`timed`, each at `at`, 0 to 1 through the sentence), and the `kinds` read in it.
+`mood` (optional) is the resting mood to start from (the settings' by default).
 
 ### `GET /api/speak/{id}`
 
@@ -248,7 +270,7 @@ Headers: `X-Voice`, `X-Sample-Rate`, `X-Duration`.
 ```json
 {"ok": true, "service": "superface", "version": "0.1.12", "port": 8769, "uptime": 3641,
  "visible": true, "speaking": false, "queued": 0, "avatar": "ready", "ready": true,
- "models": {"tts": {"state": "ready"}}, "expressions": "model", "character": "Ivy",
+ "models": {"tts": {"state": "ready"}}, "expressions": "rules", "character": "Ivy",
  "assistant": {"busy": false, "phase": "idle", "queued": 0, "tool": null, "model": "qwen3:8b", "error": null},
  "ears": {"state": "listening", "device": "webgpu"}}
 ```
@@ -267,7 +289,7 @@ quiet on for a minute ends `failed`, so nobody waits on it for ever.
 
 `POST /api/settings` takes any of `avatar` (the character: `brunette` Ivy, `david` David,
 `avaturn` Sofia, `avatarsdk` Leo; its voice comes with it), `view` (`full`, `mid`, `upper`,
-`head`), `voice`, `speed`, `mood` (the resting mood), `expressions` (`model`, `rules`, `off`),
+`head`), `voice`, `speed`, `mood` (the resting mood), `expressions` (`rules`: read from the words; `off`: only what's asked),
 `captions` (true/false), `hideAfter` (seconds after speaking before it hides; 0 stays), `model`
 (an Ollama model's name; empty: the best one Ollama has), `think` (true: it thinks before
 answering), `ollamaUrl`, `toolRunUrl`, `listening` (the ears on while it shows), and

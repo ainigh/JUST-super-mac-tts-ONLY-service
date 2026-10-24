@@ -47,7 +47,10 @@ Run script), and no wake word.
 - **The face**: [TalkingHead](https://github.com/met4citizen/TalkingHead) (8 moods, 27 expressions,
   8 hand gestures, nods and shakes, 10 poses) and Kokoro through
   [HeadTTS](https://github.com/met4citizen/HeadTTS), with each word and viseme timed, so the lips
-  follow the words.
+  follow the words. What it shows is read from the sentences themselves, not asked of the model:
+  each is read for what kind it is (hello, thanks, sorry, good or bad news, a question, an offer,
+  an instruction, not knowing, a "but"…), and the face, hands, head and eyes follow, some at the
+  very word (`src/shared/director.mjs`).
 - **API**: [API.md](API.md), at `http://127.0.0.1:8769`: speak, stop, express, audio alone, the
   echo check, and the assistant (chat, cancel, tools, schedules, memory), with live events.
 

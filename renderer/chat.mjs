@@ -458,7 +458,7 @@ function renderErrors() {
 const traceCards = { model: new Map(), calls: new Map() }; // item id → its card
 const LIST = { model: 'modelList', calls: 'callList' };
 const COUNT = { model: 'modelCount', calls: 'callCount' };
-const PURPOSES = { answer: 'Answer', learning: 'Learning (after a request)', expressions: 'Expressions (for a client)' };
+const PURPOSES = { answer: 'Answer', learning: 'Learning (after a request)' };
 
 async function loadTrace(log) {
   const r = await act('trace', { log });

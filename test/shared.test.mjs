@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { expressionName, gestureName } from '../src/shared/catalog.mjs';
-import { merge, modelRequest, readAnswer, rules, schema } from '../src/shared/director.mjs';
+import { direct, directOn, merge, read, rules } from '../src/shared/director.mjs';
 import { around, compare } from '../src/shared/echo.mjs';
 import { extractCues, parse, sentences, speakable, words } from '../src/shared/text.mjs';
 import { resolveVoice } from '../src/shared/voices.mjs';
@@ -61,33 +61,75 @@ test('names and emojis resolve in the catalog', () => {
   assert.equal(gestureName('🙏'), 'namaste');
 });
 
-test('the rules read the words', () => {
-  assert.equal(rules('Hello there!').gesture, 'handup');
-  assert.equal(rules('Thank you so much.').gesture, 'namaste');
-  assert.equal(rules("I'm sorry to hear that.").mood, 'sad');
-  assert.equal(rules('Yes, absolutely.').head, 'yes');
-  assert.equal(rules("I don't know.").gesture, 'shrug');
-  assert.equal(rules('What time is it?').expression, 'thinking');
-  assert.deepEqual(rules('The file has three lines.'), {});
+test('each kind of sentence shows what it is', () => {
+  const show = (t) => rules(t);
+  assert.equal(show('Hello there!').gesture, 'handup');
+  assert.equal(show('Hello there!').look, 'camera');
+  assert.equal(show('Goodbye, take care.').gesture, 'handup');
+  assert.equal(show('Thank you so much.').gesture, 'namaste');
+  assert.equal(show("I'm sorry about that.").mood, 'sad');
+  assert.equal(show("I'm sorry to hear that.").kinds[0], 'empathy');
+  assert.equal(show('Yes, absolutely.').head, 'yes');
+  assert.equal(show('No, not at all.').head, 'no');
+  assert.equal(show('No problem at all.').head, 'yes', '"no problem" is a kindness, not a no');
+  assert.equal(show("I don't know.").gesture, 'shrug');
+  assert.equal(show('One moment.').gesture, 'handup');
+  assert.equal(show('Let me check.').look, 'away');
+  assert.equal(show('Click Run on your Mac.').gesture, 'index');
+  assert.equal(show('Would you like me to try again?').gesture, 'side');
+  assert.equal(show('What time is it?').expression, 'thinking');
+  assert.equal(show('Is that the one?').expression, 'smile');
+  assert.equal(show("It's lovely, isn't it?").head, 'yes');
+  assert.equal(show('Eggs are on your shopping list.').gesture, 'ok');
+  assert.equal(show('Well done!').gesture, 'thumbup');
+  assert.equal(show('Wow, that is amazing.').expression, 'starstruck');
+  assert.equal(show('It failed with an error.').mood, 'sad');
+  assert.equal(show('Careful: this deletes them for good.').gesture, 'index');
+  assert.equal(show('Haha, that is funny.').expression, 'laughing');
+  assert.equal(show('Right now it is raining.').head, undefined, '"right now" is not a yes');
+  assert.deepEqual(show("It's 28 degrees in Lagos, with a high of 31."), { timed: [], kinds: [] }, 'facts are said calmly');
 });
 
-test('the model is asked once per utterance, and only catalog names come back', () => {
-  const body = modelRequest(['Hi!', 'Bad news.'], { who: 'Tom' });
-  assert.equal(body.format.properties.sentences.minItems, 2);
-  assert.ok(body.messages[0].content.includes('thumbup'));
-  assert.ok(body.messages[1].content.includes('1. Hi!'));
-  assert.ok(schema(1).properties.sentences.items.properties.mood.enum.includes('none'));
-  const a = readAnswer(JSON.stringify({ sentences: [{ mood: 'happy', expression: 'grin', gesture: 'none', head: 'nope' }] }), 2);
-  assert.deepEqual(a, [{ mood: 'happy', expression: 'grin' }, {}]);
-  assert.equal(readAnswer('not json', 1), null);
+test('"not" turns a word round, and what is said later in a sentence is shown at that word', () => {
+  assert.equal(rules("That's not great.").expression, 'disappointed');
+  assert.notEqual(rules("That's not great.").gesture, 'thumbup');
+  const d = rules('The script ran, but it failed with an error.');
+  assert.equal(d.gesture, 'side');
+  assert.equal(d.timed.length, 1);
+  assert.ok(d.timed[0].at > 0.4 && d.timed[0].at < 0.7);
+  assert.equal(d.timed[0].mood, 'sad');
+  const turn = rules('It failed at first, but now it works.');
+  assert.equal(turn.mood, 'sad');
+  assert.equal(turn.timed[0].mood, 'happy', 'the "but" carries what follows it');
+  assert.deepEqual(read('Hi! Thanks.').map((h) => h.kind), ['greeting', 'thanks']);
 });
 
-test('what was asked wins, then the model, then the rules; cues keep their own time', () => {
+test('across an utterance: the mood holds until the feeling changes, and nothing repeats twice running', () => {
+  const d = direct(['Thank you!', 'Thanks again.', 'The file has three lines.', 'It is in your folder.', 'That is all.']);
+  assert.equal(d[0].mood, 'happy');
+  assert.equal(d[1].mood, undefined, 'still happy: not set again');
+  assert.equal(d[1].gesture, undefined, 'no namaste twice running');
+  assert.equal(d[3].mood, 'neutral', 'two calm sentences later, back to rest');
+  const steps = direct(['First, open the folder.', 'Then pick the file.', 'Finally, click Save.']);
+  assert.equal(steps[0].gesture, 'index');
+  assert.equal(steps[1].gesture, undefined, 'a small gesture only after a sentence without one');
+  assert.equal(steps[2].gesture, 'side');
+  assert.ok(direct(['One.', 'Two.', 'Three.', 'Four.'])[3].pose, 'a long answer changes stance');
+  // Said a piece at a time (as an answer is, while it's written), it reads as one.
+  const first = directOn(['Thank you!'], {});
+  const next = directOn(['Thanks again.', 'The file has three lines.', 'It is in your folder.'], { from: first.state });
+  assert.deepEqual([first.directions, next.directions].flat(), d.slice(0, 4));
+  assert.deepEqual(direct(['Hi!']), direct(['Hi!']), 'the same words, the same show');
+  assert.equal(direct(['Hello.'], { mood: 'happy' })[0].mood, undefined, 'already in that mood');
+});
+
+test('what was asked wins, then what is written in the text, then what the words show; each at its time', () => {
   const cues = [{ gesture: 'ok', at: 0.5 }];
-  const d = merge({ asked: { mood: 'love' }, model: { mood: 'sad', expression: 'grin', gesture: 'thumbup' }, rule: { head: 'yes' }, cues });
-  assert.deepEqual(d, { mood: 'love', expression: 'grin', timed: cues });
-  assert.deepEqual(merge({ rule: { head: 'yes' } }), { head: 'yes', timed: [] });
-  assert.deepEqual(merge({ model: {}, rule: { head: 'yes' } }), { timed: [] });
+  const auto = { mood: 'sad', expression: 'pensive', gesture: 'thumbup', head: 'yes', timed: [{ at: 0.7, expression: 'smile', gesture: 'side' }] };
+  const d = merge({ asked: { mood: 'love' }, auto, cues });
+  assert.deepEqual(d, { mood: 'love', expression: 'pensive', head: 'yes', timed: [{ gesture: 'ok', at: 0.5 }, { at: 0.7, expression: 'smile' }] });
+  assert.deepEqual(merge({ auto: { head: 'yes', timed: [] } }), { head: 'yes', timed: [] });
+  assert.deepEqual(merge({}), { timed: [] });
 });
 
 test('what the ears heard is told apart from what the mouth said', () => {

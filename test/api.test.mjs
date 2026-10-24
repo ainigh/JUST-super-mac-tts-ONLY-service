@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -167,6 +168,23 @@ test('settings can be read and changed, checked', async () => {
   assert.ok(c.gestures.thumbup && c.moods.happy && c.expressions.wink);
 });
 
+test('what the face would show, read from the words: nothing said, no model asked', async () => {
+  const r = await post('/api/expressions', { text: 'Hello! 👍 The run failed, sorry. Would you like me to try again?' });
+  assert.equal(r.status, 200);
+  const { sentences } = await r.json();
+  assert.deepEqual(sentences.map((x) => x.text), ['Hello!', 'The run failed, sorry.', 'Would you like me to try again?']);
+  assert.equal(sentences[0].gesture, undefined, 'the 👍 written in the text is the gesture, at its place');
+  assert.equal(sentences[0].timed[0].gesture, 'thumbup');
+  assert.equal(sentences[0].expression, 'grin');
+  assert.equal(sentences[1].mood, 'sad');
+  assert.equal(sentences[2].look, 'camera');
+  assert.deepEqual(sentences[2].kinds, ['offer']);
+  assert.equal((await post('/api/expressions', {})).status, 400);
+  // "model" was a choice once: it's taken as the words now.
+  assert.equal((await (await post('/api/settings', { expressions: 'model' })).json()).expressions, 'rules');
+  assert.equal((await post('/api/settings', { expressions: 'loud' })).status, 400);
+});
+
 test('only this machine, and its pages, may call', async () => {
   assert.equal(localHost('127.0.0.1:8769'), true);
   assert.equal(localHost('evil.example.com'), false);
@@ -238,4 +256,16 @@ test('an utterance the avatar goes quiet on fails, so nobody waits for ever', ()
   s.watch();
   assert.equal(s.get(rec.id).state, 'failed');
   return done.then((r) => assert.equal(r.state, 'failed'));
+});
+
+test('settings saved when expressions came from the model load as read from the words', () => {
+  const file = path.join(os.tmpdir(), `superface-old-${process.pid}.json`);
+  fs.writeFileSync(file, JSON.stringify({ expressions: 'model', voice: 'am_puck' }));
+  try {
+    const s = new Settings(file).get();
+    assert.equal(s.expressions, 'rules');
+    assert.equal(s.voice, 'am_puck');
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
 });

@@ -32,7 +32,7 @@ const ALIASES = {
   upcoming: 'memory', birthdays: 'memory',
   link: 'mind', relate: 'mind', connect: 'mind', mind_add: 'mind', mind_query: 'mind', graph: 'mind',
   present: 'show', display: 'show', show_window: 'show', clipboard: 'copy', copy_to_clipboard: 'copy',
-  chrome: 'browser', page: 'browser', web_page: 'browser', read_page: 'browser',
+  browser: 'chrome_page', chrome: 'chrome_page', page: 'chrome_page', web_page: 'chrome_page', read_page: 'chrome_page', chromepage: 'chrome_page',
   notes: 'library', file_library: 'library', library_op: 'library',
   api: 'call_api', http: 'call_api', request: 'call_api', call_route: 'call_api',
 };
@@ -73,6 +73,11 @@ export function canonical(call, catalog) {
     if (user && memory) return { name: 'remember', arguments: { category: 'PEOPLE', about: THE_USER, notes: [`pref ${note}`] } };
     return { name: 'library', arguments: { op: 'append', name: PLAYBOOK, text: `- ${note}` } };
   }
+  // The page tool asked to ask Google, open a page, or do what a browser/ script does: that script.
+  if (n === 'chrome_page' || ALIASES[n] === 'chrome_page') {
+    const script = webScript(a, catalog);
+    if (script) return script;
+  }
   if (ALL_TOOLS.some((t) => t.name === n)) return { name: n, arguments: call.arguments };
   if (ALIASES[n]) {
     const op = ALIAS_OP[n];
@@ -87,6 +92,29 @@ export function canonical(call, catalog) {
   const flow = (catalog?.flows || []).find((f) => f.name === raw || f.name.replace(/\.flow$/, '') === raw);
   if (flow) return { name: 'run_flow', arguments: { flow: flow.name, ...(call.arguments || {}) } };
   return { name: n, arguments: call.arguments, unknown: true };
+}
+
+/** Ops that ask the web rather than read the page: the browser/ script that does each, by its bare name. */
+const WEB_OPS = {
+  google: 'google', search_google: 'google', google_search: 'google', web_search: 'google', search_web: 'google', ask_google: 'google', look_up: 'google', lookup: 'google',
+  open: 'open-page', open_page: 'open-page', open_url: 'open-page', go: 'open-page', goto: 'open-page', go_to: 'open-page', navigate: 'open-page', visit: 'open-page', load: 'open-page',
+};
+
+/**
+ * A chrome_page call that's for a browser/ script (op "google", "open", or a script's own name,
+ * such as "youtube"): that script, run with the words it was given; null when it isn't one, or
+ * the script isn't in the folder.
+ */
+function webScript(a, catalog) {
+  const op = String(a.op ?? a.what ?? a.action ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (!op) return null;
+  const scripts = (catalog?.scripts || []).filter((s) => s.name.startsWith('browser/'));
+  const bare = (s) => s.name.slice('browser/'.length).replace(/\.[a-z0-9]+$/i, '').toLowerCase();
+  const want = WEB_OPS[op] ?? op.replace(/_/g, '-');
+  const script = scripts.find((s) => bare(s) === want);
+  if (!script || script.name === 'browser/browser.sh') return null;
+  const words = a.text ?? a.q ?? a.query ?? a.url ?? a.address ?? a.words ?? a.search;
+  return { name: 'run_script', arguments: { script: script.name, args: words === undefined || words === null || words === '' ? [] : [String(words)], why: a.why || 'You asked for it' } };
 }
 
 function manualLine(t) {
@@ -144,6 +172,8 @@ export function systemPrompt({ character, catalog, notes, context = [], matches 
   const name = character.name;
   const libraryScript = (catalog?.scripts || []).find((s) => /(^|\/)(library|notes?)\.[a-z]+$/i.test(s.name));
   const library = runTools.hasLibrary(catalog);
+  const google = runTools.findScript('browser/google', catalog);
+  const openPage = runTools.findScript('browser/open-page', catalog);
   const has = (g) => runTools.hasGroup(catalog, g);
   const p = [];
   p.push(
@@ -163,7 +193,11 @@ What needs no tool (knowing, explaining, judging, deciding, writing) you answer 
   p.push(`Running things on the Mac:
 - Scripts and flows run through Tool Mac Tool Run. Each run puts a card on the Mac and waits for the user to click Run (you can't click): when you send one, tell them to click Run. If they click Don't Run, leave it unless they ask again.
 - The user can cancel a run, or what you're doing, at any time. When a result says it was cancelled, stop, say so in a few words, and don't send it again unless they ask.
-- This app keeps no notes or library of its own: to keep, find, change or remove notes, lists and anything else, ${
+${
+    google
+      ? `- For anything the web can answer that no script does (the weather, a price, a fact, opening hours, the news), run ${google.name} with the question in words ("weather in Corinth"): it asks Google in Chrome and prints Google's answer. To open a page, run ${openPage?.name || 'a browser/ script'}. chrome_page only reads the page already open.\n`
+      : ''
+  }- This app keeps no notes or library of its own: to keep, find, change or remove notes, lists and anything else, ${
       library
         ? "use library: the user's notes in Tool Mac Tool Run, which answers at once (no card, no click). Look before you write: find or read the note first, then append to it or write it whole"
         : `use the scripts${libraryScript ? ` (${libraryScript.name} is the user's notes library)` : ' (a notes or library script, when there is one)'}`
@@ -182,7 +216,7 @@ What needs no tool (knowing, explaining, judging, deciding, writing) you answer 
       [
         'Showing, copying, and the page in Chrome:',
         has('screen') && '- When what you would say is long (steps, a list, a recipe, a result to check), show it in a window with show, and say it in a sentence. When they will paste something, copy it, and say that you did.',
-        has('browser') && "- To guide the user through a site, read the page in Chrome with browser: find tells you where a thing is (in view, above, below, inside a closed menu) and highlight rings it in red for them. You can't click or type there: tell them what to do, one step at a time, and read the page again after each step. Never say something is on the page unless has or find said so.",
+        has('browser') && "- To guide the user through a site, read the page in Chrome with chrome_page: find tells you where a thing is (in view, above, below, inside a closed menu) and highlight rings it in red for them. You can't click or type there: tell them what to do, one step at a time, and read the page again after each step. Never say something is on the page unless has or find said so.",
       ]
         .filter(Boolean)
         .join('\n'),

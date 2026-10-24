@@ -36,6 +36,8 @@ async function fakeToolRun({ search = false } = {}) {
           { name: 'slow.sh', summary: 'Waits for a click for ever', dangers: [] },
           { name: 'long.sh', summary: 'Runs for ever', dangers: [] },
           { name: 'nope.sh', summary: 'Always refused', dangers: [] },
+          { name: 'browser/google.sh', group: 'browser', summary: 'Asks Google and gives back just the answer', inputs: [{ prompt: 'What should Google be asked?', kind: 'argument' }], dangers: [] },
+          { name: 'browser/open-page.sh', group: 'browser', summary: 'Opens a page in Chrome', dangers: [] },
         ],
       });
     }
@@ -66,7 +68,9 @@ async function fakeToolRun({ search = false } = {}) {
       if (/remember|birthday/i.test(q)) results.push({ kind: 'route', method: 'POST', path: '/api/memory/remember', summary: 'remember', group: 'memory', asks_on_the_mac: false });
       if (/straw|chrome/i.test(q)) results.push({ kind: 'route', method: 'POST', path: '/api/straw/run', summary: 'run Straw code', group: 'straw', asks_on_the_mac: true });
       if (/route|api/i.test(q)) results.push({ kind: 'route', method: 'GET', path: '/api/search', summary: 'find', group: 'about' });
-      return json(200, { ok: true, q, count: results.length, results, next: [{ method: 'GET', path: '/api/endpoints?brief=true', why: 'the groups' }] });
+      const kinds = (url.searchParams.get('in') || 'routes,scripts,flows').split(',').map((k) => k.replace(/s$/, ''));
+      const kept = results.filter((r) => kinds.includes(r.kind));
+      return json(200, { ok: true, q, count: kept.length, results: kept, next: [{ method: 'GET', path: '/api/endpoints?brief=true', why: 'the groups' }] });
     }
     if (url.pathname.startsWith('/api/browser')) {
       (seen.browser ||= []).push(`${req.method} ${url.pathname}${url.search}`);
@@ -220,7 +224,7 @@ test('the routes are fetched too: the library is a tool of its own, the rest (wh
     assert.match(p, /^- library: /m);
     assert.match(p, /^- call_api: /m);
     for (const tool of ['remember', 'recall', 'memory', 'mind', 'show', 'copy']) assert.match(p, new RegExp(`^- ${tool}: `, 'm'), tool);
-    assert.doesNotMatch(p, /^- browser: /m, "Chrome's page is off in Tool Mac Tool Run");
+    assert.doesNotMatch(p, /^- chrome_page: /m, "Chrome's page is off in Tool Mac Tool Run");
     assert.match(p, /^Chrome's page: turned off in Tool Mac Tool Run right now$/m);
     assert.match(p, /^- GET \/api\/calendar\/today: today's events$/m);
     assert.doesNotMatch(p, /\/api\/memory\/files/, 'the memory tools cover MEMORY');
@@ -277,18 +281,38 @@ test("Chrome's page: the ops and words a model reaches for are taken as meant; a
   try {
     const t = new ToolRun({ url: () => fake.url });
     await t.refresh();
-    await t.run('browser', { op: 'read' });
-    await t.run('browser', { op: 'search', query: 'Compute' });
-    await t.run('browser', { op: 'show where', words: 'Compute' });
-    await t.run('browser', { op: 'status' });
-    await t.run('browser', { text: 'Compute' });
-    await t.run('browser', {});
+    await t.run('chrome_page', { op: 'read' });
+    await t.run('chrome_page', { op: 'search', query: 'Compute' });
+    await t.run('chrome_page', { op: 'show where', words: 'Compute' });
+    await t.run('chrome_page', { op: 'status' });
+    await t.run('chrome_page', { text: 'Compute' });
+    await t.run('chrome_page', {});
     assert.deepEqual(fake.seen.browser, ['GET /api/browser/page?max=6000', 'GET /api/browser/find?text=Compute', 'POST /api/browser/highlight', 'GET /api/browser', 'GET /api/browser/find?text=Compute', 'GET /api/browser/url']);
-    assert.deepEqual(JSON.parse(await t.run('browser', { op: 'url' })), { url: 'https://example.com' }, 'no request id, no "next"');
-    assert.match(await t.run('browser', { op: 'click', text: 'Compute' }), /^The browser tool only reads Chrome's page: it can't click\. Tell the user/);
-    assert.match(await t.run('browser', { op: 'go_to', text: 'example.com' }), /can't go to\./);
-    assert.match(await t.run('browser', { op: 'teleport' }), /^There's no browser op called teleport\. The ops: url, tabs/);
-    assert.match(await t.run('browser', { op: 'find' }), /^Say what to look for/);
+    assert.deepEqual(JSON.parse(await t.run('chrome_page', { op: 'url' })), { url: 'https://example.com' }, 'no request id, no "next"');
+    assert.match(await t.run('chrome_page', { op: 'click', text: 'Compute' }), /^chrome_page only reads the page in front of Chrome: it can't click\. To open a page or ask Google, run a browser\/ script/);
+    assert.match(await t.run('chrome_page', { op: 'go_to', text: 'example.com' }), /can't go to\./);
+    assert.match(await t.run('chrome_page', { op: 'teleport' }), /^There's no chrome_page op called teleport\. The ops: url, tabs/);
+    assert.match(await t.run('chrome_page', { op: 'find' }), /^Say what to look for/);
+  } finally {
+    fake.close();
+  }
+});
+
+test("asking Chrome's page to google, open or go somewhere is the browser/ script that does it; the model is told to ask Google", async () => {
+  const fake = await fakeToolRun({ search: true });
+  try {
+    const t = new ToolRun({ url: () => fake.url });
+    const c = await t.refresh();
+    // What a model did: the page tool, asked to google.
+    assert.deepEqual(canonical({ name: 'browser', arguments: { op: 'google', text: 'Corinth weather' } }, c), { name: 'run_script', arguments: { script: 'browser/google.sh', args: ['Corinth weather'], why: 'You asked for it' } });
+    assert.deepEqual(canonical({ name: 'chrome_page', arguments: { op: 'navigate', url: 'example.com' } }, c).arguments.script, 'browser/open-page.sh');
+    assert.deepEqual(canonical({ name: 'chrome_page', arguments: { op: 'find', text: 'Compute' } }, c), { name: 'chrome_page', arguments: { op: 'find', text: 'Compute' } }, 'reading the page stays reading the page');
+    assert.equal(canonical({ name: 'chrome_page', arguments: { op: 'google', text: 'x' } }, { ...c, scripts: [] }).name, 'chrome_page', 'no google.sh in the folder: the page tool says what it can do');
+    const p = systemPrompt({ character: CHARACTERS[0], catalog: c });
+    assert.match(p, /For anything the web can answer that no script does[^\n]*run browser\/google\.sh with the question/);
+    // find, scoped to a kind with nothing in it: everything, said so; nothing at all: Google.
+    assert.match(await t.run('find', { q: 'weather', in: 'flows' }), /^Nothing of that kind matched "weather"; these are everything that did:\nscript utilities\/weather\.py/);
+    assert.match(await t.run('find', { q: 'Corinth', in: 'scripts' }), /^Nothing matched "Corinth"\. Try other words, or fewer of them\. For something the web answers, run browser\/google with the question\.$/);
   } finally {
     fake.close();
   }

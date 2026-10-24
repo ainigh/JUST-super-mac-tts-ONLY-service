@@ -161,9 +161,9 @@ export const TOOLS = [
     args: [['text', 'string']],
   },
   {
-    name: 'browser',
+    name: 'chrome_page',
     group: 'browser',
-    description: "Reads the page in front of Chrome, to guide the user through a site: what it says, whether words are on it, where a thing is, a red ring around it. It never clicks or types: tell them what to click, then read again.",
+    description: "Reads the page already in front of Chrome, to guide the user through a site: what it says, whether words are on it, where a thing is, a red ring around it. It only reads: it never opens a page, searches the web or clicks (to ask Google or open a page, run the browser/ scripts, such as browser/google). Tell the user what to click, then read again.",
     args: [
       ['op', `string: ${BROWSER_OPS.join(', ')}`],
       ['text', 'string: for has, find and highlight'],
@@ -385,11 +385,20 @@ export class ToolRun {
         case 'find': {
           const q = str(args.q ?? args.query ?? args.words ?? args.text ?? args.what);
           if (!q) return 'Say what to look for: q, a few words.';
-          const [status, json] = await this.call('GET', `/api/search?${searchQuery(q, args.in, 8)}`, null, { signal, log });
+          const search = (kinds) => this.call('GET', `/api/search?${searchQuery(q, kinds, 8)}`, null, { signal, log });
+          let [status, json] = await search(args.in);
           const t = trouble(status, json);
           if (t) return t;
-          const lines = this.describe(json.results);
-          return lines.length ? lines.join('\n') : `Nothing matched "${q}". Try other words, fewer of them, or another kind (in: scripts, flows or routes).`;
+          let lines = this.describe(json.results);
+          // Nothing of the kind asked for: everything, said so (what does it may be another kind).
+          let wider = '';
+          if (!lines.length && args.in) {
+            [status, json] = await search(null);
+            lines = trouble(status, json) ? [] : this.describe(json.results);
+            if (lines.length) wider = `Nothing of that kind matched "${q}"; these are everything that did:\n`;
+          }
+          if (lines.length) return wider + lines.join('\n');
+          return `Nothing matched "${q}". Try other words, or fewer of them.${findScript('browser/google', this.catalog) ? ' For something the web answers, run browser/google with the question.' : ''}`;
         }
         case 'library':
           return await this.library(args, { signal, log });
@@ -416,7 +425,7 @@ export class ToolRun {
           if (!str(body.text) && !(body.shelf && body.name) && !body.mind) return 'Give the text to copy.';
           return await this.answer('POST', '/api/clipboard', body, { signal, log });
         }
-        case 'browser':
+        case 'chrome_page':
           return await this.browser(args, { signal, log });
         case 'call_api':
           return await this.callApi(args, { signal, log, onStatus });
@@ -467,9 +476,9 @@ export class ToolRun {
     const text = str(args.text ?? args.q ?? args.query ?? args.words ?? args.find ?? args.label ?? args.search);
     const said = str(args.op ?? args.what ?? args.action)?.toLowerCase().replace(/[\s-]+/g, '_');
     const op = said ? (BROWSER_ALIASES[said] ?? said) : text ? 'find' : 'url';
-    if (BROWSER_ACTS.test(op)) return `The browser tool only reads Chrome's page: it can't ${said.replace(/_/g, ' ')}. Tell the user what to do (find, then highlight, shows them where), then read the page again.`;
+    if (BROWSER_ACTS.test(op)) return `chrome_page only reads the page in front of Chrome: it can't ${said.replace(/_/g, ' ')}. To open a page or ask Google, run a browser/ script (browser/open-page, browser/google); on the page, tell the user what to do (find, then highlight, shows them where), then read it again.`;
     if (op === 'status') return this.answer('GET', '/api/browser', null, { signal, log });
-    if (!BROWSER_OPS.includes(op)) return `There's no browser op called ${said}. The ops: ${BROWSER_OPS.join(', ')}.`;
+    if (!BROWSER_OPS.includes(op)) return `There's no chrome_page op called ${said}. The ops: ${BROWSER_OPS.join(', ')}. (To ask Google or open a page, run a browser/ script, such as browser/google.)`;
     if (['has', 'find', 'highlight'].includes(op) && !text) return `Say what to look for: text (for ${op}).`;
     if (op === 'highlight') return this.answer('POST', '/api/browser/highlight', { text, ...(args.seconds ? { seconds: Number(args.seconds) } : {}) }, { signal, log });
     const q = new URLSearchParams();

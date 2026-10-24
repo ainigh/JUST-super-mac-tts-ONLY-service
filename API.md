@@ -353,9 +353,11 @@ it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) a
   (`POST /api/mind/context`) goes in with the model's instructions, and the next week's dates
   (`upcoming`) are fetched with the scripts.
 - **Showing and Chrome's page**: `show` (a window in front of everything, with copy buttons:
-  your text, a file, or a node of the mind), `copy` (to the clipboard), `browser` (`url`,
+  your text, a file, or a node of the mind), `copy` (to the clipboard), `chrome_page` (`url`,
   `tabs`, `page`, `has`, `find`, `highlight`, `outline`: reads Chrome's page to guide the user
-  through a site; it never clicks).
+  through a site; it never clicks, opens or searches: asked to google or open a page, the call
+  goes to the `browser/` script that does it, `browser/google` or `browser/open-page`, when the
+  folder has it, and the model is told to ask Google for what no script does).
 - Each of these is offered only when Tool Mac Tool Run lists its group and has it switched on.
 - **Every other route** Tool Mac Tool Run lists (Straw, automation, system docs, and whatever it
   adds later) is reached with `call_api` (`method`, `path`, `body`, `why`), only under `/api/` on

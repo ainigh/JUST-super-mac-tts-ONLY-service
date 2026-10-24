@@ -151,7 +151,7 @@ function toolLabel(e) {
       return a.title ? `Showing “${a.title}”` : 'Showing it on the Mac';
     case 'copy':
       return 'Copying to the clipboard';
-    case 'browser':
+    case 'chrome_page':
       return a.op === 'highlight' ? `Pointing out “${a.text}” in Chrome` : `Chrome's page: ${a.op || '…'}`;
     default:
       return e.name.replace(/_/g, ' ');

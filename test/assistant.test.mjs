@@ -347,29 +347,6 @@ test('what fits the request is searched for once a request, beside the mind, and
   }
 });
 
-test('while it works with nothing said yet, it says it is on it; not when it answers at once, not when turned off', async () => {
-  const slow = (ms, text) => (_m, signal) => new Promise((resolve) => {
-    const t = setTimeout(() => resolve(text), ms);
-    signal?.addEventListener('abort', () => clearTimeout(t));
-  });
-  const { a, said, idle } = await setup([slow(1900, 'Your calendar is clear tomorrow.')]);
-  a.fillers = () => true;
-  a.say('check my calendar for tomorrow');
-  await idle();
-  assert.equal(said.length, 2);
-  assert.match(said[0], /your calendar for tomorrow/, 'the filler first, the request said back');
-  assert.equal(said[1], 'Your calendar is clear tomorrow.');
-  // Answered at once, or with fillers off: nothing but the answer.
-  const quick = await setup(['Sure.', slow(1900, 'Done.')]);
-  quick.a.fillers = () => true;
-  quick.a.say('check my calendar for tomorrow');
-  await quick.idle();
-  quick.a.fillers = () => false;
-  quick.a.say('check my calendar again');
-  await quick.idle();
-  assert.deepEqual(quick.said, ['Sure.', 'Done.']);
-});
-
 test('every call is noted for the Calls tab: the tool, each request (address, body, status, request id), the stream, the result', async () => {
   const fake = await fakeToolRun();
   try {

@@ -3,7 +3,6 @@ import { test } from 'node:test';
 import { expressionName, gestureName } from '../src/shared/catalog.mjs';
 import { direct, directOn, merge, read, rules } from '../src/shared/director.mjs';
 import { around, compare } from '../src/shared/echo.mjs';
-import { Fillers, readRequest } from '../src/shared/fillers.mjs';
 import { extractCues, parse, sentences, speakable, words } from '../src/shared/text.mjs';
 import { resolveVoice } from '../src/shared/voices.mjs';
 
@@ -151,25 +150,4 @@ test('what the ears heard is told apart from what the mouth said', () => {
     { text: 'recent', start: 50_000, end: 55_000 },
   ];
   assert.deepEqual(around(lines, { at: 56_000, seconds: 5 }).map((l) => l.text), ['recent']);
-});
-
-test('fillers: read from the request, the topic said back only when it safely can be, nothing for "thanks"', () => {
-  const f = new Fillers({ random: () => 0 });
-  for (const quiet of ['hi', 'thanks!', 'ok', 'thank you so much', "what's up", 'How are you?']) assert.equal(f.opening(quiet), null, quiet);
-  assert.equal(f.opening('check my calendar for tomorrow'), 'Let me check your calendar for tomorrow.', 'my is said back as your');
-  assert.equal(f.opening('What’s the capital of Peru?'), 'The capital of Peru. Let me see.');
-  assert.equal(readRequest('You got the last answer wrong').kind, 'repair');
-  assert.equal(readRequest('Summarize this and then draft a reply to Sam').kind, 'several');
-  assert.equal(readRequest('I feel like nobody cares about me').kind, 'feeling');
-  assert.equal(readRequest('My son has a fever of 102, what should I do?').kind, 'care');
-  assert.equal(readRequest('remind me to call Sam in 20 minutes').kind, 'later');
-  assert.equal(readRequest('Can you not use bullet points this time?').kind, 'rule');
-  // A request that turns on a negation or a quote isn't said back: it could come out wrong.
-  for (const tricky of ['Don’t book a hotel, just find me a flight', 'Translate ‘I love you’ into French', 'check if the build is not broken']) assert.equal(readRequest(tricky).topic, undefined, tricky);
-  // Never the same line twice running; the progress lines move on, and end on an offer to stop.
-  const said = Array.from({ length: 4 }, () => f.opening('Fix my code'));
-  assert.equal(new Set(said).size, 4);
-  assert.match(f.progress(0), /^Still/);
-  assert.match(f.progress(9), /If you'd rather I stopped, just say so\.$/);
-  for (const line of [...said, f.running(), f.waiting()]) assert.doesNotMatch(line, /\b(found|finished|it's done|all done|is ready|here's|here is)\b/i, `never a result it hasn't got: ${line}`);
 });

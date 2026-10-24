@@ -74,7 +74,7 @@ const SETTABLE = {
   think: (v) => !!v,
   listening: (v) => !!v,
   listenWhileSpeaking: (v) => !!v,
-  fillers: (v) => !!v,
+  busyTone: (v) => !!v,
 };
 
 function bad(message, code = 'bad_request') {

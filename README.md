@@ -34,11 +34,6 @@ Run script), and no wake word.
   the Mac, a running one is stopped.
 - **Its character**: it sees things through, listens to your exact words, offers the next step it can see
   coming, and checks its work before it calls it done, while allowing that it may have missed something.
-  While it works something out it says so in a few words, read from what you asked (FillerLab's techniques:
-  "Let me check your calendar for tomorrow.", "A few things there. I'll take them one at a time.", "Fair
-  enough. Let me look at that again."), and after a long quiet, that it's still on it; never a result it
-  hasn't got, never the same line twice running, and nothing for "thanks" or "ok" (`src/shared/fillers.mjs`;
-  **Mind** turns them off).
 - **Later**: "remind me in 20 minutes…", "at 5 check the build…", "on Friday at 8…". It
   schedules a task for itself (as many as you like, each cancellable); when it's due the character
   appears and does it.
@@ -67,7 +62,8 @@ Run script), and no wake word.
   an instruction, not knowing, a "but"…), and the face, hands, head and eyes follow, some at the
   very word (`src/shared/director.mjs`). While it works something out, it turns away and gets busy (heads
   down, a look up, a frown of thought, a hand counting things off, turning to the other side now and then);
-  the moment you talk, or it has something to say, it turns back and faces you.
+  the moment you talk, or it has something to say, it turns back and faces you. A soft pip every couple of
+  seconds says it's busy, not gone (too short for its own ears to take for speech; **Mind** turns it off).
 - **API**: [API.md](API.md), at `http://127.0.0.1:8769`: speak, stop, express, audio alone, the
   echo check, and the assistant (chat, cancel, tools, schedules, memory), with live events.
 

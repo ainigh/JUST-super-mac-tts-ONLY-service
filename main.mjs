@@ -204,7 +204,7 @@ ipcMain.on('drag:end', () => {
 
 // What the renderer is told when a setting it uses changes.
 settings.onChange((s, before) => {
-  const changed = ['avatar', 'view', 'voice', 'speed', 'mood', 'expressions', 'captions'].filter((k) => s[k] !== before[k]);
+  const changed = ['avatar', 'view', 'voice', 'speed', 'mood', 'expressions', 'captions', 'busyTone'].filter((k) => s[k] !== before[k]);
   if (changed.length) send('settings', Object.fromEntries(changed.map((k) => [k, s[k]])));
   if (s.port !== before.port || s.serving !== before.serving) serve();
   if (s.alwaysOnTop !== before.alwaysOnTop) win?.setAlwaysOnTop(s.alwaysOnTop, 'floating');

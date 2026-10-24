@@ -2,9 +2,7 @@
 // comes due on the schedule become messages; the model answers, its words are said as they're
 // written, and a tool call in its answer is run (here, or over Tool Mac Tool Run) and the result
 // handed back, until it answers in words. Everything can be cancelled: the model mid-answer, a
-// run waiting for its click or running. While it works with nothing to say yet, it says a few
-// words now and then (fillers.mjs), so a pause doesn't feel like it went away. No Electron in
-// here, so it's tested on its own.
+// run waiting for its click or running. No Electron in here, so it's tested on its own.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,17 +11,12 @@ import * as memoryTools from './memory.mjs';
 import { NOTE, ALL_TOOLS, toolsFor, canonical, claimsInability, promisesWork, systemPrompt, toolResult, userMessage } from './prompt.mjs';
 import * as scheduleTools from './scheduler.mjs';
 import { TOOL_NAMES as RUN_TOOLS, coveredGroups } from './toolrun.mjs';
-import { Fillers } from '../shared/fillers.mjs';
 
 const MAX_ROUNDS = 10; // tool calls for one request
 const KEEP_LOG = 300; // chat entries kept
 const KEEP_MESSAGES = 40; // messages the model sees, at most
 const KEEP_CHARS = 32_000; // and their length, at most (the system prompt comes on top)
 const WAITING_REMINDER = 20_000; // a card unclicked this long: said once
-const RUNNING_REMINDER = 45_000; // a run going this long: said once
-const FILLER_FIRST = 1500; // ms of silence after a request before it says it's on it
-const FILLER_QUIET = 9000; // ms of silence while it thinks before it says it's still on it
-const FILLER_MOST = 4; // fillers in one request, at most
 
 export class Assistant {
   /**
@@ -39,11 +32,9 @@ export class Assistant {
    * @param {string|null} [o.file] - where the chat is kept
    * @param {import('./trace.mjs').Trace} [o.trace] - where each tool call is noted, with what it sent and got
    * @param {() => number} [o.now]
-   * @param {() => boolean} [o.fillers] - whether it says a few words while it works (read fresh each time)
-   * @param {Fillers} [o.filler] - what it says then
    */
-  constructor({ model, toolrun, scheduler, memory, character, speak, stopSpeaking, emit = () => {}, file = null, trace = null, now = Date.now, fillers = () => false, filler = new Fillers() }) {
-    Object.assign(this, { model, toolrun, scheduler, memory, character, speak, stopSpeaking, emit, file, trace, now, fillers, filler });
+  constructor({ model, toolrun, scheduler, memory, character, speak, stopSpeaking, emit = () => {}, file = null, trace = null, now = Date.now }) {
+    Object.assign(this, { model, toolrun, scheduler, memory, character, speak, stopSpeaking, emit, file, trace, now });
     this.history = []; // what the model sees: { role, content }
     this.log = []; // what the chat shows: entries
     this.inbox = []; // what's come in and not been answered: { text, how, at, entry }
@@ -74,7 +65,7 @@ export class Assistant {
       // Mid-answer: what was being said gives way to what's just been said.
       this.turn.interrupted = true;
       this.turn.ctrl.abort();
-      if (this.turn.spoke || this.turn.filled) this.stopSpeaking();
+      if (this.turn.spoke) this.stopSpeaking();
     }
     this.pump();
     return entry;
@@ -149,9 +140,8 @@ export class Assistant {
 
   /** One request, to its answer: model, tools, model… */
   async work(batch) {
-    const turn = { ctrl: new AbortController(), batch, calls: 0, failures: 0, spoke: false, nudged: new Set(), toolRunning: false, toolEntry: null, filled: 0, quietSince: this.now() };
+    const turn = { ctrl: new AbortController(), batch, calls: 0, failures: 0, spoke: false, nudged: new Set(), toolRunning: false, toolEntry: null };
     this.turn = turn;
-    this.startFilling(turn);
     const content = batch.length === 1 ? userMessage(batch[0].text, batch[0]) : batch.map((b) => userMessage(b.text, b)).join('\n');
     const mark = this.history.length;
     this.history.push({ role: 'user', content });
@@ -210,7 +200,6 @@ export class Assistant {
         this.history.push({ role: 'user', content }, { role: 'assistant', content: `(I couldn't answer: ${err.message})` });
       }
     } finally {
-      clearInterval(turn.fillTimer);
       this.turn = null;
       this.trim();
       this.save();
@@ -248,8 +237,6 @@ export class Assistant {
         this.speak(piece.trim());
         out.spokenAny = true;
         turn.spoke = true;
-        turn.talking = true; // its own words this round: no "still on it" over them
-        turn.quietSince = this.now();
       }
       const shown = display(final ? words(out.text) : prose);
       if (shown) {
@@ -298,37 +285,6 @@ export class Assistant {
     return null;
   }
 
-  // ---------------------------------------------------------------- fillers
-
-  /**
-   * While the model works out an answer with nothing said yet, it says it's on it (read from the
-   * request), and after a long quiet, that it still is. Not while a tool runs (a run has lines of
-   * its own), not for a scheduled task, and not at all when they're turned off.
-   */
-  startFilling(turn) {
-    if (turn.batch.every((b) => b.how === 'scheduled')) return;
-    const asked = turn.batch.map((b) => b.text).join(' ');
-    const started = this.now();
-    let opened = false;
-    turn.fillTimer = setInterval(() => {
-      if (turn.ctrl.signal.aborted || turn.toolRunning || !this.fillers() || turn.filled >= FILLER_MOST) return;
-      const now = this.now();
-      let line = null;
-      if (!opened && !turn.spoke) {
-        if (now - started < FILLER_FIRST) return;
-        opened = true;
-        line = this.filler.opening(asked);
-      } else if (!turn.talking && now - turn.quietSince >= FILLER_QUIET) {
-        opened = true;
-        line = this.filler.progress(turn.filled);
-      }
-      if (!line) return;
-      turn.filled++;
-      turn.quietSince = now;
-      this.speak(line);
-    }, 250);
-  }
-
   // ---------------------------------------------------------------- tools
 
   async execute(turn, call) {
@@ -352,8 +308,8 @@ export class Assistant {
       } else if (RUN_TOOLS.includes(call.name)) {
         turn.toolRunning = true;
         this.emitState();
-        const reminders = { waiting: null, running: null };
-        const clear = () => Object.values(reminders).forEach(clearTimeout);
+        // A card left unclicked is said once; a long run needs no words (the busy tone says it's working).
+        let reminder = null;
         try {
           text = await this.toolrun.run(call.name, args, {
             signal: turn.ctrl.signal,
@@ -363,21 +319,16 @@ export class Assistant {
               if (s.request) patch.request = s.request;
               if (s.run) patch.run = s.run;
               if (s.output !== undefined) patch.output = s.output;
-              if (s.state === 'waiting' && !reminders.waiting) {
-                reminders.waiting = setTimeout(() => entry.state === 'waiting' && this.speak(this.filler.waiting()), WAITING_REMINDER);
-              }
-              if (s.state === 'running' && !reminders.running) {
-                reminders.running = setTimeout(() => entry.state === 'running' && this.speak(this.filler.running()), RUNNING_REMINDER);
+              if (s.state === 'waiting' && !reminder) {
+                reminder = setTimeout(() => entry.state === 'waiting' && this.speak("It's waiting for you to click Run on your Mac."), WAITING_REMINDER);
               }
               this.update(entry, patch);
               this.emitState();
             },
           });
         } finally {
-          clear();
+          clearTimeout(reminder);
           turn.toolRunning = false;
-          turn.talking = false;
-          turn.quietSince = this.now(); // its result is in: the model's turn again, with a fresh pause
         }
         if (text === null) text = NOTE.unknownTool(call.name, this.toolrun.catalog);
         failed = isFailure(text);

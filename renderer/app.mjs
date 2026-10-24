@@ -270,8 +270,9 @@ function show(d, seconds = 3) {
 
 // While the assistant thinks or a tool runs, and nothing is being said, the character turns away
 // from the user and gets on with it: heads down, a look up, a frown of thought, a hand counting
-// things off, now and then turning to the other side. The moment the user talks, or it has
-// something to say, it turns back and faces them.
+// things off, now and then turning to the other side, and a soft pip every so often says it's
+// busy, not gone. The moment the user talks, or it has something to say, it turns back and
+// faces them, and the pips stop.
 
 const BUSY_TURN = 0.7; // radians: well turned away, the face still in view
 const BUSY_AFTER = 700; // ms of working before it turns away (a quick answer doesn't)
@@ -326,6 +327,34 @@ function beat() {
   later(between(2200, 4200), beat);
 }
 
+// The busy tone. A pip is shorter than the ears take for speech (250 ms), and the pips are further
+// apart than the pause that ends a phrase (750 ms), so its own ears drop them as clicks.
+const PIP_EVERY = 1600; // ms
+const PIP_SECONDS = 0.14;
+
+function pip() {
+  const ctx = head?.audioCtx;
+  if (!ctx || ctx.state !== 'running') return;
+  const t = ctx.currentTime;
+  const tone = ctx.createOscillator();
+  const level = ctx.createGain();
+  tone.type = 'sine';
+  tone.frequency.value = 740;
+  level.gain.setValueAtTime(0.0001, t);
+  level.gain.exponentialRampToValueAtTime(0.05, t + 0.012);
+  level.gain.exponentialRampToValueAtTime(0.0001, t + PIP_SECONDS);
+  tone.connect(level).connect(ctx.destination);
+  tone.start(t);
+  tone.stop(t + PIP_SECONDS + 0.02);
+}
+
+/** A pip every so often while it's busy (when the tone is on: it's read each time). */
+function pips() {
+  if (!busy.on) return;
+  if (cfg.busyTone !== false) pip();
+  later(PIP_EVERY, pips);
+}
+
 /** Now and then it turns to the other side, as someone busy shifts about. */
 function swapSides() {
   if (!busy.on) return;
@@ -343,6 +372,7 @@ function startBusy() {
   turnTo(busy.side * BUSY_TURN, 1100);
   head.lookAt(null, innerHeight * 1.5, 2500);
   later(900, beat);
+  later(300, pips);
   later(between(8000, 12000), swapSides);
 }
 

@@ -1,6 +1,8 @@
-// What the assistant has learned: short notes in three sections, read into its prompt every turn
-// and written by the model itself (remember, forget) as it learns. Bounded, so it prunes rather
-// than piles up; shown in the chat window, where the user can delete notes and add standing
+// What the assistant has learned about working with the user: short notes in three sections, read
+// into its prompt every turn and written by the model itself (learn, unlearn) as it learns. Facts
+// about the user's world (people, places, dates, plans) go to MEMORY in Tool Mac Tool Run when
+// it's there (remember, recall); these are its own know-how. Bounded, so it prunes rather than
+// piles up; shown in the chat window, where the user can delete notes and add standing
 // instructions of their own.
 
 import fs from 'node:fs';
@@ -84,7 +86,7 @@ export class Memory {
 
   /** The notes as the model reads them every turn. */
   prompt() {
-    let p = `Your memory (what you've learned so far; ${this.count} of ${MAX_NOTES} notes):`;
+    let p = `Your own notes (what you've learned so far about working with the user; ${this.count} of ${MAX_NOTES} notes):`;
     for (const s of SECTIONS) {
       p += `\n${s.id} (${s.about}):`;
       p += this.notes[s.id].length ? '\n' + this.notes[s.id].map((n) => `- ${n}`).join('\n') : ' (empty)';
@@ -111,17 +113,17 @@ export class Memory {
 
 export const TOOLS = [
   {
-    name: 'remember',
+    name: 'learn',
     description:
-      'Saves one short line to your memory, which you read at the start of every turn and the user can see. Use it the moment you learn something that will matter next time: a preference or fact about the user (user), how to get something done here, such as which script and arguments worked (playbook), or a mistake and how to avoid it (mistakes). Nothing you already have, nothing that only matters now.',
+      'Saves one short line to your own notes, which you read at the start of every turn and the user can see: how they like you to work (user: units, tone, habits), how to get something done here, such as which script and arguments worked (playbook), or a mistake and how to avoid it (mistakes). Nothing you already have, nothing that only matters now.',
     args: [
       ['section', 'string: user, playbook or mistakes'],
       ['note', 'string: the line, short and specific'],
     ],
   },
   {
-    name: 'forget',
-    description: 'Takes a line out of your memory, when it is wrong or stale, or the memory is full.',
+    name: 'unlearn',
+    description: 'Takes a line out of your own notes, when it is wrong or stale, or they are full.',
     args: [
       ['section', 'string, optional: user, playbook or mistakes'],
       ['note', 'string: the line, or enough of it to tell it apart'],
@@ -132,7 +134,7 @@ export const TOOLS = [
 export function runTool(memory, name, args = {}) {
   const note = args.note ?? args.text ?? args.line ?? args.content;
   const section = args.section ?? args.category ?? args.kind;
-  if (name === 'remember') return memory.remember(section, note);
-  if (name === 'forget') return memory.forget(section, note);
+  if (name === 'learn') return memory.remember(section, note);
+  if (name === 'unlearn') return memory.forget(section, note);
   return null;
 }

@@ -10,7 +10,7 @@ import { calls, isSilent, looksBroken, sayable, words } from './calls.mjs';
 import * as memoryTools from './memory.mjs';
 import { NOTE, ALL_TOOLS, toolsFor, canonical, claimsInability, promisesWork, systemPrompt, toolResult, userMessage } from './prompt.mjs';
 import * as scheduleTools from './scheduler.mjs';
-import { TOOL_NAMES as RUN_TOOLS } from './toolrun.mjs';
+import { TOOL_NAMES as RUN_TOOLS, coveredGroups } from './toolrun.mjs';
 
 const MAX_ROUNDS = 10; // tool calls for one request
 const KEEP_LOG = 300; // chat entries kept
@@ -211,7 +211,9 @@ export class Assistant {
 
   /** The model's answer, streamed: its words are said sentence by sentence as they come. */
   async answer(turn) {
-    const system = systemPrompt({ character: this.character(), catalog: this.toolrun.catalog, memory: this.memory, now: this.now() });
+    // What the mind has on what's being said, once a request: given to the model with its instructions.
+    turn.context ??= await this.toolrun.context(this.recent(), { signal: turn.ctrl.signal });
+    const system = systemPrompt({ character: this.character(), catalog: this.toolrun.catalog, memory: this.memory, context: turn.context, now: this.now() });
     const messages = [{ role: 'system', content: system }, ...this.history];
     const out = { text: '', spokenTo: 0, entry: null, spokenAny: false };
     const flush = (final) => {
@@ -259,6 +261,16 @@ export class Assistant {
   /** An answer that's being asked again (it's nudged): not shown, and not said (if it can still be helped). */
   retract(answer) {
     if (answer.entry) this.update(answer.entry, { hidden: true, streaming: false });
+  }
+
+  /** The latest of the conversation, as said (no tool results, no notes from the Mac): what the mind is asked about. */
+  recent() {
+    return this.history
+      .slice(-6)
+      .filter((m) => !/^(Tool result for|Note from the Mac)/.test(m.content))
+      .map((m) => (m.role === 'assistant' ? words(m.content) : m.content.replace(/^\[[^\]]*\]\s*/, '')))
+      .filter(Boolean)
+      .join('\n');
   }
 
   /** What the harness tells the model when its answer has words and no call where one was due. */
@@ -360,7 +372,7 @@ export class Assistant {
         if (!memoryTools.TOOLS.some((t) => t.name === call.name)) continue;
         const result = memoryTools.runTool(this.memory, call.name, call.arguments || {});
         if (/^(Noted|Forgotten)/.test(result)) {
-          this.add({ kind: 'note', text: `${call.name === 'remember' ? 'Learned' : 'Forgot'}: ${call.arguments?.note ?? ''}`.trim() });
+          this.add({ kind: 'note', text: `${call.name === 'learn' ? 'Learned' : 'Forgot'}: ${call.arguments?.note ?? ''}`.trim() });
         }
       }
     } catch {
@@ -461,6 +473,7 @@ export class Assistant {
       builtin: ALL_TOOLS.filter((t) => t.where === 'local').map((t) => ({ name: t.name, description: t.description, args: (t.args || []).map(([n, d]) => ({ name: n, about: d })) })),
       mac: toolsFor(c).filter((t) => t.where === 'mac').map((t) => ({ name: t.name, description: t.description })),
       groups: c.groups,
+      covered: coveredGroups(c),
       scripts: c.scripts,
       flows: c.flows,
       reachable: c.reachable && !c.error,
@@ -473,7 +486,7 @@ export class Assistant {
 
 /** A tool's answer means it didn't work. */
 export function isFailure(text) {
-  return /^[^\n]*: (failed|could_not_start|stopped)\b|^It didn't (run|work)|isn't answering|^Tool Mac Tool Run said|^The Flow code has a mistake|^There's no tool|^No script|has no scripts folder|turned off in Tool Mac Tool Run/m.test(String(text));
+  return /^[^\n]*: (failed|could_not_start|stopped)\b|^It didn't (run|work)|isn't answering|^Tool Mac Tool Run said|^The (Flow|Straw) code has a mistake|^There's no tool|^There's no [\w-]+ op called|^(Say|Give) (which|what|whose|the)\b|^call_api (only|is for)|^The method is|^body must be|wants its token|^No script|has no scripts folder|turned off in Tool Mac Tool Run/m.test(String(text));
 }
 
 /** What the chat shows of the model's words: [tags] taken out (emojis stay). */

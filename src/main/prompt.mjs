@@ -27,15 +27,23 @@ const ALIASES = {
   schedules: 'list_schedules', list_reminders: 'list_schedules', reminders: 'list_schedules', list_schedule: 'list_schedules',
   cancel: 'cancel_schedule', cancel_reminder: 'cancel_schedule', delete_schedule: 'cancel_schedule', remove_schedule: 'cancel_schedule',
   unschedule: 'cancel_schedule', cancel_timer: 'cancel_schedule',
-  memorize: 'remember', memorise: 'remember', save_memory: 'remember', note_to_self: 'remember', learn: 'remember', add_memory: 'remember',
-  unlearn: 'forget', delete_memory: 'forget', remove_memory: 'forget',
+  memorize: 'remember', memorise: 'remember', save_memory: 'remember', add_memory: 'remember', store: 'remember', save_fact: 'remember',
+  note_to_self: 'learn', learn_this: 'learn', save_note: 'learn', forget: 'unlearn', delete_memory: 'unlearn', remove_memory: 'unlearn',
+  lookup: 'recall', look_up: 'recall', what_do_i_know: 'recall', who_is: 'recall', get_memory: 'recall', search_memory: 'recall',
+  upcoming: 'memory', birthdays: 'memory',
+  link: 'mind', relate: 'mind', connect: 'mind', mind_add: 'mind', mind_query: 'mind', graph: 'mind',
+  present: 'show', display: 'show', show_window: 'show', clipboard: 'copy', copy_to_clipboard: 'copy',
+  chrome: 'browser', page: 'browser', web_page: 'browser', read_page: 'browser',
   notes: 'library', file_library: 'library', library_op: 'library',
   api: 'call_api', http: 'call_api', request: 'call_api', call_route: 'call_api',
 };
 
-/** The tools the model is told of now: the library and call_api only when Tool Mac Tool Run has them. */
+/** What an alias says about the arguments it was called with: upcoming is memory's upcoming, link is the mind's add. */
+const ALIAS_OP = { upcoming: 'upcoming', birthdays: 'upcoming', link: 'add', relate: 'add', connect: 'add', mind_add: 'add', mind_query: 'query' };
+
+/** The tools the model is told of now: those over Tool Mac Tool Run only when it lists their group, and has it on. */
 export function toolsFor(catalog) {
-  return ALL_TOOLS.filter((t) => (t.name === 'library' ? runTools.hasLibrary(catalog) : t.name === 'call_api' ? runTools.otherGroups(catalog).length > 0 : true));
+  return ALL_TOOLS.filter((t) => (t.group ? runTools.hasGroup(catalog, t.group) : t.name === 'call_api' ? runTools.otherGroups(catalog).length > 0 : true));
 }
 
 /**
@@ -45,8 +53,17 @@ export function toolsFor(catalog) {
 export function canonical(call, catalog) {
   const raw = String(call.name).trim();
   const n = raw.toLowerCase().replace(/[\s-]+/g, '_');
+  const a = call.arguments && typeof call.arguments === 'object' ? call.arguments : {};
+  // remember with a section and a note is the old remember: the assistant's own notes. Without
+  // MEMORY, a fact the user told it goes there too, rather than nowhere.
+  if (n === 'remember' && ((a.section && a.note && !a.category && !a.about) || !runTools.hasGroup(catalog, 'memory'))) {
+    return { name: 'learn', arguments: a.note ? a : { section: a.section || 'user', note: [a.about, a.text].filter(Boolean).join(': ') || a.note } };
+  }
   if (ALL_TOOLS.some((t) => t.name === n)) return { name: n, arguments: call.arguments };
-  if (ALIASES[n]) return { name: ALIASES[n], arguments: call.arguments };
+  if (ALIASES[n]) {
+    const op = ALIAS_OP[n];
+    return canonical({ name: ALIASES[n], arguments: op && !a.op ? { op, ...a } : call.arguments }, catalog);
+  }
   const script = findScript(raw, catalog);
   if (script) {
     const a = call.arguments || {};
@@ -108,10 +125,11 @@ export function catalogPrompt(catalog) {
  * The system prompt. What comes first stays the same from one message to the next (so Ollama
  * reuses what it has read); the day is last, and each message carries its exact time.
  */
-export function systemPrompt({ character, catalog, memory, now = Date.now(), typedOnly = false }) {
+export function systemPrompt({ character, catalog, memory, context = [], now = Date.now(), typedOnly = false }) {
   const name = character.name;
   const libraryScript = (catalog?.scripts || []).find((s) => /(^|\/)(library|notes?)\.[a-z]+$/i.test(s.name));
   const library = runTools.hasLibrary(catalog);
+  const has = (g) => runTools.hasGroup(catalog, g);
   const p = [];
   p.push(
     `You are ${name}, an assistant who lives on the user's Mac as a 3D character on their desktop (${character.looks}). The user talks to you out loud${typedOnly ? '' : ' (you hear them through the microphone)'} or types in your chat window, and everything you write is read aloud in your voice while your face and body act it out.`,
@@ -134,11 +152,31 @@ What needs no tool (knowing, explaining, judging, deciding, writing) you answer 
         ? "use library: the user's notes in Tool Mac Tool Run, which answers at once (no card, no click). Look before you write: find or read the note first, then append to it or write it whole"
         : `use the scripts${libraryScript ? ` (${libraryScript.name} is the user's notes library)` : ' (a notes or library script, when there is one)'}`
     }.`);
+  if (has('memory')) {
+    p.push(`Remembering the user's world (MEMORY and the mind, in Tool Mac Tool Run: they answer at once, no click):
+- Before you answer anything about a person, place, organization, plan or date, recall it first, and use what comes back; say so when nothing is remembered. What the mind already has on what's being said is given at the end of these instructions: use it, and recall for more.
+- When the user tells you something worth keeping (who someone is, how they're linked, a birthday or a date, a preference, a plan, an idea), remember it in the file it belongs to, with its links and notes (dates as "date 2026-11-03 …", birthdays as "birthday 03-14"), and say in a few words what you remembered.
+- Only ever write what the user said: never invent or guess. If it contradicts what's remembered, ask which is right before changing anything.${
+      has('mind') ? '\n- To link things without a file (who works where, what belongs to what), use mind with op add. Rename and forget in the mind only when asked: they stay in its record.' : ''
+    }
+- Your own notes (learn, below) are for how to work with the user, not for facts about their world.`);
+  }
+  if (has('screen') || has('browser')) {
+    p.push(
+      [
+        'Showing, copying, and the page in Chrome:',
+        has('screen') && '- When what you would say is long (steps, a list, a recipe, a result to check), show it in a window with show, and say it in a sentence. When they will paste something, copy it, and say that you did.',
+        has('browser') && "- To guide the user through a site, read the page in Chrome with browser: find tells you where a thing is (in view, above, below, inside a closed menu) and highlight rings it in red for them. You can't click or type there: tell them what to do, one step at a time, and read the page again after each step. Never say something is on the page unless has or find said so.",
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  }
   p.push(`Time:
 - Each message says when it was said, to the second. For anything later (a reminder, a check, a follow-up) use schedule, with in_minutes or at. Write its task as an instruction to your future self with every detail, since then you'll get only the task.
 - A message starting "Scheduled task" is one you set earlier, due now: do it now (say the reminder, run what it asks) and tell the user, as if you'd just remembered.`);
   p.push(`Learning:
-- Your memory, below, is what you've learned. Read it before you act and follow it. The moment you learn something that will matter next time (a preference of the user's, which script and arguments worked for what, a mistake and how to avoid it), save it with remember, in one short line. Correct or remove notes that turn out wrong with forget. Request ids and one-off facts don't belong there.`);
+- Your own notes, below, are what you've learned about working with the user. Read them before you act and follow them. The moment you learn something that will matter next time (how they like things done, which script and arguments worked for what, a mistake and how to avoid it), save it with learn, in one short line. Correct or remove notes that turn out wrong with unlearn. Request ids and one-off facts don't belong there.`);
   p.push(`Tool calls: to use a tool, end your answer with the call as one line of JSON on its own line: {"tool": "name", "arguments": {...}}. One call per answer. Its result comes back as the next message, marked as a tool result (it's from the Mac, not the user); then you go on: another call, or your answer to the user. Never write that JSON unless you mean to call the tool, and don't name tools to the user.
 The tools:
 ${toolsFor(catalog).map(manualLine).join('\n')}
@@ -158,7 +196,19 @@ Later, the message: Scheduled task s1, set at 15:20: Remind the user to call Sam
 You answer: It's time to call Sam!
 The user says: no, I always mean Celsius and my city is Leeds
 You answer: Got it.
-{"tool": "remember", "arguments": {"section": "user", "note": "Lives in Leeds; wants temperatures in Celsius"}}${
+{"tool": "learn", "arguments": {"section": "user", "note": "Lives in Leeds; wants temperatures in Celsius"}}${
+    has('memory')
+      ? `
+The user says: my sister Ada's birthday is on the 14th of March
+You answer: {"tool": "remember", "arguments": {"category": "PEOPLE", "about": "Ada", "text": "The user's sister", "notes": ["birthday 03-14"]}}
+The tool result: {"file": "PEOPLE", "node": "ada", "added_to_file": "- Ada: The user's sister", …}
+You answer: I'll remember Ada's birthday, the 14th of March.
+The user says: what should I get Ada?
+You answer: {"tool": "recall", "arguments": {"name": "Ada"}}
+The tool result: {"found": true, "lines": ["| PEOPLE | ada", "| ada @birthday 03-14", "| ada - likes | gardening"], …}
+You answer: Ada likes gardening, so a good pair of gloves or a plant would suit her. Her birthday's on the 14th of March.`
+      : ''
+  }${
     library
       ? `
 The user says: put eggs on my shopping list
@@ -171,6 +221,9 @@ You answer: Eggs are on your shopping list.`
     p.push(memory.prompt());
     if (memory.instructions?.trim()) p.push(`The user's standing instructions (follow them):\n${memory.instructions.trim()}`);
   }
+  // What changes from one message to the next comes last.
+  if (catalog?.upcoming?.length) p.push(`Coming up in the next week, from MEMORY (bring it up when it's relevant, or when they ask what's coming):\n${catalog.upcoming.map((l) => `- ${l}`).join('\n')}`);
+  if (context.length) p.push(`What the mind already has on what's being said (its notation: "| a - label | b" is a link, "| a @kind note" a note):\n${context.join('\n')}`);
   p.push(`Today is ${longDay(now)}.`);
   return p.join('\n\n');
 }
@@ -219,7 +272,7 @@ export const NOTE = {
     "Note from the Mac (not the user): that didn't work. Before anything else, look at why: the wrong script, the wrong arguments, something the error or the output tells you? Try once more a different way if one could work; otherwise tell the user plainly what went wrong and what would fix it. Don't repeat the same call unchanged.",
   /** After a request that took work: the moment to learn. */
   reflect:
-    "Note from the Mac (not the user), not said aloud: the request is over. Is there something you learned from it that will matter next time (about the user, which script or arguments worked, or a mistake to avoid) that isn't in your memory yet? If so, answer with the remember call (or forget, for a note that proved wrong). If not, answer only (nothing).",
+    "Note from the Mac (not the user), not said aloud: the request is over. Is there something you learned from it about working with the user that will matter next time (how they like things done, which script or arguments worked, or a mistake to avoid) that isn't in your own notes yet? If so, answer with the learn call (or unlearn, for a note that proved wrong). If not, answer only (nothing).",
 };
 
 /** The answer promises work ("let me check", "I'll remind you") without the call that does it. */

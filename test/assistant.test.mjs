@@ -8,7 +8,7 @@ import { Assistant, display, isFailure } from '../src/main/assistant.mjs';
 import { Memory } from '../src/main/memory.mjs';
 import { Scheduler } from '../src/main/scheduler.mjs';
 import { ToolRun, hasLibrary, otherGroups } from '../src/main/toolrun.mjs';
-import { systemPrompt } from '../src/main/prompt.mjs';
+import { canonical, systemPrompt } from '../src/main/prompt.mjs';
 import { Trace } from '../src/main/trace.mjs';
 import { Ollama } from '../src/main/model.mjs';
 import { CHARACTERS } from '../src/shared/characters.mjs';
@@ -45,8 +45,12 @@ async function fakeToolRun() {
           { id: 'scripts', title: 'Scripts and flows', about: '', routes: [route('POST', '/api/run', 'run a script', true)] },
           { id: 'library', title: 'File library', about: 'The notes', switch: 'library', on: true, routes: [route('POST', '/api/library', 'any operation')] },
           { id: 'straw', title: 'Straw', about: 'Chrome', routes: [route('GET', '/api/straw', "Straw's words"), route('POST', '/api/straw/run', 'run Straw code', true)] },
-          // What the brief has on the way: a group this app has never heard of.
-          { id: 'memory', title: 'Memory', about: 'The memory board', routes: [route('GET', '/api/memory/files/{name}', 'one memory file')] },
+          { id: 'memory', title: 'Memory', about: 'MEMORY', switch: 'memory', on: true, routes: [route('POST', '/api/memory/remember', 'remember'), route('GET', '/api/memory/files/{name}', 'one memory file')] },
+          { id: 'mind', title: 'The mind', about: 'links', switch: 'mind', on: true, routes: [route('POST', '/api/mind', 'any op'), route('POST', '/api/mind/context', 'context')] },
+          { id: 'screen', title: 'Show and copy', about: '', switch: 'screen', on: true, routes: [route('POST', '/api/present', 'show'), route('POST', '/api/clipboard', 'copy')] },
+          { id: 'browser', title: "Chrome's page", about: '', switch: 'browser', on: false, routes: [route('GET', '/api/browser/find', 'where a thing is')] },
+          // A group this app has never heard of: there for call_api the day it ships.
+          { id: 'calendar', title: 'Calendar', about: 'What is on', routes: [route('GET', '/api/calendar/today', "today's events")] },
           { id: 'runs', title: 'Runs and requests', about: '', switch: 'runs', on: true, routes: [route('GET', '/api/runs', 'the latest runs')] },
         ],
       });
@@ -61,6 +65,26 @@ async function fakeToolRun() {
       return json(200, { request: 'S1', state: 'succeeded', ok: true, stdout: 'Compute\n' });
     }
     if (url.pathname === '/api/memory/files/PEOPLE') return json(200, { name: 'PEOPLE', text: '- Sam: my brother' });
+    if (url.pathname === '/api/calendar/today') return json(200, { events: ['Dentist at 3'] });
+    if (url.pathname === '/api/memory') {
+      (seen.memory ||= []).push(b);
+      if (b.op === 'upcoming') return json(200, { request: 'M0', days: b.days, lines: ['2026-10-27 (in 3 days): birthday 10-27 — ada'] });
+      if (b.op === 'recall') return json(200, { request: 'M1', name: b.name, found: true, categories: ['PEOPLE'], nodes: [{ name: 'ada', scope: '', links: 1 }], about: [{ node: 'ada', links: [{ node: 'gardening', direction: 'out', labels: ['likes'] }] }], lines: ['| PEOPLE | ada', '| ada - likes | gardening'] });
+      if (b.op === 'remember') return json(200, { request: 'M2', file: b.category, node: String(b.about).toLowerCase(), added_to_file: `- ${b.about}: ${b.text || ''}` });
+      return json(400, { error: `no memory op ${b.op}`, code: 'bad_name' });
+    }
+    if (url.pathname === '/api/mind') {
+      (seen.mind ||= []).push(b);
+      return json(200, { request: 'N1', added: [`| ${b.from} - ${b.label} | ${b.to}`] });
+    }
+    if (url.pathname === '/api/mind/context') {
+      (seen.context ||= []).push(b);
+      return json(200, { request: 'C1', lines: /ada/i.test(b.text) ? ['| PEOPLE | ada', '| ada - likes | gardening'] : [] });
+    }
+    if (url.pathname === '/api/present') {
+      seen.present = b;
+      return json(200, { request: 'P1', shown: true, title: b.title });
+    }
     const stop = url.pathname.match(/^\/api\/runs\/(.+)\/stop$/);
     if (stop) {
       seen.stopped.push(stop[1]);
@@ -168,11 +192,17 @@ test('the routes are fetched too: the library is a tool of its own, the rest (wh
     const t = new ToolRun({ url: () => fake.url });
     const c = await t.refresh();
     assert.ok(hasLibrary(c));
-    assert.deepEqual(otherGroups(c).map((g) => g.id), ['straw', 'memory']);
+    assert.deepEqual(otherGroups(c).map((g) => g.id), ['straw', 'browser', 'calendar'], "a group a tool covers isn't call_api's; one that's off is listed as off");
     const p = systemPrompt({ character: CHARACTERS[0], catalog: c, memory: new Memory() });
     assert.match(p, /^- library: /m);
     assert.match(p, /^- call_api: /m);
-    assert.match(p, /^- GET \/api\/memory\/files\/\{name\}: one memory file$/m);
+    for (const tool of ['remember', 'recall', 'memory', 'mind', 'show', 'copy']) assert.match(p, new RegExp(`^- ${tool}: `, 'm'), tool);
+    assert.doesNotMatch(p, /^- browser: /m, "Chrome's page is off in Tool Mac Tool Run");
+    assert.match(p, /^Chrome's page: turned off in Tool Mac Tool Run right now$/m);
+    assert.match(p, /^- GET \/api\/calendar\/today: today's events$/m);
+    assert.doesNotMatch(p, /\/api\/memory\/files/, 'the memory tools cover MEMORY');
+    assert.match(p, /recall it first/);
+    assert.match(p, /^Coming up in the next week, from MEMORY[^\n]*\n- 2026-10-27 \(in 3 days\): birthday 10-27 — ada$/m);
     assert.match(p, /^- POST \/api\/straw\/run: run Straw code \[asks on the Mac\]$/m);
     assert.doesNotMatch(p, /^- POST \/api\/run:/m, 'run_script covers it');
     assert.match(p, /use library: the user's notes/);
@@ -194,12 +224,62 @@ test('library: one op, answered at once; call_api: a listed route, never another
     assert.deepEqual(fake.seen.library, { client: 'Super Face', op: 'append', name: 'Shopping', text: '- eggs' });
     assert.match(await t.run('library', { op: 'read', name: 'Ghost' }), /no note called Ghost.*Fix: There is Groceries/);
     assert.match(await t.run('library', { op: 'shred' }), /no library op called shred/);
-    assert.match(await t.run('call_api', { method: 'GET', path: '/api/memory/files/PEOPLE' }), /^GET \/api\/memory\/files\/PEOPLE: 200\n.*Sam: my brother/);
+    assert.match(await t.run('call_api', { method: 'GET', path: '/api/calendar/today' }), /^GET \/api\/calendar\/today: 200\n.*Dentist at 3/);
     assert.match(await t.run('call_api', { method: 'POST', path: '/api/straw/run', body: { source: 'open cloudflare.com' }, why: 'Find Compute' }), /: 200\n.*Compute/);
     assert.equal(fake.seen.straw.why, 'Find Compute', 'a route that asks on the Mac carries the why');
     assert.match(await t.run('call_api', { path: 'https://example.com/api/x' }), /only reaches Tool Mac Tool Run/);
     assert.match(await t.run('call_api', { path: '/etc/passwd' }), /routes under \/api\//);
     assert.match(await t.run('call_api', { path: '/api/nowhere' }), /isn't one listed/);
+  } finally {
+    fake.close();
+  }
+});
+
+test("MEMORY, the mind, and showing: each a tool, its arguments as Tool Mac Tool Run takes them", async () => {
+  const fake = await fakeToolRun();
+  try {
+    const t = new ToolRun({ url: () => fake.url });
+    await t.refresh();
+    const out = JSON.parse(await t.run('remember', { category: 'people', about: 'Ada', text: "The user's sister", notes: 'birthday 03-14', links: ['Acme'] }));
+    assert.deepEqual(out, { file: 'PEOPLE', node: 'ada', added_to_file: "- Ada: The user's sister" }, 'the request id is left out');
+    assert.deepEqual(fake.seen.memory.at(-1), { client: 'Super Face', op: 'remember', category: 'PEOPLE', about: 'Ada', text: "The user's sister", links: [{ to: 'Acme' }], notes: ['birthday 03-14'] });
+    assert.deepEqual(JSON.parse(await t.run('recall', { name: 'Ada' })), { name: 'Ada', found: true, categories: ['PEOPLE'], lines: ['| PEOPLE | ada', '| ada - likes | gardening'] }, 'its lines, not the same again as objects');
+    assert.match(await t.run('recall', {}), /^Say whose/);
+    assert.match(await t.run('memory', { op: 'upcoming', days: 7 }), /birthday 10-27/);
+    assert.match(await t.run('memory', { op: 'compact' }), /no memory op called compact/);
+    await t.run('mind', { from: 'ada', label: 'works at', to: 'acme' });
+    assert.equal(fake.seen.mind.at(-1).op, 'add', 'a link with a label is an add');
+    assert.match(await t.run('mind', { op: 'compact' }), /no mind op called compact/, "compacting the log is the person's");
+    await t.run('show', { title: 'Steps', text: '1. Open it' });
+    assert.deepEqual(fake.seen.present, { client: 'Super Face', title: 'Steps', text: '1. Open it', why: 'You asked for it' });
+    assert.match(await t.run('show', {}), /^Give the text to show/);
+    assert.deepEqual(await t.context('What should I get Ada?'), ['| PEOPLE | ada', '| ada - likes | gardening']);
+    assert.deepEqual(await new ToolRun({ url: () => fake.url }).context('Ada'), [], 'no mind listed (not fetched yet): nothing asked');
+    // What a small model may call them, and the old remember (the assistant's own notes).
+    const c = t.catalog;
+    assert.deepEqual(canonical({ name: 'link', arguments: { from: 'a', label: 'b', to: 'c' } }, c), { name: 'mind', arguments: { op: 'add', from: 'a', label: 'b', to: 'c' } });
+    assert.deepEqual(canonical({ name: 'upcoming', arguments: {} }, c), { name: 'memory', arguments: { op: 'upcoming' } });
+    assert.equal(canonical({ name: 'remember', arguments: { section: 'user', note: 'Celsius' } }, c).name, 'learn');
+    assert.equal(canonical({ name: 'remember', arguments: { category: 'PEOPLE', about: 'Ada' } }, c).name, 'remember');
+    assert.deepEqual(canonical({ name: 'remember', arguments: { about: 'Ada', text: 'my sister' } }, { groups: [] }), { name: 'learn', arguments: { section: 'user', note: 'Ada: my sister' } }, 'without MEMORY, a fact goes in its own notes');
+  } finally {
+    fake.close();
+  }
+});
+
+test('what the mind has on what is being said is given to the model with its instructions, once a request', async () => {
+  const fake = await fakeToolRun();
+  try {
+    const { a, model, idle, toolrun } = await setup(['{"tool": "recall", "arguments": {"name": "Ada"}}', 'Ada likes gardening.'], fake);
+    await toolrun.refresh();
+    a.say('what should I get Ada?');
+    await idle();
+    const system = model.asked[0][0].content;
+    assert.match(system, /^What the mind already has on what's being said[^\n]*\n\| PEOPLE \| ada\n\| ada - likes \| gardening$/m);
+    assert.equal(fake.seen.context.length, 1, 'asked once, not every round');
+    assert.match(fake.seen.context[0].text, /what should I get Ada\?/);
+    assert.equal(a.log.find((e) => e.kind === 'tool').state, 'done');
+    assert.equal(a.log.at(-1).text, 'Ada likes gardening.');
   } finally {
     fake.close();
   }
@@ -212,7 +292,7 @@ test('every call is noted for the Calls tab: the tool, each request (address, bo
     const t = new ToolRun({ url: () => fake.url, trace });
     await t.refresh();
     assert.equal(trace.list()[0].kind, 'catalog');
-    assert.deepEqual(trace.list()[0].http.map((h) => h.url.replace(fake.url, '')), ['/api/scripts', '/api/flows', '/api/endpoints']);
+    assert.deepEqual(trace.list()[0].http.map((h) => h.url.replace(fake.url, '')), ['/api/scripts', '/api/flows', '/api/endpoints', '/api/memory']);
     const log = trace.open({ kind: 'tool', name: 'run_script' });
     await t.run('run_script', { script: 'hello.sh', args: ['Sam'] }, { log });
     const h = log.http[0];

@@ -1,17 +1,25 @@
 // Tool Mac Tool Run (http://127.0.0.1:8768): the user's scripts and flows, which reach everything
 // on the Mac (the browser and the web, files, apps, notes). Every run puts a card on the Mac and
 // waits for the user's click on Run. Runs are streamed, so one can be cancelled at any point:
-// while the card waits (hanging up takes the card away) or while it runs (it's stopped). The
-// file library answers at once, without a card; any other route it lists (GET /api/endpoints) is
-// reached with call_api, so what it adds later (Memory, Mind, System Docs…) is there the day it ships.
+// while the card waits (hanging up takes the card away) or while it runs (it's stopped). What
+// answers at once, without a card, has a tool each: the file library, MEMORY (remember, recall),
+// the mind (what links to what), showing and copying, and Chrome's page (read only). Each is
+// offered when Tool Mac Tool Run lists its group (GET /api/endpoints) and has it on; any other
+// route it lists is reached with call_api, so what it adds later is there the day it ships.
 
 export const DEFAULT_URL = 'http://127.0.0.1:8768';
 export const CLIENT = 'Super Face';
 const MAX_OUTPUT = 12_000;
 const MAX_EVENTS = 400; // stream events noted for one request (the Calls tab)
-/** Route groups the tools above already cover: call_api is told only of the others. */
-const COVERED = ['about', 'scripts', 'runs'];
+/** Route groups the run tools cover (always): call_api is told only of the others, and of no group a tool below covers. */
+const ALWAYS_COVERED = ['about', 'scripts', 'runs'];
 const LIBRARY_OPS = ['list', 'names', 'read', 'read_many', 'exists', 'write', 'create', 'append', 'rename', 'copy', 'delete', 'search', 'find', 'recent', 'outline', 'backlinks', 'stats', 'trash', 'restore', 'empty_trash'];
+/** MEMORY's own operations, beside the library's (remember and recall have tools of their own). */
+const MEMORY_OPS = ['upcoming', 'categories', 'members', ...LIBRARY_OPS.filter((o) => o !== 'empty_trash')];
+/** The mind's: asking, and adding (compacting the log, and deleting a scope, are the person's). */
+const MIND_OPS = ['about', 'find', 'path', 'neighbors', 'query', 'edges', 'notes', 'dates', 'nodes', 'stats', 'add', 'note', 'rename', 'forget', 'check', 'append', 'comment'];
+const BROWSER_OPS = ['url', 'tabs', 'page', 'has', 'find', 'highlight', 'outline'];
+export const MEMORY_FILES = ['PEOPLE', 'ORGANIZATIONS', 'EVENT-DATES', 'BIRTHDAYS', 'LOCATIONS', 'IDEAS', 'LEVERAGE', 'STRATEGIES', 'OTHERS'];
 
 /** The tools over Tool Mac Tool Run, as the model is told them. */
 export const TOOLS = [
@@ -52,6 +60,7 @@ export const TOOLS = [
   { name: 'stop_run', description: 'Stops a run that is still going (one the user started asks them first).', args: [['id', "string: the run's id"]] },
   {
     name: 'library',
+    group: 'library',
     description:
       "The user's notes library in Tool Mac Tool Run (LIBRARY): Markdown notes known by name, like keys and values. Answers at once: no card, no click. Deleting moves a note to the library's own Trash (restore brings it back).",
     args: [
@@ -62,6 +71,96 @@ export const TOOLS = [
       ['to', 'string: the new name, for rename and copy'],
       ['names', 'list of strings: for read_many'],
       ['limit', 'integer, optional: for list, search, find, recent'],
+    ],
+  },
+  {
+    name: 'remember',
+    group: 'memory',
+    description:
+      "Remembers something the user told you about their world, in MEMORY (a file for each kind of thing) and the mind, which links it to what it's about. Answers at once. Only what they said: never invent.",
+    args: [
+      ['category', `string: the file it goes in: ${MEMORY_FILES.join(', ')}`],
+      ['about', 'string: who or what it is about ("Ada Lovelace", "the dentist")'],
+      ['text', 'string, optional: what they said about it, briefly'],
+      ['links', 'list, optional: what it links to, each {"label": "works at", "to": "Acme", "category": "ORGANIZATIONS"}'],
+      ['notes', 'list of strings, optional: dated and other notes, such as "birthday 03-14", "date 2026-11-03 dentist", "pref mornings"'],
+    ],
+  },
+  {
+    name: 'recall',
+    group: 'memory',
+    description:
+      "What's remembered about a name, from MEMORY and the mind: its links, its notes (birthdays, dates), the files it's in, the lines that mention it. Answers at once. Recall before you answer anything about a person, place, organization, plan or date.",
+    args: [['name', 'string: the name, as the user says it (looked up loosely: case, "the", plurals, near spellings)']],
+  },
+  {
+    name: 'memory',
+    group: 'memory',
+    description:
+      "The rest of MEMORY: what's coming up (birthdays, events), who is under a category, and its files (read, search, append, write…), as for the library. Answers at once.",
+    args: [
+      ['op', `string: ${MEMORY_OPS.join(', ')}`],
+      ['days', 'integer, optional: for upcoming (30)'],
+      ['name', 'string: a file (PEOPLE…), for members, read, append, write…'],
+      ['q', 'string: words to look for, for search and find'],
+      ['text', 'string: for append and write'],
+    ],
+  },
+  {
+    name: 'mind',
+    group: 'mind',
+    description:
+      "The mind: what links to what (people, places, things, with labels like \"works at\" and notes), only ever added to. Ask it, or add to it. Answers at once. Rename and forget only when the user asks.",
+    args: [
+      ['op', `string: ${MIND_OPS.join(', ')}`],
+      ['name', 'string: a node, for about, neighbors, note, rename, forget'],
+      ['q', 'string: words for find; or query lines in its notation for query ("| sam | x": everything from sam; "| x - works at | acme": who works at Acme)'],
+      ['from', 'string: for path; or, for add, the node a link goes from'],
+      ['label', 'string: for add, the link, as a short verb read left to right ("works at"); for edges, the label to list'],
+      ['to', 'string: for path, add (the node it goes to) and rename (the new name)'],
+      ['facts', 'list, optional: for add, several at once, each {"from", "label", "to"} or {"from", "notes": ["pref mornings"]}'],
+      ['note', 'string: for note ("todo call back Friday", "date 2026-11-03")'],
+      ['kind', 'string: for notes (date, todo, pref, birthday…)'],
+      ['days', 'integer, optional: for dates (30)'],
+      ['depth', 'integer, optional: for neighbors (1)'],
+    ],
+  },
+  {
+    name: 'show',
+    group: 'screen',
+    description:
+      'Shows the user something on their Mac, in a window in front of everything, with copy buttons: a text you write (steps, a list, a result), a file, or all that the mind knows about something. Use it when what you would say is long, or is something to copy or check; then say it in a sentence.',
+    args: [
+      ['title', 'string: its title'],
+      ['text', 'string: what to show (Markdown), when it is yours'],
+      ['format', 'string, optional: markdown (the default), text or json'],
+      ['shelf', 'string, optional: library, memory or system-docs, with name: a file to show'],
+      ['name', "string, optional: the file's name, with shelf"],
+      ['mind', 'string, optional: a node of the mind to show, all that is known about it'],
+      ['why', 'string: a line on why it is shown'],
+      ['copy', 'true, optional: put it on the clipboard too'],
+    ],
+  },
+  {
+    name: 'copy',
+    group: 'screen',
+    description: "Puts text on the user's clipboard, for them to paste somewhere (a command, an address, a reply). Say that you did.",
+    args: [
+      ['text', 'string: what to copy'],
+      ['shelf', 'string, optional: library, memory or system-docs, with name: a whole file'],
+      ['name', "string, optional: the file's name, with shelf"],
+    ],
+  },
+  {
+    name: 'browser',
+    group: 'browser',
+    description:
+      "Reads the page in front of Google Chrome, to guide the user through a site: what's open, what it says, whether words are on it, where a thing is (in view, above, below, or inside a closed menu), and a red ring around it to show them. It only reads: it never clicks or types, so tell them what to click. Read again after each step.",
+    args: [
+      ['op', `string: ${BROWSER_OPS.join(', ')}`],
+      ['text', 'string: for has, find and highlight: the words to look for ("Compute")'],
+      ['max', 'integer, optional: for page, how many characters of its text (6000)'],
+      ['all', 'true, optional: for tabs, every window'],
     ],
   },
   {
@@ -180,12 +279,23 @@ export class ToolRun {
       } catch {
         /* an older Tool Mac Tool Run: no route list */
       }
+      // What's coming up in the next week (birthdays, events), for the model to know of.
+      let upcoming = [];
+      if (groups?.some((g) => g.id === 'memory' && g.on)) {
+        try {
+          const [us, uj] = await this.call('POST', '/api/memory', { op: 'upcoming', days: 7 }, { timeout: 5000, log });
+          if (us >= 200 && us < 300 && Array.isArray(uj.lines)) upcoming = uj.lines.map(String).slice(0, 20);
+        } catch {
+          /* not this time */
+        }
+      }
       this.catalog = {
         reachable: true,
         folder: scripts.folder || null,
         scripts: (scripts.scripts || []).filter((s) => s?.name).map(scriptJSON),
         flows: (flows.flows || []).filter((f) => f?.name).map((f) => ({ name: f.name, summary: f.summary || '', inputs: inputsOf(f.inputs) })),
         groups,
+        upcoming,
         fetched: Date.now(),
         error: null,
       };
@@ -268,6 +378,31 @@ export class ToolRun {
         }
         case 'library':
           return await this.library(args, { signal, log });
+        case 'remember':
+          return await this.answer('POST', '/api/memory', rememberBody(args), { signal, log });
+        case 'recall': {
+          const n = str(args.name ?? args.about ?? args.q ?? args.query);
+          if (!n) return 'Say whose or what name to recall.';
+          return await this.answer('POST', '/api/memory', { op: 'recall', name: n }, { signal, log });
+        }
+        case 'memory':
+          return await this.opOn('/api/memory', 'memory', MEMORY_OPS, args, { signal, log });
+        case 'mind':
+          return await this.opOn('/api/mind', 'mind', MIND_OPS, mindArgs(args), { signal, log });
+        case 'show': {
+          const body = pick(args, ['title', 'text', 'format', 'shelf', 'name', 'mind', 'why', 'copy']);
+          if (typeof body.text !== 'string' && !body.mind && body.mind !== '' && !(body.shelf && body.name)) return 'Give the text to show (or a shelf and name, or a node of the mind).';
+          if (body.text !== undefined && typeof body.text !== 'string') body.text = JSON.stringify(body.text, null, 2);
+          body.why ||= 'You asked for it';
+          return await this.answer('POST', '/api/present', body, { signal, log });
+        }
+        case 'copy': {
+          const body = pick(args, ['text', 'shelf', 'name', 'mind']);
+          if (!str(body.text) && !(body.shelf && body.name) && !body.mind) return 'Give the text to copy.';
+          return await this.answer('POST', '/api/clipboard', body, { signal, log });
+        }
+        case 'browser':
+          return await this.browser(args, { signal, log });
         case 'call_api':
           return await this.callApi(args, { signal, log, onStatus });
       }
@@ -290,6 +425,58 @@ export class ToolRun {
       return clip(JSON.stringify(answer));
     }
     return trouble(status, json);
+  }
+
+  /** A call that answers at once: its JSON, for the model (or what went wrong, with its fix). */
+  async answer(method, path, body, { signal, log, timeout }) {
+    const [status, json] = await this.call(method, path, body, { signal, log, timeout });
+    if (status >= 200 && status < 300) {
+      const { request: _, client: __, ok: ___, ...rest } = json;
+      return clip(JSON.stringify(brief(rest)));
+    }
+    return trouble(status, json);
+  }
+
+  /** One operation by name on an endpoint that takes {"op"} (MEMORY, the mind). */
+  async opOn(path, what, ops, args, { signal, log }) {
+    const { op: rawOp, ...rest } = args || {};
+    const op = str(rawOp)?.toLowerCase().replace(/[\s-]+/g, '_').replace(/^neighbours$/, 'neighbors');
+    if (!op) return `Say which op: ${ops.join(', ')}.`;
+    if (!ops.includes(op)) return `There's no ${what} op called ${op}. The ops: ${ops.join(', ')}.`;
+    return this.answer('POST', path, { op, ...rest }, { signal, log });
+  }
+
+  /** Chrome's page: reading it, never acting on it. */
+  async browser(args, { signal, log }) {
+    const op = str(args.op ?? args.what)?.toLowerCase() || (args.text ? 'find' : 'url');
+    if (!BROWSER_OPS.includes(op)) return `There's no browser op called ${op}. The ops: ${BROWSER_OPS.join(', ')}.`;
+    const text = str(args.text ?? args.q ?? args.find);
+    if (['has', 'find', 'highlight'].includes(op) && !text) return `Say what to look for: text (for ${op}).`;
+    if (op === 'highlight') return this.answer('POST', '/api/browser/highlight', { text, ...(args.seconds ? { seconds: Number(args.seconds) } : {}) }, { signal, log });
+    const q = new URLSearchParams();
+    if (text) q.set('text', text);
+    if (op === 'page') q.set('max', String(Math.max(500, Math.min(20_000, Number(args.max) || 6000))));
+    if (op === 'tabs' && args.all) q.set('all', 'true');
+    return this.answer('GET', `/api/browser/${op}${q.size ? `?${q}` : ''}`, null, { signal, log, timeout: 20_000 });
+  }
+
+  /**
+   * What the mind has on some text (the things named in it, one step out): lines for the model's
+   * prompt, or [] when there's no mind, nothing in it, or it doesn't answer in time.
+   */
+  async context(text, { signal, limit = 60 } = {}) {
+    if (!hasGroup(this.catalog, 'mind') || !String(text ?? '').trim()) return [];
+    const log = this.trace?.open({ kind: 'context', name: 'What the mind has on this', state: 'working' });
+    const started = Date.now();
+    let lines = [];
+    try {
+      const [status, json] = await this.call('POST', '/api/mind/context', { text: String(text).slice(-4000), limit }, { signal, log, timeout: 2000 });
+      if (status >= 200 && status < 300 && Array.isArray(json.lines)) lines = json.lines.map(String).slice(0, limit);
+    } catch {
+      /* not this time */
+    }
+    this.trace?.change(log, { state: 'done', result: lines.length ? lines.join('\n') : '(nothing)', ms: Date.now() - started }, { final: true });
+    return lines;
   }
 
   /** Any route Tool Mac Tool Run lists. One that asks on the Mac waits for the click (up to its two minutes). */
@@ -467,15 +654,64 @@ export class ToolRun {
   }
 }
 
-/** Whether the file library answers there (an older Tool Mac Tool Run has none). */
-export function hasLibrary(catalog) {
-  return !!catalog?.groups?.some((g) => g.id === 'library' && g.on);
+/** Whether a route group answers there, and is on (an older Tool Mac Tool Run lists fewer, or none). */
+export function hasGroup(catalog, id) {
+  return !!catalog?.groups?.some((g) => g.id === id && g.on);
+}
+
+export const hasLibrary = (catalog) => hasGroup(catalog, 'library');
+
+/** The route groups a tool covers now (call_api isn't told of them). */
+export function coveredGroups(catalog) {
+  return [...ALWAYS_COVERED, ...new Set(TOOLS.filter((t) => t.group && hasGroup(catalog, t.group)).map((t) => t.group))];
 }
 
 /** The route groups call_api is for: those no other tool covers. */
 export function otherGroups(catalog) {
-  return (catalog?.groups || []).filter((g) => !COVERED.includes(g.id) && !(g.id === 'library' && hasLibrary(catalog)));
+  const covered = coveredGroups(catalog);
+  return (catalog?.groups || []).filter((g) => !covered.includes(g.id));
 }
+
+/**
+ * An answer that says itself in `lines` (recall, the mind's, Chrome's find) is given as those
+ * lines and its small fields: its nested objects say the same at many times the length.
+ */
+function brief(json) {
+  if (!Array.isArray(json.lines)) return json;
+  const out = {};
+  for (const [k, v] of Object.entries(json)) {
+    if (k === 'lines') out[k] = v.slice(0, 80);
+    else if (typeof v === 'number' || typeof v === 'boolean' || (typeof v === 'string' && v.length <= 300)) out[k] = v;
+    else if (Array.isArray(v) && v.length <= 20 && v.every((x) => typeof x === 'string')) out[k] = v;
+  }
+  if (json.lines.length > 80) out.more = `${json.lines.length - 80} more lines`;
+  return out;
+}
+
+/** remember's body: the category as MEMORY names its files, links and notes as lists. */
+function rememberBody(a) {
+  const category = str(a.category ?? a.file ?? a.kind)?.toUpperCase().replace(/[\s_]+/g, '-').replace(/^ORGANISATIONS$/, 'ORGANIZATIONS');
+  const links = (Array.isArray(a.links) ? a.links : a.links ? [a.links] : [])
+    .map((l) => (typeof l === 'string' ? { to: l } : l && typeof l === 'object' ? l : null))
+    .filter((l) => l && str(l.to));
+  const notes = (Array.isArray(a.notes) ? a.notes : a.notes ?? a.note ? [a.notes ?? a.note] : []).map(String).filter((x) => x.trim());
+  const body = { op: 'remember', category: category || 'OTHERS', about: str(a.about ?? a.name ?? a.who ?? a.what) };
+  const text = str(a.text ?? a.fact ?? a.details);
+  if (text) body.text = text;
+  if (links.length) body.links = links;
+  if (notes.length) body.notes = notes;
+  return body;
+}
+
+/** A mind call's arguments: a lone link given as from/label/to, or several as facts, as it takes them. */
+function mindArgs(a) {
+  const out = { ...(a || {}) };
+  if (!out.op && (out.from || out.facts)) out.op = out.to && !out.label && !out.facts ? 'path' : 'add';
+  if (out.op === 'add' && typeof out.notes === 'string') out.notes = [out.notes];
+  return out;
+}
+
+const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o?.[k] !== undefined && o[k] !== null).map((k) => [k, o[k]]));
 
 function groupJSON(g) {
   return {

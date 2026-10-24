@@ -42,6 +42,7 @@ const ROUTES = {
   '/api/assistant': 'GET',
   '/api/chat': 'GET POST',
   '/api/chat/new': 'POST',
+  '/api/chat/clear': 'POST',
   '/api/cancel': 'POST',
   '/api/heard': 'POST',
   '/api/tools': 'GET POST',
@@ -252,6 +253,9 @@ export function createApi({ speech, face, settings, version, updater = null, doc
       }
       case '/api/chat/new':
         needCore().actions.newChat();
+        return [200, { ok: true }];
+      case '/api/chat/clear':
+        needCore().actions.clearChat();
         return [200, { ok: true }];
       case '/api/cancel':
         return [200, needCore().actions.cancel()];

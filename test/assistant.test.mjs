@@ -279,6 +279,25 @@ test('cancel: a run waiting for its click is called off, and the model is not as
   }
 });
 
+test('clear while a run waits: it is called off, and nothing of it is left in the chat or the conversation', async () => {
+  const fake = await fakeToolRun();
+  try {
+    const { a, model, events, idle } = await setup(['Sending it.\n{"tool": "run_script", "arguments": {"script": "slow.sh"}}'], fake);
+    a.say('do the slow thing');
+    for (let i = 0; i < 200 && a.log.find((e) => e.kind === 'tool')?.state !== 'waiting'; i++) await wait(5);
+    a.clear();
+    const after = events.length;
+    await idle();
+    assert.equal(model.asked.length, 1);
+    assert.deepEqual(a.log, []);
+    assert.deepEqual(a.history, []);
+    assert.ok(events.some((e) => e.type === 'cleared'));
+    assert.ok(!events.slice(after).some((e) => e.type === 'entry'), 'nothing cleared comes back to the chat');
+  } finally {
+    fake.close();
+  }
+});
+
 test('more said while it is still thinking is asked together, as one request', async () => {
   let release;
   const { a, model, said, idle } = await setup([

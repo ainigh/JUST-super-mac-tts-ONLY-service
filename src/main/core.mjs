@@ -17,7 +17,9 @@ import { words } from '../shared/text.mjs';
 const HUSH = /^(stop|stop talking|stop it|quiet|be quiet|hush|shush|shut up|silence|enough|that's enough|ok(ay)? stop|thanks,? stop)$/;
 /** Said alone, these call off whatever it's doing: the answer, a run, what's waiting. */
 const CANCEL = /^(cancel|cancel (it|that|this|everything|the run)|never ?mind|stop everything|stop (it|that) all|abort|forget it|forget about it|scratch that)$/;
-const NEW_CHAT = /^(new chat|start over|start a new chat|fresh start|clear the chat|new conversation)$/;
+const NEW_CHAT = /^(new chat|start over|start a new chat|fresh start|new conversation)$/;
+/** Said alone, these wipe the chat: the conversation, and what the window shows of it. */
+const CLEAR_CHAT = /^(clear (the )?(chat|conversation|screen)|clear it all)$/;
 /** What speech recognition makes of a cough or a breath. */
 const NOISE = new Set(['uh', 'um', 'umm', 'hmm', 'mm', 'mhm', 'ah', 'oh', 'eh', 'huh', 'you', 'the', 'a', 'thank you', 'bye']);
 /** A phrase ending like this isn't over: the rest is waited for a moment. */
@@ -123,6 +125,11 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       assistant.newChat();
       speakAs('Okay, a fresh start.');
       return { command: 'new_chat' };
+    }
+    if (CLEAR_CHAT.test(plain)) {
+      assistant.clear();
+      speakAs('Okay, cleared.');
+      return { command: 'clear_chat' };
     }
     if (held) {
       clearTimeout(held.timer);
@@ -266,6 +273,10 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     },
     newChat: () => {
       assistant.newChat();
+      return { ok: true };
+    },
+    clearChat: () => {
+      assistant.clear();
       return { ok: true };
     },
     tools: () => assistant.tools(),

@@ -122,7 +122,7 @@ test('what it hears of its own voice is dropped; what the user says over it cuts
   assert.match(asked.at(-1).messages.at(-1).content, /said\] what time is it in Tokyo$/);
 });
 
-test('"stop", "cancel" and "new chat" are done at once, without the model', async () => {
+test('"stop", "cancel", "new chat" and "clear the chat" are done at once, without the model', async () => {
   const before = asked.length;
   assert.deepEqual(core.heard({ text: 'Stop.' }), { command: 'hush' });
   assert.deepEqual(core.heard({ text: 'never mind' }), { command: 'cancel' });
@@ -130,7 +130,21 @@ test('"stop", "cancel" and "new chat" are done at once, without the model', asyn
   assert.equal(asked.length, before);
   assert.equal(core.assistant.history.length, 0);
   assert.equal(spoken.at(-1).text, 'Okay, a fresh start.');
+  assert.deepEqual(core.heard({ text: 'Clear the chat.' }), { command: 'clear_chat' });
+  assert.deepEqual(core.actions.log(), []);
+  assert.equal(spoken.at(-1).text, 'Okay, cleared.');
   assert.deepEqual(core.heard({ text: 'um' }), { dropped: 'noise' });
+});
+
+test('the chat cleared over the API: the conversation and its entries go', async () => {
+  replies = ['Hi.'];
+  await post('/api/chat', { text: 'hello', wait: true });
+  const [status, r] = await post('/api/chat/clear', {});
+  assert.equal(status, 200);
+  assert.deepEqual(r, { ok: true });
+  const [, log] = await get('/api/chat');
+  assert.deepEqual(log.entries, []);
+  assert.equal(core.assistant.history.length, 0);
 });
 
 test('a phrase that sounds unfinished waits for the rest', async () => {

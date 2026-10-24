@@ -73,7 +73,8 @@ curl -s localhost:8769/api/echo -d '{"text": "nice to meet you"}'
 | `GET  /api/update`, `POST /api/update` | whether there's a newer version; `{"install": true}` installs it |
 | `GET  /api/assistant` | the assistant: the character, what it's doing, the ears, the model, the tools |
 | `POST /api/chat`, `GET /api/chat` | a message to the assistant (`"wait": true` answers with its reply); the conversation |
-| `POST /api/chat/new` | a fresh conversation |
+| `POST /api/chat/new` | a fresh conversation (the chat keeps what was said, behind a line) |
+| `POST /api/chat/clear` | clears the chat: the conversation and every entry of it (memory stays) |
 | `POST /api/cancel` | cancels what the assistant is doing: its answer, a run waiting for its click or running |
 | `POST /api/heard` | a phrase heard by other ears, handled as if the character's own had heard it |
 | `GET  /api/tools`, `POST /api/tools` | every tool it has (built in, and Tool Mac Tool Run's scripts and flows); POST asks again |
@@ -333,7 +334,7 @@ it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) a
 - **Heard**: what the ears write down is first compared with what the character just said
   (`/api/echo`'s comparison), so its own voice coming back is dropped; said over it, it cuts in.
   "Stop" stops it talking, "cancel" (or "never mind") calls off whatever it's doing, "new chat"
-  starts over, all without the model. A phrase that sounds unfinished ("…and") waits a moment for
+  starts over, "clear the chat" wipes it, all without the model. A phrase that sounds unfinished ("…and") waits a moment for
   the rest.
 
 ### `POST /api/chat`

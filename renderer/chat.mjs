@@ -517,6 +517,11 @@ $('newChat').onclick = () => {
   act('newChat');
   tab('chat');
 };
+$('clearChat').onclick = () => {
+  if (!confirm('Clear the chat? What was said goes for good; what I have learned stays.')) return;
+  act('clearChat');
+  tab('chat');
+};
 addEventListener('keydown', (e) => {
   if (e.key === 'Escape') bridge.close();
 });
@@ -525,6 +530,10 @@ bridge.onEvent((ev) => {
   switch (ev.type) {
     case 'entry':
       render(ev.entry);
+      break;
+    case 'cleared':
+      for (const li of shown.values()) li.remove();
+      shown.clear();
       break;
     case 'assistant':
       if (status) {

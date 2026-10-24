@@ -32,6 +32,13 @@ Run script), and no wake word.
   the few that fit it, and it finds the rest itself (`find`): its instructions are half the size. **Cancel** any of it: the
   Stop button, a Cancel on a tool's card, or say "cancel": a run waiting for your click is taken off
   the Mac, a running one is stopped.
+- **Its character**: it sees things through, listens to your exact words, offers the next step it can see
+  coming, and checks its work before it calls it done, while allowing that it may have missed something.
+  While it works something out it says so in a few words, read from what you asked (FillerLab's techniques:
+  "Let me check your calendar for tomorrow.", "A few things there. I'll take them one at a time.", "Fair
+  enough. Let me look at that again."), and after a long quiet, that it's still on it; never a result it
+  hasn't got, never the same line twice running, and nothing for "thanks" or "ok" (`src/shared/fillers.mjs`;
+  **Mind** turns them off).
 - **Later**: "remind me in 20 minutes…", "at 5 check the build…", "on Friday at 8…". It
   schedules a task for itself (as many as you like, each cancellable); when it's due the character
   appears and does it.

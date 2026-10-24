@@ -86,6 +86,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     file: file('chat.json'),
     trace: traces.calls,
     now,
+    fillers: () => settings.get().fillers !== false,
   });
 
   // ---------------------------------------------------------------- hearing
@@ -241,6 +242,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       ears,
       listening: s.listening,
       listenWhileSpeaking: s.listenWhileSpeaking,
+      fillers: s.fillers,
       model: s.model,
       think: s.think,
       speaking: speech.speaking,
@@ -346,6 +348,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       if ('think' in patch) allowed.think = !!patch.think;
       if ('listening' in patch) allowed.listening = !!patch.listening;
       if ('listenWhileSpeaking' in patch) allowed.listenWhileSpeaking = !!patch.listenWhileSpeaking;
+      if ('fillers' in patch) allowed.fillers = !!patch.fillers;
       settings.set(allowed);
       return status();
     },

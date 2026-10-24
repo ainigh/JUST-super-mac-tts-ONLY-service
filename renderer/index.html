@@ -3,83 +3,25 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Avatar Desk</title>
+    <title>Super Face</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./style.css" />
-    <!-- Everything loads from the app itself: no CDN, works offline. -->
+    <!-- Everything loads from the app itself (no CDN). -->
     <script type="importmap">
       {
         "imports": {
           "three": "/node_modules/three/build/three.module.js",
           "three/addons/": "/node_modules/three/examples/jsm/",
           "talkinghead": "/node_modules/@met4citizen/talkinghead/modules/talkinghead.mjs",
-          "headaudio": "/node_modules/@met4citizen/headaudio/dist/headaudio.min.mjs",
-          "motion-engine": "/node_modules/motion-engine/src/index.js"
+          "headtts": "/node_modules/@met4citizen/headtts/modules/headtts.mjs"
         }
       }
     </script>
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="./app.mjs"></script>
   </head>
   <body data-state="loading">
-    <main id="stage" aria-label="Avatar. Drag to move, right-click for options.">
-      <div id="avatar"></div>
-    </main>
-
+    <main id="stage" aria-label="The avatar. Drag to move, right-click for options."></main>
     <p id="caption" hidden aria-live="polite"></p>
-
-    <section id="dock" aria-label="Talk to the avatar">
-      <form id="ask" autocomplete="off">
-        <button id="mic" type="button" title="Hold to talk (or hold Space, or press ⌘⇧Space anywhere)">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="9" y="3" width="6" height="11" rx="3" />
-            <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" />
-          </svg>
-          <span class="sr-only">Hold to talk</span>
-        </button>
-        <input id="message" type="text" placeholder="Type a message…" aria-label="Message" />
-      </form>
-      <p id="status" role="status">Loading…</p>
-    </section>
-
-    <div id="settings" hidden>
-      <form id="settings-form">
-        <h1>Settings</h1>
-
-        <fieldset>
-          <legend>Avatar</legend>
-          <label>Name <input name="name" type="text" /></label>
-          <label>Look <select name="avatar"></select></label>
-          <label>Personality
-            <textarea name="persona" rows="6"></textarea>
-            <small>{name} is replaced by the name above.</small>
-          </label>
-        </fieldset>
-
-        <fieldset>
-          <legend>Ollama</legend>
-          <label>Conversation model <select name="chatModel"></select></label>
-          <label>Expressions and gestures model
-            <select name="motionModel"></select>
-            <small>A small, fast model (3–8B) keeps reactions quick.</small>
-          </label>
-          <label class="check"><input name="thinking" type="checkbox" /> Let thinking models think first (slower replies)</label>
-          <label>Address <input name="ollamaUrl" type="url" /></label>
-        </fieldset>
-
-        <fieldset>
-          <legend>Super Voice</legend>
-          <label>Voice <select name="voice"></select></label>
-          <label>Speed <span id="speed-value"></span>
-            <input name="speed" type="range" min="0.5" max="2" step="0.05" />
-          </label>
-          <label>Address <input name="voiceUrl" type="url" /></label>
-        </fieldset>
-
-        <div class="actions">
-          <button id="settings-cancel" type="button">Cancel</button>
-          <button type="submit" class="primary">Save</button>
-        </div>
-      </form>
-    </div>
+    <p id="status" role="status">Loading…</p>
   </body>
 </html>

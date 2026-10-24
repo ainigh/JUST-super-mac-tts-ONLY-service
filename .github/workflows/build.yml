@@ -1,0 +1,65 @@
+name: Build
+
+# Every push: test, and build the app. A push to main also publishes it as a GitHub release
+# (SuperFace.zip), which is what the menu's update and install.sh download.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - run: npm test
+
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          CI: "1"
+      - run: npm test
+      - name: Build the app
+        run: |
+          VERSION="0.1.${{ github.run_number }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          npm run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SuperFace
+          path: dist/SuperFace.zip
+      - name: Release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A re-run keeps its run number, so the release may already be there: replace its zip.
+        run: |
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" dist/SuperFace.zip --clobber
+          else
+            gh release create "v$VERSION" dist/SuperFace.zip --target "$GITHUB_SHA" \
+              --title "Super Face $VERSION" --notes "$(git log -1 --format=%B)"
+          fi

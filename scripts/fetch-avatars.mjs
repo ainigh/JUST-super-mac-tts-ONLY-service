@@ -1,25 +1,23 @@
-// Downloads the sample avatars into renderer/avatars (once). Pinned to exact
-// revisions so the files don't change under you.
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+// Downloads the avatars into renderer/avatars (once). Pinned to exact revisions so the files
+// don't change under you. A failed download doesn't stop the install: run this again later.
+import { mkdir, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), '..', 'renderer', 'avatars');
 
-const AVATARS = {
-  // motion-engine's demo avatar: its gestures and expression levels are tuned to it.
-  // Ready Player Me, CC BY-NC-SA 4.0 (non-commercial).
-  'female_1.glb': 'https://raw.githubusercontent.com/lhupyn/motion-engine/v2.1.0/demo/public/female_1.glb',
-  // The avatars from HeadAudio's openai.html demo.
-  'julia.glb':
-    'https://raw.githubusercontent.com/met4citizen/HeadAudio/c6d8af35034068b1c98dcc0fa3ec9602d711e784/avatars/julia.glb',
+export const AVATAR_FILES = {
+  // TalkingHead's own full-body avatar (its demo's default).
+  'brunette.glb': 'https://raw.githubusercontent.com/met4citizen/TalkingHead/refs/tags/v1.8.0/avatars/brunette.glb',
+  // A man, from HeadAudio's demo.
   'david.glb':
     'https://raw.githubusercontent.com/met4citizen/HeadAudio/c6d8af35034068b1c98dcc0fa3ec9602d711e784/avatars/david.glb',
 };
 
 await mkdir(dir, { recursive: true });
 
-for (const [name, url] of Object.entries(AVATARS)) {
+let failed = 0;
+for (const [name, url] of Object.entries(AVATAR_FILES)) {
   const file = join(dir, name);
   try {
     if ((await stat(file)).size > 0) continue;
@@ -30,9 +28,12 @@ for (const [name, url] of Object.entries(AVATARS)) {
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    await writeFile(file, Buffer.from(await res.arrayBuffer()));
+    await writeFile(`${file}.part`, Buffer.from(await res.arrayBuffer()));
+    await rename(`${file}.part`, file);
     console.log('done');
   } catch (err) {
+    failed++;
     console.log(`failed (${err.message}). Run "node scripts/fetch-avatars.mjs" again later.`);
   }
 }
+if (failed && process.env.CI) process.exit(1);

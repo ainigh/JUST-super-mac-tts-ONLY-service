@@ -1,342 +1,74 @@
-/* Avatar Desk — the avatar floats on the desktop; everything else stays out of
-   its way: a smoked-glass pill that shows up when you hover, talk or wait. */
-
+/* No background anywhere: only the avatar (and its caption) is drawn. */
 :root {
-  --glass: rgba(28, 28, 32, 0.62);
-  --glass-strong: rgba(28, 28, 32, 0.86);
-  --edge: rgba(255, 255, 255, 0.14);
-  --text: #f5f5f7;
-  --muted: #a1a1a6;
-  --listening: #ff453a;
-  --thinking: #64d2ff;
-  --speaking: #30d158;
-  --problem: #ffd60a;
-  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
-  color-scheme: dark;
+  --ink: #1d1d1f;
+  --paper: rgba(255, 255, 255, 0.92);
+  --line: rgba(0, 0, 0, 0.08);
+  --muted: rgba(255, 255, 255, 0.85);
 }
 
-* {
-  box-sizing: border-box;
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #f2f2f4;
+    --paper: rgba(30, 30, 34, 0.9);
+    --line: rgba(255, 255, 255, 0.1);
+  }
 }
 
 html,
 body {
   margin: 0;
-  width: 100%;
   height: 100%;
   overflow: hidden;
   background: transparent;
-  font: 13px/1.4 var(--font);
-  color: var(--text);
+  font: 13px/1.35 -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
   user-select: none;
-  -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
 }
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-}
-
-/* ---------- the avatar ---------- */
 
 #stage {
   position: absolute;
   inset: 0;
   cursor: grab;
 }
+
 #stage:active {
   cursor: grabbing;
 }
-#avatar {
-  width: 100%;
-  height: 100%;
-}
-
-/* ---------- caption ---------- */
 
 #caption {
   position: absolute;
-  left: 50%;
-  bottom: 112px;
-  transform: translateX(-50%);
-  width: max-content;
-  max-width: calc(100% - 40px);
+  left: 10px;
+  right: 10px;
+  top: 8px;
   margin: 0;
-  padding: 8px 14px;
-  border-radius: 16px;
-  background: var(--glass);
-  border: 1px solid var(--edge);
-  backdrop-filter: blur(18px) saturate(160%);
-  font-size: 14px;
-  line-height: 1.45;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line), 0 6px 18px rgba(0, 0, 0, 0.12);
   text-align: center;
   pointer-events: none;
-}
-#caption[data-who='you'] {
-  color: var(--muted);
-  font-style: italic;
+  transition: opacity 0.25s;
 }
 
-/* ---------- dock ---------- */
-
-#dock {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: 16px;
-  padding: 8px 8px 6px;
-  border-radius: 26px;
-  background: var(--glass);
-  border: 1px solid var(--edge);
-  backdrop-filter: blur(22px) saturate(170%);
+#caption[hidden] {
+  display: block;
   opacity: 0;
-  transform: translateY(8px);
-  transition:
-    opacity 180ms ease,
-    transform 180ms ease;
-}
-
-/* Shown while you're hovering, typing, talking or waiting — hidden when idle. */
-body:hover #dock,
-#dock:focus-within,
-body[data-state='loading'] #dock,
-body[data-state='listening'] #dock,
-body[data-state='transcribing'] #dock,
-body[data-state='thinking'] #dock,
-body[data-problem] #dock {
-  opacity: 1;
-  transform: none;
-}
-
-#ask {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-#message {
-  flex: 1;
-  min-width: 0;
-  height: 36px;
-  padding: 0 14px;
-  border-radius: 18px;
-  border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text);
-  font: inherit;
-  font-size: 14px;
-  user-select: text;
-}
-#message::placeholder {
-  color: var(--muted);
-}
-#message:focus {
-  outline: none;
-  border-color: rgba(255, 255, 255, 0.3);
-}
-
-#mic {
-  --level: 0;
-  position: relative;
-  flex: none;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: none;
-  background: rgba(255, 255, 255, 0.14);
-  color: var(--text);
-  cursor: pointer;
-  touch-action: none;
-}
-#mic svg {
-  width: 20px;
-  height: 20px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-}
-#mic rect {
-  fill: currentColor;
-  stroke: none;
-}
-#mic::after {
-  /* the ring that follows your voice */
-  content: '';
-  position: absolute;
-  inset: -3px;
-  border-radius: 50%;
-  border: 2px solid var(--listening);
-  opacity: 0;
-  transform: scale(calc(1 + var(--level) * 0.35));
-  transition: transform 60ms linear;
-}
-body[data-state='listening'] #mic {
-  background: var(--listening);
-}
-body[data-state='listening'] #mic::after {
-  opacity: 0.8;
-}
-#mic:focus-visible,
-#settings button:focus-visible {
-  outline: 2px solid var(--thinking);
-  outline-offset: 2px;
 }
 
 #status {
-  margin: 5px 0 0 52px;
-  font-size: 11.5px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-#status::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 6px;
-  border-radius: 50%;
-  vertical-align: 1px;
-  background: var(--muted);
-}
-body[data-state='listening'] #status::before {
-  background: var(--listening);
-}
-body[data-state='thinking'] #status::before,
-body[data-state='transcribing'] #status::before {
-  background: var(--thinking);
-  animation: pulse 1s ease-in-out infinite;
-}
-body[data-state='speaking'] #status::before {
-  background: var(--speaking);
-}
-body[data-problem] #status {
-  color: var(--problem);
-  white-space: normal;
-}
-body[data-problem] #status::before {
-  background: var(--problem);
-  animation: none;
-}
-
-@keyframes pulse {
-  50% {
-    opacity: 0.3;
-  }
-}
-
-/* Click-through mode: only the avatar is left. */
-body.ghost #dock,
-body.ghost #caption {
-  display: none;
-}
-body.ghost #stage {
-  cursor: default;
-}
-
-/* ---------- settings ---------- */
-
-#settings {
   position: absolute;
-  inset: 8px;
-  border-radius: 20px;
-  background: var(--glass-strong);
-  border: 1px solid var(--edge);
-  backdrop-filter: blur(24px) saturate(160%);
-  overflow-y: auto;
-  user-select: text;
-}
-#settings[hidden] {
-  display: none;
-}
-#settings-form {
-  padding: 18px 18px 14px;
-}
-#settings h1 {
-  margin: 0 0 12px;
-  font-size: 17px;
-  font-weight: 600;
-}
-#settings fieldset {
-  margin: 0 0 14px;
-  padding: 0;
-  border: none;
-}
-#settings legend {
-  margin-bottom: 6px;
-  font-weight: 600;
+  left: 0;
+  right: 0;
+  bottom: 6px;
+  margin: 0;
+  text-align: center;
   color: var(--muted);
-}
-#settings label {
-  display: block;
-  margin-bottom: 9px;
-}
-#settings label.check {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-}
-#settings input[type='text'],
-#settings input[type='url'],
-#settings select,
-#settings textarea {
-  display: block;
-  width: 100%;
-  margin-top: 3px;
-  padding: 6px 9px;
-  border-radius: 8px;
-  border: 1px solid var(--edge);
-  background: rgba(255, 255, 255, 0.07);
-  color: var(--text);
-  font: inherit;
-}
-#settings textarea {
-  resize: vertical;
-  line-height: 1.45;
-}
-#settings input[type='range'] {
-  display: block;
-  width: 100%;
-}
-#settings small {
-  display: block;
-  margin-top: 3px;
-  color: var(--muted);
-}
-#speed-value {
-  float: right;
-  color: var(--muted);
-}
-#settings .actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-#settings .actions button {
-  padding: 6px 16px;
-  border-radius: 8px;
-  border: 1px solid var(--edge);
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-#settings .actions .primary {
-  background: #0a84ff;
-  border-color: transparent;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  font-size: 11px;
+  pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  #dock,
-  #mic::after {
-    transition: none;
-  }
-  body[data-state='thinking'] #status::before {
-    animation: none;
-  }
+body:not([data-state='loading']):not([data-problem]) #status {
+  display: none;
 }

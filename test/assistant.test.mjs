@@ -1,32 +1,49 @@
-// The assistant against a stand-in for Tool Mac Tool Run (a real HTTP server, streaming as the real
-// one does) and a scripted model: runs, cards refused, cancelling while a card waits and while a
-// run runs, the loop, the nudges, the schedule, interruptions.
+// The assistant against a stand-in for Tool Mac Tool Run (a real HTTP server, listing its tools
+// and running them as the real one does, runs streamed) and a scripted model: the tools as Tool
+// Mac Tool Run gives them, calls passed through, runs, cards refused, cancelling while a card waits
+// and while a run runs, the loop, the nudges, the schedule, interruptions.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import test from 'node:test';
-import { Assistant, display, isFailure } from '../src/main/assistant.mjs';
+import { Assistant, display } from '../src/main/assistant.mjs';
 import { Notes, PLAYBOOK, INSTRUCTIONS } from '../src/main/notes.mjs';
 import { Scheduler } from '../src/main/scheduler.mjs';
-import { ToolRun, hasLibrary, otherGroups } from '../src/main/toolrun.mjs';
-import { canonical, systemPrompt } from '../src/main/prompt.mjs';
+import { ToolRun, hasTool } from '../src/main/toolrun.mjs';
+import { systemPrompt } from '../src/main/prompt.mjs';
 import { Trace } from '../src/main/trace.mjs';
 import { Ollama } from '../src/main/model.mjs';
 import { CHARACTERS } from '../src/shared/characters.mjs';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** A stand-in for Tool Mac Tool Run; with `search`, one that finds things by a few words (GET /api/search). */
-async function fakeToolRun({ search = false } = {}) {
-  const seen = { closedWhileWaiting: 0, stopped: [], runs: [], searches: [], notes: {} };
+const arg = (name, about, required = false, type = 'string') => ({ name, type, required, about });
+/** The tools the stand-in lists, as Tool Mac Tool Run writes them (a few of them, and one this app has never heard of). */
+const TOOLS = [
+  { name: 'find', description: 'Finds the tools, scripts and flows for something by a few words.', args: [arg('q', 'a few words', true)], aliases: ['search'] },
+  { name: 'run_script', description: "Runs one of the person's scripts by its name.", args: [arg('script', 'its name', true), arg('args', 'its inputs', false, 'list'), arg('why', 'shown on the card')], asks_on_the_mac: true, stream: true, aliases: ['run'] },
+  { name: 'web_search', description: 'Searches the web from this Mac, at once.', args: [arg('q', 'what to search for', true)], aliases: ['google'] },
+  { name: 'web_fetch', description: 'Reads any web address from this Mac, at once.', args: [arg('url', 'the address', true), arg('find', 'words')], aliases: ['fetch'] },
+  { name: 'library', description: "The person's notes.", args: [arg('op', 'read, append, write…', true), arg('name', "the note's name")], aliases: ['notes'] },
+  { name: 'remember', description: 'Keeps something the person told you.', args: [arg('category', 'PEOPLE…', true), arg('about', 'who', true)], aliases: [] },
+  { name: 'recall', description: "What's remembered about a name.", args: [arg('name', 'as said', true)], aliases: [] },
+  { name: 'memory', description: 'The rest of MEMORY.', args: [arg('op', 'upcoming…', true)], aliases: [] },
+  { name: 'mind', description: 'What links to what.', args: [arg('op', 'about, add…', true)], aliases: [] },
+  { name: 'teleport', description: 'A tool this app has never heard of: there the day it ships.', args: [], aliases: [] },
+  { name: 'straw', description: 'Drives Chrome.', args: [], asks_on_the_mac: true, stream: true, aliases: [], on: false },
+];
+
+/** A stand-in for Tool Mac Tool Run. `old`: one from before it listed its tools. */
+async function fakeToolRun({ old = false } = {}) {
+  const seen = { closedWhileWaiting: 0, stopped: [], runs: [], calls: [], searches: [], notes: {} };
   const server = http.createServer(async (req, res) => {
     let body = '';
     for await (const c of req) body += c;
     const b = body ? JSON.parse(body) : {};
     const url = new URL(req.url, 'http://x');
-    const json = (status, o) => res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(o));
+    const json = (status, o, headers = {}) => res.writeHead(status, { 'Content-Type': 'application/json', ...headers }).end(JSON.stringify(o));
     if (url.pathname === '/api/scripts') {
       return json(200, {
         folder: '/Users/sam/Scripts',
@@ -36,109 +53,91 @@ async function fakeToolRun({ search = false } = {}) {
           { name: 'slow.sh', summary: 'Waits for a click for ever', dangers: [] },
           { name: 'long.sh', summary: 'Runs for ever', dangers: [] },
           { name: 'nope.sh', summary: 'Always refused', dangers: [] },
-          { name: 'browser/google.sh', group: 'browser', summary: 'Asks Google and gives back just the answer', inputs: [{ prompt: 'What should Google be asked?', kind: 'argument' }], dangers: [] },
-          { name: 'browser/open-page.sh', group: 'browser', summary: 'Opens a page in Chrome', dangers: [] },
         ],
       });
     }
     if (url.pathname === '/api/flows') return json(200, { flows: [{ name: 'morning.flow', summary: 'The day' }] });
-    if (url.pathname === '/api/endpoints') {
-      const route = (method, path, summary, asks = false) => ({ method, path, summary, asks_on_the_mac: asks });
-      return json(200, {
-        groups: [
-          { id: 'about', title: 'About the API', about: '', routes: [route('GET', '/api/health', 'is it up'), ...(search ? [route('GET', '/api/search', 'find by a few words')] : [])] },
-          { id: 'scripts', title: 'Scripts and flows', about: '', routes: [route('POST', '/api/run', 'run a script', true)] },
-          { id: 'library', title: 'File library', about: 'The notes', switch: 'library', on: true, routes: [route('POST', '/api/library', 'any operation')] },
-          { id: 'straw', title: 'Straw', about: 'Chrome', routes: [route('GET', '/api/straw', "Straw's words"), route('POST', '/api/straw/run', 'run Straw code', true)] },
-          { id: 'memory', title: 'Memory', about: 'MEMORY', switch: 'memory', on: true, routes: [route('POST', '/api/memory/remember', 'remember'), route('GET', '/api/memory/files/{name}', 'one memory file')] },
-          { id: 'mind', title: 'The mind', about: 'links', switch: 'mind', on: true, routes: [route('POST', '/api/mind', 'any op'), route('POST', '/api/mind/context', 'context')] },
-          { id: 'screen', title: 'Show and copy', about: '', switch: 'screen', on: true, routes: [route('POST', '/api/present', 'show'), route('POST', '/api/clipboard', 'copy')] },
-          { id: 'browser', title: "Chrome's page", about: '', switch: 'browser', on: false, routes: [route('GET', '/api/browser/find', 'where a thing is')] },
-          // A group this app has never heard of: there for call_api the day it ships.
-          { id: 'calendar', title: 'Calendar', about: 'What is on', routes: [route('GET', '/api/calendar/today', "today's events")] },
-          { id: 'runs', title: 'Runs and requests', about: '', switch: 'runs', on: true, routes: [route('GET', '/api/runs', 'the latest runs')] },
-        ],
-      });
+    if (url.pathname === '/api/tools' && !old) {
+      return json(200, { ok: true, tools: TOOLS, guide: ['Search the web, then read what you found.'], examples: [{ user: 'When does the Louvre open?', steps: [{ call: { tool: 'web_search', arguments: { q: 'Louvre hours' } }, result: '1. Louvre hours — https://louvre.fr/hours' }], answer: 'From 9 to 6.' }] });
     }
-    if (url.pathname === '/api/search' && search) {
+    if (url.pathname === '/api/search') {
       seen.searches.push(Object.fromEntries(url.searchParams));
       const q = url.searchParams.get('q');
-      const results = [];
-      if (/weather|rain/i.test(q)) results.push({ kind: 'script', name: 'utilities/weather.py', summary: 'The weather', inputs: [], run: { method: 'POST', path: '/api/run', body: { script: 'utilities/weather.py' } } });
-      if (/remember|birthday/i.test(q)) results.push({ kind: 'route', method: 'POST', path: '/api/memory/remember', summary: 'remember', group: 'memory', asks_on_the_mac: false });
-      if (/straw|chrome/i.test(q)) results.push({ kind: 'route', method: 'POST', path: '/api/straw/run', summary: 'run Straw code', group: 'straw', asks_on_the_mac: true });
-      if (/open|navigate/i.test(q)) results.push({ kind: 'script', name: 'browser/open-page.sh', summary: 'Opens a page in Chrome', inputs: [] });
-      if (/route|api/i.test(q)) results.push({ kind: 'route', method: 'GET', path: '/api/search', summary: 'find', group: 'about' });
-      const kinds = (url.searchParams.get('in') || 'routes,scripts,flows').split(',').map((k) => k.replace(/s$/, ''));
-      const kept = results.filter((r) => kinds.includes(r.kind));
-      return json(200, { ok: true, q, count: kept.length, results: kept, next: [{ method: 'GET', path: '/api/endpoints?brief=true', why: 'the groups' }] });
-    }
-    if (url.pathname.startsWith('/api/browser')) {
-      (seen.browser ||= []).push(`${req.method} ${url.pathname}${url.search}`);
-      return json(200, { request: 'B1', ok: true, url: 'https://example.com', next: [{ method: 'GET', path: '/api/browser/page' }] });
-    }
-    if (url.pathname === '/api/library') {
-      seen.library = b;
-      if (b.name === 'Ghost') return json(404, { error: 'no note called Ghost', code: 'not_found', fix: 'There is Groceries', request: 'L2' });
-      // The notes it keeps, for the ops what's learned uses.
-      const notes = seen.notes;
-      if (b.op === 'read_many') return json(200, { request: 'L3', notes: b.names.filter((n) => n in notes).map((n) => ({ name: n, text: notes[n] })), missing: b.names.filter((n) => !(n in notes)) });
-      if (b.op === 'write') notes[b.name] = b.text;
-      if (b.op === 'append') notes[b.name] = `${notes[b.name] ?? ''}${notes[b.name] && !notes[b.name].endsWith('\n') ? '\n' : ''}${b.text}\n`;
-      return res.writeHead(200, { 'Content-Type': 'application/json', 'X-Request-Id': 'L1' }).end(JSON.stringify({ request: 'L1', name: b.name, action: 'appended' }));
-    }
-    if (url.pathname === '/api/straw/run') {
-      seen.straw = b;
-      return json(200, { request: 'S1', state: 'succeeded', ok: true, stdout: 'Compute\n' });
-    }
-    if (url.pathname === '/api/memory/files/PEOPLE') return json(200, { name: 'PEOPLE', text: '- Sam: my brother' });
-    if (url.pathname === '/api/calendar/today') return json(200, { events: ['Dentist at 3'] });
-    if (url.pathname === '/api/memory') {
-      (seen.memory ||= []).push(b);
-      if (b.op === 'upcoming') return json(200, { request: 'M0', days: b.days, lines: ['2026-10-27 (in 3 days): birthday 10-27 — ada'] });
-      if (b.op === 'recall' && b.name === 'the user') return json(200, seen.aboutUser ? { request: 'M3', found: true, lines: seen.aboutUser } : { request: 'M3', found: false, lines: [] });
-      if (b.op === 'recall') return json(200, { request: 'M1', name: b.name, found: true, categories: ['PEOPLE'], nodes: [{ name: 'ada', scope: '', links: 1 }], about: [{ node: 'ada', links: [{ node: 'gardening', direction: 'out', labels: ['likes'] }] }], lines: ['| PEOPLE | ada', '| ada - likes | gardening'] });
-      if (b.op === 'remember') return json(200, { request: 'M2', file: b.category, node: String(b.about).toLowerCase(), added_to_file: `- ${b.about}: ${b.text || ''}` });
-      return json(400, { error: `no memory op ${b.op}`, code: 'bad_name' });
-    }
-    if (url.pathname === '/api/mind') {
-      (seen.mind ||= []).push(b);
-      return json(200, { request: 'N1', added: [`| ${b.from} - ${b.label} | ${b.to}`] });
+      const lines = [];
+      if (/weather|rain/i.test(q)) lines.push('tool web_search: Searches the web from this Mac, at once. | takes: q (string): what to search for', 'script utilities/weather.py: The weather | run_script runs it (it waits for Run on the Mac)');
+      return json(200, { ok: true, q, count: lines.length, results: [], lines, next: [] });
     }
     if (url.pathname === '/api/mind/context') {
       (seen.context ||= []).push(b);
       return json(200, { request: 'C1', lines: /ada/i.test(b.text) ? ['| PEOPLE | ada', '| ada - likes | gardening'] : [] });
-    }
-    if (url.pathname === '/api/present') {
-      seen.present = b;
-      return json(200, { request: 'P1', shown: true, title: b.title });
     }
     const stop = url.pathname.match(/^\/api\/runs\/(.+)\/stop$/);
     if (stop) {
       seen.stopped.push(stop[1]);
       return json(200, { ok: true, stopping: true });
     }
-    if (url.pathname === '/api/run') {
-      seen.runs.push(b);
-      if (!['hello.sh', 'utilities/weather.py', 'slow.sh', 'long.sh', 'nope.sh', 'browser/google.sh', 'browser/open-page.sh'].includes(b.script)) return json(404, { error: `no script called ${b.script}`, code: 'unknown_script' });
-      assert.equal(b.stream, true);
+    const call = url.pathname.match(/^\/api\/tools\/([^/]+)$/);
+    if (call && !old) {
+      const name = decodeURIComponent(call[1]);
+      const a = b.arguments || {};
+      seen.calls.push({ name, ...b });
       assert.equal(b.client, 'Super Face');
-      res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'X-Request-Id': 'REQ1' });
-      const line = (o) => res.write(JSON.stringify(o) + '\n');
-      line({ type: 'waiting', request: 'REQ1', message: 'Waiting for Run' });
-      if (b.script === 'slow.sh') {
-        req.on('close', () => seen.closedWhileWaiting++);
-        res.on('close', () => seen.closedWhileWaiting++);
-        return;
+      const tool = TOOLS.find((t) => t.name === name || t.aliases.includes(name));
+      const script = ['hello.sh', 'utilities/weather.py', 'slow.sh', 'long.sh', 'nope.sh'].find((s) => s === name || s.replace(/^.*\//, '').replace(/\.\w+$/, '') === name);
+      if (!tool && !script) {
+        return json(404, { ok: false, code: 'unknown_tool', error: `there's no tool called ${name}. The tools: ${TOOLS.map((t) => t.name).join(', ')}.`, tools: ['tool web_search: Searches the web from this Mac, at once. | takes: q (string): what to search for'] });
       }
-      await wait(20);
-      if (b.script === 'nope.sh') return res.end(JSON.stringify({ type: 'denied', code: 'denied', message: 'Don\'t Run' }) + '\n');
-      line({ type: 'started', id: 'RUN7', request: 'REQ1', name: b.script });
-      line({ type: 'output', stream: 'out', text: b.script === 'utilities/weather.py' ? 'Leeds: 12°C, rain\n' : `Hello, ${(b.args || ['world'])[0]}!\n` });
-      if (b.script === 'long.sh') return;
-      await wait(10);
-      res.end(JSON.stringify({ type: 'done', name: b.script, state: 'succeeded', ok: true, code: 0, seconds: 0.03, id: 'RUN7', output: b.script === 'utilities/weather.py' ? 'Leeds: 12°C, rain\n' : `Hello, ${(b.args || ['world'])[0]}!\n` }) + '\n');
-      return;
+      const missing = tool?.args.find((x) => x.required && a[x.name] === undefined);
+      if (missing) return json(400, { ok: false, tool: tool.name, code: 'missing_argument', error: `${tool.name} takes ${missing.name}: ${missing.about}.`, takes: tool.args.map((x) => x.name).join('; ') });
+      switch (script ? 'run_script' : tool.name) {
+        case 'run_script': {
+          const s = script || a.script;
+          seen.runs.push({ script: s, args: a.args, why: b.why, stream: b.stream });
+          if (!['hello.sh', 'utilities/weather.py', 'slow.sh', 'long.sh', 'nope.sh'].includes(s)) return json(404, { ok: false, tool: 'run_script', error: `no script called ${s}`, code: 'unknown_script' });
+          assert.equal(b.stream, true);
+          res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'X-Request-Id': 'REQ1', 'X-Tool': 'run_script' });
+          const line = (o) => res.write(JSON.stringify(o) + '\n');
+          line({ type: 'waiting', request: 'REQ1', message: 'Waiting for Run' });
+          if (s === 'slow.sh') {
+            req.on('close', () => seen.closedWhileWaiting++);
+            res.on('close', () => seen.closedWhileWaiting++);
+            return;
+          }
+          await wait(20);
+          if (s === 'nope.sh') return res.end(JSON.stringify({ type: 'denied', code: 'denied', message: "Don't Run" }) + '\n');
+          const printed = s === 'utilities/weather.py' ? 'Leeds: 12°C, rain\n' : `Hello, ${(a.args || ['world'])[0]}!\n`;
+          line({ type: 'started', id: 'RUN7', request: 'REQ1', name: s });
+          line({ type: 'output', stream: 'out', text: printed });
+          if (s === 'long.sh') return;
+          await wait(10);
+          return res.end(JSON.stringify({ type: 'done', name: s, state: 'succeeded', ok: true, code: 0, seconds: 0.03, id: 'RUN7', output: printed }) + '\n');
+        }
+        case 'web_search':
+          return json(200, { ok: true, op: 'search', request: 'W1', tool: 'web_search', q: a.q, results: [{ title: 'Leeds weather', url: 'https://weather.example/leeds', snippet: 'Rain today' }], lines: ['1. Leeds weather — https://weather.example/leeds\n   Rain today'], next: [{ method: 'GET', path: '/api/web/fetch' }] });
+        case 'web_fetch':
+          return json(200, { ok: true, request: 'W2', tool: 'web_fetch', url: a.url, kind: 'page', title: 'Leeds weather', text: 'Leeds today: 12°C and rain, clearing by 6pm.', links: [{ text: 'Tomorrow', url: 'https://weather.example/leeds/tomorrow' }], next: [] });
+        case 'library': {
+          seen.library = a;
+          const notes = seen.notes;
+          if (a.name === 'Ghost') return json(404, { ok: false, tool: 'library', error: 'no note called Ghost', code: 'not_found', fix: 'There is Groceries', request: 'L2' });
+          if (a.op === 'read_many') return json(200, { request: 'L3', notes: a.names.filter((n) => n in notes).map((n) => ({ name: n, text: notes[n] })), missing: a.names.filter((n) => !(n in notes)) });
+          if (a.op === 'write') notes[a.name] = a.text;
+          if (a.op === 'append') notes[a.name] = `${notes[a.name] ?? ''}${notes[a.name] && !notes[a.name].endsWith('\n') ? '\n' : ''}${a.text}\n`;
+          return json(200, { request: 'L1', tool: 'library', name: a.name, action: 'appended', next: [{ method: 'GET', path: '/api/library/files/x' }] }, { 'X-Request-Id': 'L1' });
+        }
+        case 'remember':
+          (seen.memory ||= []).push({ op: 'remember', ...a });
+          return json(200, { request: 'M2', file: a.category, node: String(a.about).toLowerCase() });
+        case 'recall':
+          if (a.name === 'the user') return json(200, seen.aboutUser ? { request: 'M3', found: true, lines: seen.aboutUser } : { request: 'M3', found: false, lines: [] });
+          return json(200, { request: 'M1', name: a.name, found: true, nodes: [{ name: 'ada' }], lines: ['| PEOPLE | ada', '| ada - likes | gardening'] });
+        case 'memory':
+          (seen.memory ||= []).push(a);
+          if (a.op === 'upcoming') return json(200, { request: 'M0', days: a.days, lines: ['2026-10-27 (in 3 days): birthday 10-27 — ada'] });
+          return json(400, { ok: false, error: `no memory op ${a.op}`, code: 'unknown_op' });
+        default:
+          return json(200, { ok: true, tool: tool.name, did: 'it' });
+      }
     }
     json(404, { error: 'no such route', code: 'not_found' });
   });
@@ -198,233 +197,137 @@ async function setup(steps, fake) {
   return { a, model, said, events, scheduler, notes, toolrun, idle, stops: () => stops };
 }
 
-test('the scripts are fetched for the prompt and the chat; Tool Mac Tool Run not running is said plainly', async () => {
+test("the tools are Tool Mac Tool Run's, as it lists them, with the scripts and flows; an old one, or none, is said plainly", async () => {
   const fake = await fakeToolRun();
   try {
     const t = new ToolRun({ url: () => fake.url });
     const c = await t.refresh();
     assert.equal(c.reachable, true);
-    assert.deepEqual(c.scripts[0], { name: 'hello.sh', group: 'scripts', language: 'Bash', summary: 'Says hello', dangers: [], asksForInput: false, inputs: [{ prompt: 'Who', kind: 'argument', optional: true }] });
+    assert.equal(c.error, null);
+    assert.deepEqual(c.tools.map((x) => x.name), ['find', 'run_script', 'web_search', 'web_fetch', 'library', 'remember', 'recall', 'memory', 'mind', 'teleport'], 'one that is off is left out');
+    assert.deepEqual(c.tools[1], { name: 'run_script', description: "Runs one of the person's scripts by its name.", args: [{ name: 'script', type: 'string', required: true, about: 'its name' }, { name: 'args', type: 'list', required: false, about: 'its inputs' }, { name: 'why', type: 'string', required: false, about: 'shown on the card' }], asks: true, stream: true, aliases: ['run'] });
+    assert.deepEqual(c.scripts[0], { name: 'hello.sh', group: 'scripts', language: 'Bash', summary: 'Says hello', dangers: [], inputs: [{ prompt: 'Who', kind: 'argument', optional: true }] });
     assert.equal(c.flows[0].name, 'morning.flow');
+    assert.deepEqual(c.guide, ['Search the web, then read what you found.']);
+    assert.deepEqual(c.upcoming, ['2026-10-27 (in 3 days): birthday 10-27 — ada'], "what's coming up, asked of the memory tool");
+    assert.ok(hasTool(c, 'teleport'));
+    const p = systemPrompt({ character: CHARACTERS[0], catalog: c });
+    assert.match(p, /^- teleport: A tool this app has never heard of: there the day it ships\.$/m);
+    assert.match(p, /^- run_script: [^\n]*\[waits for the user to click Run on the Mac\]$/m);
+    assert.doesNotMatch(p, /^- straw: /m);
+    assert.match(p, /^- Search the web, then read what you found\.$/m);
+    assert.match(p, /^You answer: \{"tool": "web_search", "arguments": \{"q":"Louvre hours"\}\}$/m);
+    assert.match(p, /^Coming up in the next week, from MEMORY[^\n]*\n- 2026-10-27 \(in 3 days\): birthday 10-27 — ada$/m);
+
+    const old = await fakeToolRun({ old: true });
+    try {
+      const o = await new ToolRun({ url: () => old.url }).refresh();
+      assert.match(o.error, /too old to say what its tools are[^\n]*update it/);
+      assert.match(systemPrompt({ character: CHARACTERS[0], catalog: o }), /isn't available right now \(this Tool Mac Tool Run is too old/);
+    } finally {
+      old.close();
+    }
     const off = new ToolRun({ url: () => 'http://127.0.0.1:9' });
     assert.match((await off.refresh()).error, /isn't answering/);
-    assert.match(await off.run('run_script', { script: 'a.sh' }), /isn't answering/);
+    assert.match((await off.run('run_script', { script: 'a.sh' })).text, /isn't answering/);
   } finally {
     fake.close();
   }
 });
 
-test('the routes are fetched too: the library is a tool of its own, the rest (what ships later too) go to call_api', async () => {
-  const fake = await fakeToolRun();
-  try {
-    const t = new ToolRun({ url: () => fake.url });
-    const c = await t.refresh();
-    assert.ok(hasLibrary(c));
-    assert.deepEqual(otherGroups(c).map((g) => g.id), ['straw', 'browser', 'calendar'], "a group a tool covers isn't call_api's; one that's off is listed as off");
-    const p = systemPrompt({ character: CHARACTERS[0], catalog: c });
-    assert.match(p, /^- library: /m);
-    assert.match(p, /^- call_api: /m);
-    for (const tool of ['remember', 'recall', 'memory', 'mind', 'show', 'copy']) assert.match(p, new RegExp(`^- ${tool}: `, 'm'), tool);
-    assert.doesNotMatch(p, /^- chrome_page: /m, "Chrome's page is off in Tool Mac Tool Run");
-    assert.match(p, /^Chrome's page: turned off in Tool Mac Tool Run right now$/m);
-    assert.match(p, /^- GET \/api\/calendar\/today: today's events$/m);
-    assert.doesNotMatch(p, /\/api\/memory\/files/, 'the memory tools cover MEMORY');
-    assert.match(p, /recall it first/);
-    assert.match(p, /^Coming up in the next week, from MEMORY[^\n]*\n- 2026-10-27 \(in 3 days\): birthday 10-27 — ada$/m);
-    assert.match(p, /^- POST \/api\/straw\/run: run Straw code \[asks on the Mac\]$/m);
-    assert.doesNotMatch(p, /^- POST \/api\/run:/m, 'run_script covers it');
-    assert.match(p, /use library: the user's notes/);
-    // An older Tool Mac Tool Run, without the route list: neither tool is offered.
-    const old = systemPrompt({ character: CHARACTERS[0], catalog: { ...c, groups: null } });
-    assert.doesNotMatch(old, /^- (library|call_api): /m);
-  } finally {
-    fake.close();
-  }
-});
-
-test('where Tool Mac Tool Run searches, the scripts are only named, what fits the request is described, and find finds the rest', async () => {
-  const fake = await fakeToolRun({ search: true });
-  try {
-    const t = new ToolRun({ url: () => fake.url });
-    const c = await t.refresh();
-    const p = systemPrompt({ character: CHARACTERS[0], catalog: c });
-    assert.match(p, /^- find: /m);
-    assert.doesNotMatch(p, /^- list_scripts: /m, 'find does it better');
-    assert.match(p, /^utilities\/: weather$/m, 'a script by its name alone');
-    assert.match(p, /^hello, slow, long, nope$/m);
-    assert.doesNotMatch(p, /Says hello/, 'what a script does is for find, and for the scripts that fit');
-    assert.doesNotMatch(p, /\/api\/calendar\/today/, 'nor is every route listed');
-    assert.match(p, /^Tool Mac Tool Run also has \(find gives their routes, for call_api\): Straw; Chrome's page \(turned off right now\); Calendar\.$/m);
-    // What fits what was just said: at the end of the instructions, with what it does and takes.
-    const fits = await t.matches('will it rain in Leeds? and remember it');
-    assert.deepEqual(fits, ['script utilities/weather.py: The weather'], 'a route a tool covers is left out');
-    assert.equal(fake.seen.searches.at(-1).next, 'false');
-    const withFits = systemPrompt({ character: CHARACTERS[0], catalog: c, matches: fits });
-    assert.match(withFits, /^What fits what was just said[^\n]*\n- script utilities\/weather\.py: The weather\n/m);
-    // find, as a tool: each thing as it's called; a route a tool covers says which.
-    assert.equal(await t.run('find', { q: 'birthday or straw' }), 'route POST /api/memory/remember: remember (the remember tool does this)\nroute POST /api/straw/run: run Straw code [asks on the Mac]');
-    assert.equal(fake.seen.searches.at(-1).limit, '8');
-    assert.match(await t.run('find', { q: 'nothing like it' }), /^Nothing matched "nothing like it"/);
-    assert.match(await t.run('find', {}), /^Say what to look for/);
-    assert.equal(canonical({ name: 'search', arguments: { q: 'x' } }, c).name, 'find');
-    // A script named as the prompt names it (no extension) runs as itself.
-    assert.match(await t.run('run_script', { script: 'utilities/weather', why: 'rain?' }), /Leeds: 12°C/);
-    assert.equal(fake.seen.runs.at(-1).script, 'utilities/weather.py');
-    // A route that isn't one: found, rather than picked from a list there isn't.
-    assert.match(await t.run('call_api', { path: '/api/nowhere' }), /find the right one by a few words/);
-  } finally {
-    fake.close();
-  }
-});
-
-test("Chrome's page: the ops and words a model reaches for are taken as meant; acting on the page is said plainly", async () => {
+test('a call is passed through as it was made, and its answer given back without what is only for programs', async () => {
   const fake = await fakeToolRun();
   try {
     const t = new ToolRun({ url: () => fake.url });
     await t.refresh();
-    await t.run('chrome_page', { op: 'read' });
-    await t.run('chrome_page', { op: 'search', query: 'Compute' });
-    await t.run('chrome_page', { op: 'show where', words: 'Compute' });
-    await t.run('chrome_page', { op: 'status' });
-    await t.run('chrome_page', { text: 'Compute' });
-    await t.run('chrome_page', {});
-    assert.deepEqual(fake.seen.browser, ['GET /api/browser/page?max=6000', 'GET /api/browser/find?text=Compute', 'POST /api/browser/highlight', 'GET /api/browser', 'GET /api/browser/find?text=Compute', 'GET /api/browser/url']);
-    assert.deepEqual(JSON.parse(await t.run('chrome_page', { op: 'url' })), { url: 'https://example.com' }, 'no request id, no "next"');
-    assert.match(await t.run('chrome_page', { op: 'click', text: 'Compute' }), /^chrome_page only reads the page in front of Chrome: it can't click\. On the page, tell the user what to do/);
-    assert.match(await t.run('chrome_page', { op: 'go_to', text: 'example.com' }), /can't go to\./);
-    assert.match(await t.run('chrome_page', { op: 'teleport' }), /^There's no chrome_page op called teleport\. The ops: url, tabs/);
-    assert.match(await t.run('chrome_page', { op: 'find' }), /^Say what to look for/);
-  } finally {
-    fake.close();
-  }
-});
-
-test('a call that misses: an op that is a script\'s name runs that script; anything else is shown what Tool Mac Tool Run has for its words', async () => {
-  const fake = await fakeToolRun({ search: true });
-  try {
-    const t = new ToolRun({ url: () => fake.url });
-    const c = await t.refresh();
-    // What a model did: the page tool, asked to google. Any tool, any op that's a script's name.
-    const out = await t.run('chrome_page', { op: 'google', text: 'Corinth weather' });
-    assert.match(out, /^chrome_page has no op called google: that's the script browser\/google\.sh, so it was run with "Corinth weather"\.\nbrowser\/google\.sh: succeeded/);
-    assert.deepEqual(fake.seen.runs.at(-1).args, ['Corinth weather']);
-    assert.match(await t.run('library', { op: 'weather', q: 'Leeds' }), /^library has no op called weather: that's the script utilities\/weather\.py/);
-    assert.match(await t.run('mind', { op: 'teleport' }), /^There's no mind op called teleport/, 'no script of that name: the error, as before');
-    // Reading the page stays reading the page.
-    await t.run('chrome_page', { op: 'find', text: 'Compute' });
-    assert.equal(fake.seen.browser.at(-1), 'GET /api/browser/find?text=Compute');
-    const p = systemPrompt({ character: CHARACTERS[0], catalog: c });
-    assert.match(p, /For anything the web can answer that no script does[^\n]*run browser\/google\.sh with the question/);
-    // find, scoped to a kind with nothing in it: everything, said so; nothing at all: Google.
-    assert.match(await t.run('find', { q: 'weather', in: 'flows' }), /^Nothing of that kind matched "weather"; these are everything that did:\nscript utilities\/weather\.py/);
-    assert.match(await t.run('find', { q: 'Corinth', in: 'scripts' }), /^Nothing matched "Corinth"\. Try other words, or fewer of them\. For something the web answers, run browser\/google with the question\.$/);
-  } finally {
-    fake.close();
-  }
-});
-
-test('the model is shown what Tool Mac Tool Run has when its call misses (a tool, op or route that is not there)', async () => {
-  const fake = await fakeToolRun({ search: true });
-  try {
-    const { a, model, idle, toolrun } = await setup(['{"tool": "chrome_page", "arguments": {"op": "navigate", "url": "example.com"}}', 'Click Run on your Mac.', '{"tool": "fly_to_mars", "arguments": {}}', 'I cannot do that.'], fake);
-    await toolrun.refresh();
-    a.say('open example.com');
-    await idle();
-    const result = model.asked[1].at(-1).content;
-    assert.match(result, /chrome_page only reads the page in front of Chrome: it can't navigate\./);
-    assert.match(result, /What Tool Mac Tool Run has for "navigate example\.com" \(call one of these instead, as it says\):\n- script browser\/open-page\.sh: Opens a page in Chrome/);
-    a.say('fly me to mars');
-    await idle();
-    assert.doesNotMatch(model.asked[3].at(-1).content, /What Tool Mac Tool Run has/, 'nothing found: nothing added');
-  } finally {
-    fake.close();
-  }
-});
-
-test('library: one op, answered at once; call_api: a listed route, never another server', async () => {
-  const fake = await fakeToolRun();
-  try {
-    const t = new ToolRun({ url: () => fake.url });
-    await t.refresh();
-    const out = await t.run('library', { op: 'append', name: 'Shopping', text: '- eggs' });
-    assert.deepEqual(JSON.parse(out), { name: 'Shopping', action: 'appended' });
-    assert.deepEqual(fake.seen.library, { client: 'Super Face', op: 'append', name: 'Shopping', text: '- eggs' });
-    assert.match(await t.run('library', { op: 'read', name: 'Ghost' }), /no note called Ghost.*Fix: There is Groceries/);
-    assert.match(await t.run('library', { op: 'shred' }), /no library op called shred/);
-    assert.match(await t.run('call_api', { method: 'GET', path: '/api/calendar/today' }), /^GET \/api\/calendar\/today: 200\n.*Dentist at 3/);
-    assert.match(await t.run('call_api', { method: 'POST', path: '/api/straw/run', body: { source: 'open cloudflare.com' }, why: 'Find Compute' }), /: 200\n.*Compute/);
-    assert.equal(fake.seen.straw.why, 'Find Compute', 'a route that asks on the Mac carries the why');
-    assert.match(await t.run('call_api', { path: 'https://example.com/api/x' }), /only reaches Tool Mac Tool Run/);
-    assert.match(await t.run('call_api', { path: '/etc/passwd' }), /routes under \/api\//);
-    assert.match(await t.run('call_api', { path: '/api/nowhere' }), /isn't one listed/);
-  } finally {
-    fake.close();
-  }
-});
-
-test("MEMORY, the mind, and showing: each a tool, its arguments as Tool Mac Tool Run takes them", async () => {
-  const fake = await fakeToolRun();
-  try {
-    const t = new ToolRun({ url: () => fake.url });
-    await t.refresh();
-    const out = JSON.parse(await t.run('remember', { category: 'people', about: 'Ada', text: "The user's sister", notes: 'birthday 03-14', links: ['Acme'] }));
-    assert.deepEqual(out, { file: 'PEOPLE', node: 'ada', added_to_file: "- Ada: The user's sister" }, 'the request id is left out');
-    assert.deepEqual(fake.seen.memory.at(-1), { client: 'Super Face', op: 'remember', category: 'PEOPLE', about: 'Ada', text: "The user's sister", links: [{ to: 'Acme' }], notes: ['birthday 03-14'] });
-    assert.deepEqual(JSON.parse(await t.run('recall', { name: 'Ada' })), { name: 'Ada', found: true, categories: ['PEOPLE'], lines: ['| PEOPLE | ada', '| ada - likes | gardening'] }, 'its lines, not the same again as objects');
-    assert.match(await t.run('recall', {}), /^Say whose/);
-    assert.match(await t.run('memory', { op: 'upcoming', days: 7 }), /birthday 10-27/);
-    assert.match(await t.run('memory', { op: 'compact' }), /no memory op called compact/);
-    await t.run('mind', { from: 'ada', label: 'works at', to: 'acme' });
-    assert.equal(fake.seen.mind.at(-1).op, 'add', 'a link with a label is an add');
-    assert.match(await t.run('mind', { op: 'compact' }), /no mind op called compact/, "compacting the log is the person's");
-    await t.run('show', { title: 'Steps', text: '1. Open it' });
-    assert.deepEqual(fake.seen.present, { client: 'Super Face', title: 'Steps', text: '1. Open it', why: 'You asked for it' });
-    assert.match(await t.run('show', {}), /^Give the text to show/);
+    const lib = await t.run('library', { op: 'append', name: 'Shopping', text: '- eggs' });
+    assert.deepEqual(lib, { text: JSON.stringify({ name: 'Shopping', action: 'appended' }), failed: false }, 'no request id, no tool, no "next"');
+    assert.deepEqual(fake.seen.calls.at(-1), { name: 'library', arguments: { op: 'append', name: 'Shopping', text: '- eggs' }, why: 'You asked for it', client: 'Super Face' });
+    // An answer that says itself in lines is given as its lines.
+    const found = await t.run('web_search', { q: 'weather in Leeds' });
+    assert.deepEqual(JSON.parse(found.text), { op: 'search', q: 'weather in Leeds', lines: ['1. Leeds weather — https://weather.example/leeds\n   Rain today'], ok: true });
+    // A tool this app has never heard of works the same; so does a name Tool Mac Tool Run takes for another.
+    assert.equal((await t.run('teleport', {})).failed, false);
+    assert.equal((await t.run('google', { q: 'x' })).failed, false);
+    // A miss: what Tool Mac Tool Run said, its fix, what the tool takes, and what fits instead.
+    const ghost = await t.run('library', { op: 'read', name: 'Ghost' });
+    assert.equal(ghost.failed, true);
+    assert.match(ghost.text, /^Tool Mac Tool Run said 404 \(not_found\): no note called Ghost Fix: There is Groceries/);
+    const missing = await t.run('web_fetch', {});
+    assert.match(missing.text, /missing_argument\): web_fetch takes url: the address\.\nweb_fetch takes: url; find/);
+    const mars = await t.run('fly_to_mars', {});
+    assert.equal(mars.failed, true);
+    assert.match(mars.text, /unknown_tool\): there's no tool called fly_to_mars\.[^\n]*\nWhat fits instead:\n- tool web_search: /);
+    // A script's own name as the tool: Tool Mac Tool Run runs it, and it's followed live.
+    const sky = await t.run('weather', { args: ['Leeds'] });
+    assert.match(sky.text, /utilities\/weather\.py: succeeded/);
+    assert.equal(fake.seen.runs.at(-1).stream, true);
     assert.deepEqual(await t.context('What should I get Ada?'), ['| PEOPLE | ada', '| ada - likes | gardening']);
     assert.deepEqual(await new ToolRun({ url: () => fake.url }).context('Ada'), [], 'no mind listed (not fetched yet): nothing asked');
-    // What a small model may call them, and the old remember (the assistant's own notes).
-    const c = t.catalog;
-    assert.deepEqual(canonical({ name: 'link', arguments: { from: 'a', label: 'b', to: 'c' } }, c), { name: 'mind', arguments: { op: 'add', from: 'a', label: 'b', to: 'c' } });
-    assert.deepEqual(canonical({ name: 'upcoming', arguments: {} }, c), { name: 'memory', arguments: { op: 'upcoming' } });
-    assert.deepEqual(canonical({ name: 'remember', arguments: { section: 'user', note: 'Celsius' } }, c), { name: 'remember', arguments: { category: 'PEOPLE', about: 'the user', notes: ['pref Celsius'] } }, 'about the user: a note on them in MEMORY');
-    assert.deepEqual(canonical({ name: 'learn', arguments: { section: 'playbook', note: 'weather.py takes a city' } }, c), { name: 'library', arguments: { op: 'append', name: PLAYBOOK, text: '- weather.py takes a city' } }, 'its old learn: a line of its playbook');
-    assert.equal(canonical({ name: 'remember', arguments: { category: 'PEOPLE', about: 'Ada' } }, c).name, 'remember');
-    assert.deepEqual(canonical({ name: 'remember', arguments: { about: 'Ada', text: 'my sister' } }, { groups: [] }), { name: 'library', arguments: { op: 'append', name: PLAYBOOK, text: '- Ada: my sister' } }, 'without MEMORY, a fact goes in its playbook');
   } finally {
     fake.close();
   }
 });
 
-test('what the mind has on what is being said is given to the model with its instructions, once a request', async () => {
+test('finding something out on the web: a search, then the page, then the answer, with no click', async () => {
   const fake = await fakeToolRun();
   try {
-    const { a, model, idle, toolrun } = await setup(['{"tool": "recall", "arguments": {"name": "Ada"}}', 'Ada likes gardening.'], fake);
-    await toolrun.refresh();
-    a.say('what should I get Ada?');
+    const { a, model, said, idle } = await setup(
+      [
+        '{"tool": "web_search", "arguments": {"q": "weather in Leeds today"}}',
+        (m) => {
+          assert.match(m.at(-1).content, /^Tool result for web_search \(from the Mac, not the user\):\n.*Leeds weather — https:\/\/weather\.example\/leeds/);
+          return '{"tool": "web_fetch", "arguments": {"url": "https://weather.example/leeds", "find": "today"}}';
+        },
+        (m) => {
+          assert.match(m.at(-1).content, /12°C and rain, clearing by 6pm/);
+          return "It's 12 degrees and raining in Leeds, clearing by six.";
+        },
+        '(nothing)',
+      ],
+      fake,
+    );
+    a.say("what's the weather in Leeds?", { how: 'said' });
     await idle();
-    const system = model.asked[0][0].content;
-    assert.match(system, /^What the mind already has on what's being said[^\n]*\n\| PEOPLE \| ada\n\| ada - likes \| gardening$/m);
-    assert.equal(fake.seen.context.length, 1, 'asked once, not every round');
-    assert.match(fake.seen.context[0].text, /what should I get Ada\?/);
-    assert.equal(a.log.find((e) => e.kind === 'tool').state, 'done');
-    assert.equal(a.log.at(-1).text, 'Ada likes gardening.');
+    assert.deepEqual(said, ["It's 12 degrees and raining in Leeds, clearing by six."]);
+    assert.deepEqual(fake.seen.calls.filter((c) => c.name.startsWith('web_')).map((c) => c.arguments), [{ q: 'weather in Leeds today' }, { url: 'https://weather.example/leeds', find: 'today' }]);
+    assert.deepEqual(a.log.filter((e) => e.kind === 'tool').map((e) => [e.name, e.state]), [['web_search', 'done'], ['web_fetch', 'done']]);
+    assert.match(model.asked[0][0].content, /^- web_fetch: Reads any web address/m);
   } finally {
     fake.close();
   }
 });
 
-test('what fits the request is searched for once a request, beside the mind, and described to the model', async () => {
-  const fake = await fakeToolRun({ search: true });
+test('the model is shown what Tool Mac Tool Run says when its call misses, and the critic comes in', async () => {
+  const fake = await fakeToolRun();
   try {
-    const { a, model, idle, toolrun } = await setup(['{"tool": "run_script", "arguments": {"script": "utilities/weather", "why": "rain?"}}', 'Yes, rain in Leeds.'], fake);
+    const { a, model, idle, toolrun } = await setup(['{"tool": "fly_to_mars", "arguments": {}}', 'I can search the web for trips instead.', '(nothing)'], fake);
     await toolrun.refresh();
-    a.say('will it rain today?');
+    a.say('fly me to mars');
     await idle();
-    assert.match(model.asked[0][0].content, /^What fits what was just said[^\n]*\n- script utilities\/weather\.py: The weather$/m);
+    const result = model.asked[1].at(-1).content;
+    assert.match(result, /there's no tool called fly_to_mars/);
+    assert.match(result, /What fits instead:\n- tool web_search/);
+    assert.match(result, /that didn't work\. Before anything else, look at why/);
+  } finally {
+    fake.close();
+  }
+});
+
+test('what fits the request is searched for once a request (tools, scripts and flows), beside the mind, and given to the model', async () => {
+  const fake = await fakeToolRun();
+  try {
+    const { a, model, idle, toolrun } = await setup(['{"tool": "recall", "arguments": {"name": "Ada"}}', 'Ada likes gardening, and it may rain.'], fake);
+    await toolrun.refresh();
+    a.say('will it rain for Ada today?');
+    await idle();
+    const system = model.asked[0][0].content;
+    assert.match(system, /^What fits what was just said[^\n]*\n- tool web_search: Searches the web[^\n]*\n- script utilities\/weather\.py: The weather/m);
+    assert.match(system, /^What the mind already has on what's being said[^\n]*\n\| PEOPLE \| ada\n\| ada - likes \| gardening$/m);
     assert.equal(fake.seen.searches.length, 1, 'searched once, not every round');
-    assert.equal(fake.seen.searches[0].q, 'will it rain today?');
-    assert.equal(fake.seen.runs[0].script, 'utilities/weather.py');
-    assert.equal(a.log.at(-1).text, 'Yes, rain in Leeds.');
+    assert.deepEqual([fake.seen.searches[0].q, fake.seen.searches[0].in, fake.seen.searches[0].next], ['will it rain for Ada today?', 'tools,scripts,flows', 'false']);
+    assert.equal(fake.seen.context.length, 1);
+    assert.equal(a.log.at(-1).text, 'Ada likes gardening, and it may rain.');
   } finally {
     fake.close();
   }
@@ -437,19 +340,19 @@ test('every call is noted for the Calls tab: the tool, each request (address, bo
     const t = new ToolRun({ url: () => fake.url, trace });
     await t.refresh();
     assert.equal(trace.list()[0].kind, 'catalog');
-    assert.deepEqual(trace.list()[0].http.map((h) => h.url.replace(fake.url, '')), ['/api/scripts', '/api/flows', '/api/endpoints', '/api/memory']);
+    assert.deepEqual(trace.list()[0].http.map((h) => h.url.replace(fake.url, '')), ['/api/tools', '/api/scripts', '/api/flows', '/api/tools/memory']);
     const log = trace.open({ kind: 'tool', name: 'run_script' });
     await t.run('run_script', { script: 'hello.sh', args: ['Sam'] }, { log });
     const h = log.http[0];
-    assert.equal(h.url, `${fake.url}/api/run`);
-    assert.equal(h.body.script, 'hello.sh');
+    assert.equal(h.url, `${fake.url}/api/tools/run_script`);
+    assert.deepEqual(h.body.arguments, { script: 'hello.sh', args: ['Sam'] });
     assert.equal(h.status, 200);
     assert.equal(h.request, 'REQ1');
     assert.deepEqual(h.events.map((e) => e.type), ['waiting', 'started', 'output', 'done']);
     const lib = trace.open({ kind: 'tool', name: 'library' });
     await t.run('library', { op: 'append', name: 'Shopping', text: '- eggs' }, { log: lib });
     assert.equal(lib.http[0].request, 'L1');
-    assert.deepEqual(lib.http[0].response, { request: 'L1', name: 'Shopping', action: 'appended' });
+    assert.equal(lib.http[0].response.action, 'appended');
   } finally {
     fake.close();
   }
@@ -459,15 +362,18 @@ test('a run: the card waits, it runs, what it printed comes back', async () => {
   const fake = await fakeToolRun();
   try {
     const t = new ToolRun({ url: () => fake.url });
+    await t.refresh();
     const states = [];
     const out = await t.run('run_script', { script: 'hello.sh', args: ['Sam'], why: 'You asked' }, { onStatus: (s) => states.push(s.state) });
-    assert.match(out, /hello\.sh: succeeded \(exit code 0\)/);
-    assert.match(out, /Hello, Sam!/);
+    assert.equal(out.failed, false);
+    assert.match(out.text, /hello\.sh: succeeded \(exit code 0\)/);
+    assert.match(out.text, /Hello, Sam!/);
     assert.deepEqual([...new Set(states)], ['sending', 'waiting', 'running', 'done']);
     assert.equal(fake.seen.runs[0].why, 'You asked');
-    assert.match(await t.run('run_script', { script: 'nope.sh' }), /clicked Don't Run/);
-    assert.match(await t.run('run_script', { script: 'ghost.sh' }), /no script called ghost\.sh/);
-    assert.equal(await t.run('nothing_like_it', {}), null);
+    const nope = await t.run('run_script', { script: 'nope.sh' });
+    assert.equal(nope.failed, true);
+    assert.match(nope.text, /clicked Don't Run/);
+    assert.match((await t.run('run_script', { script: 'ghost.sh' })).text, /no script called ghost\.sh/);
   } finally {
     fake.close();
   }
@@ -477,9 +383,11 @@ test('cancelled while the card waits: the connection is closed (the card goes), 
   const fake = await fakeToolRun();
   try {
     const t = new ToolRun({ url: () => fake.url });
+    await t.refresh();
     const ctrl = new AbortController();
-    const p = t.run('run_script', { script: 'slow.sh' }, { signal: ctrl.signal, onStatus: (s) => s.state === 'waiting' && ctrl.abort() });
-    assert.match(await p, /Cancelled by the user before it ran/);
+    const out = await t.run('run_script', { script: 'slow.sh' }, { signal: ctrl.signal, onStatus: (s) => s.state === 'waiting' && ctrl.abort() });
+    assert.equal(out.cancelled, true);
+    assert.match(out.text, /Cancelled by the user before it ran/);
     await wait(50);
     assert.ok(fake.seen.closedWhileWaiting > 0);
     assert.deepEqual(fake.seen.stopped, []);
@@ -492,9 +400,10 @@ test('cancelled while it runs: it is stopped on the Mac', async () => {
   const fake = await fakeToolRun();
   try {
     const t = new ToolRun({ url: () => fake.url });
+    await t.refresh();
     const ctrl = new AbortController();
-    const p = t.run('run_script', { script: 'long.sh' }, { signal: ctrl.signal, onStatus: (s) => s.output && ctrl.abort() });
-    assert.match(await p, /Cancelled by the user while it was running: it was stopped\. What it printed before:\nHello, world!/);
+    const out = await t.run('run_script', { script: 'long.sh' }, { signal: ctrl.signal, onStatus: (s) => s.output && ctrl.abort() });
+    assert.match(out.text, /Cancelled by the user while it was running: it was stopped\. What it printed before:\nHello, world!/);
     await wait(50);
     assert.deepEqual(fake.seen.stopped, ['RUN7']);
   } finally {
@@ -502,7 +411,7 @@ test('cancelled while it runs: it is stopped on the Mac', async () => {
   }
 });
 
-test('the loop: words said as they come, a tool call run, its result handed back, the answer said', async () => {
+test('the loop: words said as they come, a run, its result handed back, the answer said', async () => {
   const fake = await fakeToolRun();
   try {
     const { a, model, said, idle } = await setup(
@@ -522,7 +431,7 @@ test('the loop: words said as they come, a tool call run, its result handed back
     assert.deepEqual(said, ['Let me check.', 'Click Run on your Mac.', "It's 12 degrees and raining in Leeds. [shrug]"]);
     const sys = model.asked[0][0].content;
     assert.match(sys, /You are Ivy/);
-    assert.match(sys, /- utilities\/weather\.py: The weather/);
+    assert.match(sys, /^utilities\/: weather$/m);
     assert.match(model.asked[0][1].content, /^\[\w+day \d+ \w+ \d{4}, \d\d:\d\d:\d\d \(UTC[+-]\d\d:\d\d\), said\] what's the weather in Leeds\?$/);
     const kinds = a.log.filter((e) => !e.hidden).map((e) => [e.kind, e.kind === 'tool' ? e.state : e.text]);
     assert.deepEqual(kinds, [
@@ -550,7 +459,7 @@ test('words that promise work with no call are sent back once; "(nothing)" is ne
   assert.equal(said.length, 1);
 });
 
-test('a broken call is asked for again; a failed run brings the critic in; then it learns, quietly', async () => {
+test('a broken call is asked for again; a refused run brings the critic in; then it learns, quietly', async () => {
   const fake = await fakeToolRun();
   try {
     const { a, model, said, notes, idle } = await setup(
@@ -563,7 +472,7 @@ test('a broken call is asked for again; a failed run brings the critic in; then 
         },
         (m) => {
           assert.match(m.at(-1).content, /the request is over\. Is there something you learned/);
-          return '{"tool": "remember", "arguments": {"section": "playbook", "note": "nope.sh is always refused"}}';
+          return `{"tool": "library", "arguments": {"op": "append", "name": "${PLAYBOOK}", "text": "- nope.sh is always refused"}}`;
         },
       ],
       fake,
@@ -572,7 +481,6 @@ test('a broken call is asked for again; a failed run brings the critic in; then 
     await idle();
     assert.match(model.asked[1].at(-1).content, /looked like a tool call, but it couldn't be read/);
     assert.deepEqual(said, ['You chose not to run it, so I left it.']);
-    // Its old way of writing it down (remember with a section) is a line of its playbook, in the library.
     assert.equal(fake.seen.notes[PLAYBOOK], '- nope.sh is always refused\n');
     assert.deepEqual(notes.playbook, ['- nope.sh is always refused'], 'read back once it is written');
     assert.ok(a.log.some((e) => e.kind === 'note' && e.text === 'Learned: nope.sh is always refused'));
@@ -596,7 +504,7 @@ test('what it has learned is read from Tool Mac Tool Run with every request: its
     assert.match(system, /^What MEMORY has on the user themselves[^\n]*\n\| PEOPLE \| the user\n\| the user @pref celsius$/m);
     assert.match(system, /^The user's standing instructions \(follow them\):\nCall me Sam\.$/m);
     assert.match(system, /library, op append, name "Super Face playbook"/);
-    assert.doesNotMatch(system, /^- (learn|unlearn): /m, 'no tools of its own for it');
+    assert.deepEqual(fake.seen.calls.filter((c) => c.name === 'library' || c.name === 'recall').map((c) => [c.name, c.arguments.op || c.arguments.name]), [['library', 'read_many'], ['recall', 'the user']], 'through its tools, as the model reads them');
     // The Mind tab: a line taken out, the instructions written.
     assert.equal(await notes.forget('- weather.py takes the city first'), 'Saved.');
     assert.doesNotMatch(fake.seen.notes[PLAYBOOK], /weather/);
@@ -622,7 +530,7 @@ test('what an older version kept in memory.json is moved to Tool Mac Tool Run on
     assert.equal(await notes.moveOld(), true);
     assert.deepEqual(notes.playbook, ['- weather.py takes a city', '- Mistake: nope.sh is refused']);
     assert.equal(notes.instructions, 'Call me Sam.');
-    assert.deepEqual(fake.seen.memory.find((m) => m.op === 'remember'), { client: 'Super Face', op: 'remember', category: 'PEOPLE', about: 'the user', notes: ['pref Lives in Leeds'] });
+    assert.deepEqual(fake.seen.memory.find((m) => m.op === 'remember'), { op: 'remember', category: 'PEOPLE', about: 'the user', notes: ['pref Lives in Leeds'] });
     assert.ok(!fs.existsSync(oldFile) && fs.existsSync(`${oldFile}.moved`));
     assert.equal(await notes.moveOld(), false, 'once');
   } finally {
@@ -722,11 +630,8 @@ test('no model: said once, shown in the chat, and the question kept for next tim
   assert.match(a.state().error, /isn't answering/);
 });
 
-test('what the chat shows, and what counts as a failure', () => {
+test('what the chat shows', () => {
   assert.equal(display('Great job! [thumbup] 👍 [mood: happy]'), 'Great job! 👍');
-  assert.ok(isFailure('backup.sh: failed (exit code 3), 1 seconds.'));
-  assert.ok(isFailure("It didn't run: the user clicked Don't Run on their Mac."));
-  assert.ok(!isFailure('hello.sh: succeeded (exit code 0).\nIt printed:\nfailed: 0'));
 });
 
 test('every request to the model is noted for the Model tab: what was sent, and what came back as it streamed', async () => {

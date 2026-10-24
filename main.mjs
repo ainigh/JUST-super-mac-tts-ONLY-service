@@ -509,7 +509,7 @@ function menu() {
     { label: ttsLine, enabled: false },
     { label: earsLine, enabled: false },
     { label: a.error ? `Model: ${a.error}`.slice(0, 70) : `Model: ${a.model || 'the best Ollama has'}`, enabled: false },
-    { label: tools.reachable && !tools.error ? `Tools: ${tools.scripts.length} scripts, ${tools.flows.length} flows` : 'Tools: Tool Mac Tool Run isn’t running', enabled: false },
+    { label: tools.reachable && !tools.error ? `Tools: ${tools.tools.length} tools, ${tools.scripts.length} scripts, ${tools.flows.length} flows` : tools.reachable ? `Tools: ${tools.error}`.slice(0, 70) : 'Tools: Tool Mac Tool Run isn’t running', enabled: false },
     { type: 'separator' },
     radio('Character (and voice)', AVATARS, s.avatar, (k) => settings.set({ avatar: k, voice: characterOf(k).voice })),
     radio('Framing', VIEWS, s.view, (k) => settings.set({ view: k })),

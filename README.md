@@ -23,15 +23,16 @@ Run script), and no wake word.
 - **One model**: [Ollama](https://ollama.com)'s, on this Mac (the best one you have, or the one you
   pick). It answers, calls the tools, and writes the emojis and `[tags]` its face plays, all in one
   answer, said sentence by sentence as it's written.
-- **Tools, hand-rolled**: the model writes a line of JSON, `{"tool": …, "arguments": …}`, and the
-  result comes back to it as the next message (not Ollama's tool calling, so any model can). Its
-  tools are Tool Mac Tool Run's (run a script or a flow, write Flow code, read runs), each run
-  asking you on the Mac first; its file library (notes, answered at once); any other route it
-  lists, so what it adds later is there the day it ships; plus its own: a schedule and its memory. Where Tool Mac Tool
-  Run finds things by a few words (`GET /api/search`), the model is told only the scripts' names and, with each request,
-  the few that fit it, and it finds the rest itself (`find`): its instructions are half the size. **Cancel** any of it: the
-  Stop button, a Cancel on a tool's card, or say "cancel": a run waiting for your click is taken off
-  the Mac, a running one is stopped.
+- **Tools, from Tool Mac Tool Run**: the model writes a line of JSON, `{"tool": …, "arguments": …}`,
+  and the result comes back to it as the next message (not Ollama's tool calling, so any model
+  can). Its tools are Tool Mac Tool Run's, as Tool Mac Tool Run lists them (`GET /api/tools`), with
+  its own advice and examples: the web (search it and read any page or API, at once), your Chrome
+  (open a page, read it, show you where things are), your scripts and flows (each asking you on the
+  Mac first), notes, MEMORY and the mind, showing and copying. This app wraps none of them: it
+  passes each call through, so what Tool Mac Tool Run adds is there the day it ships. Its own is
+  the schedule. With each request it's also given what fits it (Tool Mac Tool Run's search).
+  **Cancel** any of it: the Stop button, a Cancel on a tool's card, or say "cancel": a run waiting
+  for your click is taken off the Mac, a running one is stopped.
 - **Its character**: it sees things through, listens to your exact words, offers the next step it can see
   coming, and checks its work before it calls it done, while allowing that it may have missed something.
 - **Later**: "remind me in 20 minutes…", "at 5 check the build…", "on Friday at 8…". It

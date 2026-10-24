@@ -22,7 +22,7 @@ import { CHARACTERS, SIZES, characterOf } from './src/shared/characters.mjs';
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const AVATARS = Object.fromEntries(CHARACTERS.map((c) => [c.id, `${c.name} (${c.body === 'F' ? 'woman' : 'man'})`]));
-const CHAT = [360, 600]; // the chat window: width, and height at most
+const CHAT = [720, 600]; // the chat window: width, and height at most
 const STATIC_PORT = 18769; // the page's address stays the same, so what it downloads stays cached
 const VIEWS = { full: 'Head to toes', mid: 'Waist up', upper: 'Head and shoulders', head: 'Face' };
 

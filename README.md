@@ -26,7 +26,8 @@ Run script), and no wake word.
 - **Tools, hand-rolled**: the model writes a line of JSON, `{"tool": …, "arguments": …}`, and the
   result comes back to it as the next message (not Ollama's tool calling, so any model can). Its
   tools are Tool Mac Tool Run's (run a script or a flow, write Flow code, read runs), each run
-  asking you on the Mac first, plus its own: a schedule and its memory. **Cancel** any of it: the
+  asking you on the Mac first; its file library (notes, answered at once); any other route it
+  lists, so what it adds later is there the day it ships; plus its own: a schedule and its memory. **Cancel** any of it: the
   Stop button, a Cancel on a tool's card, or say "cancel": a run waiting for your click is taken off
   the Mac, a running one is stopped.
 - **Later**: "remind me in 20 minutes…", "at 5 check the build…", "on Friday at 8…". It
@@ -37,10 +38,12 @@ Run script), and no wake word.
   instructions) in the chat's **Mind** tab.
 - **The chat**: click the character. What you both said, each tool at work (waiting for your click,
   running, what it printed, Cancel), every tool there is (fetched from Tool Mac Tool Run as it
-  opens), what's scheduled, its memory and model, the **Prompts** it's given as they stand now
-  (each with Copy), and the **Errors** (with **Copy report**, to paste wherever you report a
-  problem, and **Try the voice again**); the character picker and the size buttons (smaller and
-  bigger go round). Click it again to hide it.
+  opens), what's scheduled, its memory and model, the **Model** log (every request to the model,
+  word for word, and what came back), the **Calls** log (every tool call: its arguments, each
+  request's address, body and answer, and what went back to the model), the **Prompts** it's given
+  as they stand now (each with Copy), and the **Errors** (with **Copy report**, to paste wherever
+  you report a problem, and **Try the voice again**); the character picker and the size buttons
+  (S, M, L, H). Click it again to hide it.
 - **The face**: [TalkingHead](https://github.com/met4citizen/TalkingHead) (8 moods, 27 expressions,
   8 hand gestures, nods and shakes, 10 poses) and Kokoro through
   [HeadTTS](https://github.com/met4citizen/HeadTTS), with each word and viseme timed, so the lips
@@ -93,7 +96,9 @@ voice again without restarting the app.
 | Start over | Say "new chat", or **Mind › Start a new chat** (what was said stays, behind a line) |
 | Clear the chat | Say "clear the chat", or the bin at the top of the chat (what it has learned stays) |
 | Show or hide the character | Click the menu bar icon, or **⌘⇧A** anywhere |
-| Change character (and voice), size | The chat's top row; or right-click the icon or the character |
+| Change character (and voice), size | The chat's top row (S, M, L, H); or right-click the icon or the character |
+| See what went to the model, and what came back | The chat's **Model** tab |
+| See every tool call: its address, what it sent, what came back | The chat's **Calls** tab |
 | Model, thinking, listening while it talks, memory | The chat's **Mind** tab |
 | Move it | Drag it |
 

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { calls, isSilent, looksBroken, sayable, words } from './calls.mjs';
 import * as memoryTools from './memory.mjs';
-import { NOTE, ALL_TOOLS, canonical, claimsInability, promisesWork, systemPrompt, toolResult, userMessage } from './prompt.mjs';
+import { NOTE, ALL_TOOLS, toolsFor, canonical, claimsInability, promisesWork, systemPrompt, toolResult, userMessage } from './prompt.mjs';
 import * as scheduleTools from './scheduler.mjs';
 import { TOOL_NAMES as RUN_TOOLS } from './toolrun.mjs';
 
@@ -31,10 +31,11 @@ export class Assistant {
    * @param {() => void} o.stopSpeaking
    * @param {(ev: object) => void} [o.emit]
    * @param {string|null} [o.file] - where the chat is kept
+   * @param {import('./trace.mjs').Trace} [o.trace] - where each tool call is noted, with what it sent and got
    * @param {() => number} [o.now]
    */
-  constructor({ model, toolrun, scheduler, memory, character, speak, stopSpeaking, emit = () => {}, file = null, now = Date.now }) {
-    Object.assign(this, { model, toolrun, scheduler, memory, character, speak, stopSpeaking, emit, file, now });
+  constructor({ model, toolrun, scheduler, memory, character, speak, stopSpeaking, emit = () => {}, file = null, trace = null, now = Date.now }) {
+    Object.assign(this, { model, toolrun, scheduler, memory, character, speak, stopSpeaking, emit, file, trace, now });
     this.history = []; // what the model sees: { role, content }
     this.log = []; // what the chat shows: entries
     this.inbox = []; // what's come in and not been answered: { text, how, at, entry }
@@ -275,6 +276,7 @@ export class Assistant {
     turn.calls++;
     const args = call.arguments && typeof call.arguments === 'object' ? call.arguments : {};
     const entry = this.add({ kind: 'tool', name: call.name, args, state: 'working', startedAt: this.now(), output: '' });
+    const log = this.trace?.open({ kind: 'tool', name: call.name, args, state: 'working', where: ALL_TOOLS.find((t) => t.name === call.name)?.where || 'unknown' });
     turn.toolEntry = entry;
     this.emitState();
     let text;
@@ -296,6 +298,7 @@ export class Assistant {
         try {
           text = await this.toolrun.run(call.name, args, {
             signal: turn.ctrl.signal,
+            log,
             onStatus: (s) => {
               const patch = { state: s.state === 'done' ? 'done' : s.state, label: s.label || entry.label };
               if (s.request) patch.request = s.request;
@@ -328,6 +331,7 @@ export class Assistant {
     const cancelled = turn.ctrl.signal.aborted;
     if (failed && !cancelled) turn.failures++;
     this.update(entry, { state: cancelled ? 'cancelled' : failed ? 'failed' : 'done', result: text, endedAt: this.now() });
+    this.trace?.change(log, { state: cancelled ? 'cancelled' : failed ? 'failed' : 'done', result: text, ms: this.now() - entry.startedAt }, { final: true });
     turn.toolEntry = null;
     this.emitState();
     return { text, failed, cancelled };
@@ -350,7 +354,7 @@ export class Assistant {
     this.emitState();
     try {
       const system = systemPrompt({ character: this.character(), catalog: this.toolrun.catalog, memory: this.memory, now: this.now() });
-      const text = await this.model.chat([{ role: 'system', content: system }, ...this.history, { role: 'user', content: NOTE.reflect }], { signal: ctrl.signal });
+      const text = await this.model.chat([{ role: 'system', content: system }, ...this.history, { role: 'user', content: NOTE.reflect }], { signal: ctrl.signal, purpose: 'learning' });
       for (const c of calls(text).slice(0, 3)) {
         const call = canonical(c, this.toolrun.catalog);
         if (!memoryTools.TOOLS.some((t) => t.name === call.name)) continue;
@@ -455,7 +459,8 @@ export class Assistant {
     const c = this.toolrun.catalog;
     return {
       builtin: ALL_TOOLS.filter((t) => t.where === 'local').map((t) => ({ name: t.name, description: t.description, args: (t.args || []).map(([n, d]) => ({ name: n, about: d })) })),
-      mac: ALL_TOOLS.filter((t) => t.where === 'mac').map((t) => ({ name: t.name, description: t.description })),
+      mac: toolsFor(c).filter((t) => t.where === 'mac').map((t) => ({ name: t.name, description: t.description })),
+      groups: c.groups,
       scripts: c.scripts,
       flows: c.flows,
       reachable: c.reachable && !c.error,

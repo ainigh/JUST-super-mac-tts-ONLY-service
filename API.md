@@ -75,6 +75,8 @@ curl -s localhost:8769/api/echo -d '{"text": "nice to meet you"}'
 | `POST /api/chat`, `GET /api/chat` | a message to the assistant (`"wait": true` answers with its reply); the conversation |
 | `POST /api/chat/new` | a fresh conversation (the chat keeps what was said, behind a line) |
 | `POST /api/chat/clear` | clears the chat: the conversation and every entry of it (memory stays) |
+| `GET  /api/trace/model` | the latest requests to the model (`?limit=20`): the messages sent, word for word, and what came back |
+| `GET  /api/trace/calls` | the latest tool calls (`?limit=20`): each with its arguments, every request it made (address, body, status, request id, the stream's events, the answer) and what went back to the model |
 | `POST /api/cancel` | cancels what the assistant is doing: its answer, a run waiting for its click or running |
 | `POST /api/heard` | a phrase heard by other ears, handled as if the character's own had heard it |
 | `GET  /api/tools`, `POST /api/tools` | every tool it has (built in, and Tool Mac Tool Run's scripts and flows); POST asks again |
@@ -314,8 +316,13 @@ it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) a
   minutes, and on `POST /api/tools`, and put in the model's instructions. Every run puts a card on
   the Mac and waits for the user's click on Run. Runs are streamed, so each can be **cancelled**
   at any point: while the card waits (the card is taken away and nothing runs) or while it runs
-  (it's stopped). The user's notes live there too (`utilities/library.py`): this app keeps no
-  library of its own.
+  (it's stopped). The routes it lists (`GET /api/endpoints`) are fetched with them.
+- **Notes**: `library` (an `op`, with `name`, `text`, `q`, `to`…) is Tool Mac Tool Run's file
+  library (`POST /api/library`), which answers at once, with no card: this app keeps no library of
+  its own. An older Tool Mac Tool Run without it: the notes script (`utilities/library.py`).
+- **Every other route** Tool Mac Tool Run lists (Straw, automation, and whatever it adds later:
+  memory, mind, system docs…) is reached with `call_api` (`method`, `path`, `body`, `why`), only
+  under `/api/` on that server; one marked as asking on the Mac waits for the click there.
 - **Its own tools**: `schedule` (`in_minutes`, or `at`: a local date and time such as
   `"2026-10-24 17:30"`, `"17:30"`, `"tomorrow 9:00"`, `"friday 8:00"`), `list_schedules`,
   `cancel_schedule` (an id, or `"all"`); `remember` and `forget` (its memory).

@@ -1,11 +1,17 @@
 // Tool Mac Tool Run (http://127.0.0.1:8768): the user's scripts and flows, which reach everything
 // on the Mac (the browser and the web, files, apps, notes). Every run puts a card on the Mac and
 // waits for the user's click on Run. Runs are streamed, so one can be cancelled at any point:
-// while the card waits (hanging up takes the card away) or while it runs (it's stopped).
+// while the card waits (hanging up takes the card away) or while it runs (it's stopped). The
+// file library answers at once, without a card; any other route it lists (GET /api/endpoints) is
+// reached with call_api, so what it adds later (Memory, Mind, System Docs…) is there the day it ships.
 
 export const DEFAULT_URL = 'http://127.0.0.1:8768';
 export const CLIENT = 'Super Face';
 const MAX_OUTPUT = 12_000;
+const MAX_EVENTS = 400; // stream events noted for one request (the Calls tab)
+/** Route groups the tools above already cover: call_api is told only of the others. */
+const COVERED = ['about', 'scripts', 'runs'];
+const LIBRARY_OPS = ['list', 'names', 'read', 'read_many', 'exists', 'write', 'create', 'append', 'rename', 'copy', 'delete', 'search', 'find', 'recent', 'outline', 'backlinks', 'stats', 'trash', 'restore', 'empty_trash'];
 
 /** The tools over Tool Mac Tool Run, as the model is told them. */
 export const TOOLS = [
@@ -44,6 +50,31 @@ export const TOOLS = [
   { name: 'list_runs', description: 'Lists the latest runs on the Mac, newest first, without their output.', args: [['limit', 'integer, optional: how many, default 10']] },
   { name: 'read_run', description: 'Reads one run in full, with its output.', args: [['id', "string: the run's id"]] },
   { name: 'stop_run', description: 'Stops a run that is still going (one the user started asks them first).', args: [['id', "string: the run's id"]] },
+  {
+    name: 'library',
+    description:
+      "The user's notes library in Tool Mac Tool Run (LIBRARY): Markdown notes known by name, like keys and values. Answers at once: no card, no click. Deleting moves a note to the library's own Trash (restore brings it back).",
+    args: [
+      ['op', `string: ${LIBRARY_OPS.join(', ')}`],
+      ['name', "string: the note's name (no .md), for read, exists, write, create, append, rename, copy, delete, outline, backlinks, restore"],
+      ['text', 'string: for write (replaces it all), create, append (a line at the end)'],
+      ['q', 'string: words to look for, for search and find (a "phrase" in quotes); also narrows list by name'],
+      ['to', 'string: the new name, for rename and copy'],
+      ['names', 'list of strings: for read_many'],
+      ['limit', 'integer, optional: for list, search, find, recent'],
+    ],
+  },
+  {
+    name: 'call_api',
+    description:
+      "Calls any other route Tool Mac Tool Run lists (they're below, under \"Other routes\"), for what the tools above don't do. One marked \"asks on the Mac\" waits for the user's click there, like a run.",
+    args: [
+      ['method', 'string: GET, POST, PUT or DELETE, as listed'],
+      ['path', 'string: the route, as listed, with any {name} filled in and ?query added (e.g. /api/straw)'],
+      ['body', 'object, optional: the JSON to send, as the route says'],
+      ['why', 'string: why the user wants this; shown on the card when it asks on the Mac'],
+    ],
+  },
 ];
 
 export const TOOL_NAMES = TOOLS.map((t) => t.name);
@@ -53,12 +84,32 @@ export class ToolRun {
    * @param {object} o
    * @param {() => string} o.url - read fresh for every call
    * @param {typeof fetch} [o.fetch]
+   * @param {import('./trace.mjs').Trace} [o.trace] - where each request and its answer are noted
    */
-  constructor({ url, fetch: f = globalThis.fetch }) {
+  constructor({ url, fetch: f = globalThis.fetch, trace = null }) {
     this.urlOf = url;
     this.fetch = f;
-    /** What there is to run, as last fetched. */
-    this.catalog = { reachable: false, folder: null, scripts: [], flows: [], fetched: 0, error: 'not asked yet' };
+    this.trace = trace;
+    /** What there is to run, as last fetched; `groups` are its routes (null: it doesn't list them). */
+    this.catalog = { reachable: false, folder: null, scripts: [], flows: [], groups: null, fetched: 0, error: 'not asked yet' };
+  }
+
+
+  /**
+   * Notes one HTTP exchange for the Calls tab, under `parent` (the tool call it's for) or, with
+   * none, as an item of its own. Gives back set(patch) to fill it in as it goes.
+   */
+  note(parent, item) {
+    const t = this.trace;
+    if (!t) return { set() {}, rec: {} };
+    const rec = { at: Date.now(), ...item };
+    if (!parent) {
+      const own = t.open({ kind: 'http', ...rec });
+      return { rec: own, set: (patch, final) => t.change(own, patch, { final }) };
+    }
+    (parent.http ||= []).push(rec);
+    t.change(parent);
+    return { rec, set: (patch, final) => (Object.assign(rec, patch), t.change(parent, null, { final })) };
   }
 
   get url() {
@@ -67,54 +118,79 @@ export class ToolRun {
     return s.replace(/\/+$/, '');
   }
 
-  /** A plain request: [status, json]. Throws only when nothing answers. */
-  async call(method, path, body, { timeout = 15_000, signal } = {}) {
+  /** A plain request: [status, json]. Throws only when nothing answers. `log`: the tool call it's for. */
+  async call(method, path, body, { timeout = 15_000, signal, log } = {}) {
+    const started = Date.now();
+    const sent = body ? { client: CLIENT, ...body } : undefined;
+    const n = this.note(log, { method, url: this.url + path, body: sent, state: 'sending' });
     let res;
     try {
       res = await this.fetch(this.url + path, {
         method,
         headers: { 'Content-Type': 'application/json', 'X-Client': CLIENT },
-        body: body ? JSON.stringify({ client: CLIENT, ...body }) : undefined,
-        signal: signal || AbortSignal.timeout(timeout),
+        body: sent ? JSON.stringify(sent) : undefined,
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout),
       });
     } catch (err) {
+      n.set({ state: signal?.aborted ? 'cancelled' : 'failed', error: err.message, ms: Date.now() - started }, true);
       if (signal?.aborted) throw err;
       throw new Error(`Tool Mac Tool Run isn't answering at ${this.url}. Is it running, with its API on?`);
     }
-    let json = {};
+    let text = '';
+    let json;
     try {
-      json = await res.json();
+      text = await res.text();
+      json = JSON.parse(text);
     } catch {
       /* not JSON */
     }
-    return [res.status, json];
+    n.set({ state: 'done', status: res.status, request: res.headers.get('x-request-id') || json?.request || undefined, response: json === undefined ? text : json, ms: Date.now() - started }, true);
+    return [res.status, json && typeof json === 'object' ? json : {}];
   }
 
-  /** Fetches the scripts and flows (for the model's prompt and the chat's tool list). */
+  /** Fetches the scripts and flows, and the routes there are (for the model's prompt and the chat's tool list). */
   async refresh() {
+    const log = this.trace?.open({ kind: 'catalog', name: 'Fetching the scripts, flows and routes', state: 'working' });
+    const started = Date.now();
     try {
-      const [status, scripts] = await this.call('GET', '/api/scripts', null, { timeout: 5000 });
+      return await this.fetchCatalog(log);
+    } finally {
+      this.trace?.change(log, { state: this.catalog.error ? 'failed' : 'done', result: this.catalog.error || `${this.catalog.scripts.length} scripts, ${this.catalog.flows.length} flows, ${this.catalog.groups ? `${this.catalog.groups.length} route groups` : 'no route list'}`, ms: Date.now() - started }, { final: true });
+    }
+  }
+
+  async fetchCatalog(log) {
+    try {
+      const [status, scripts] = await this.call('GET', '/api/scripts', null, { timeout: 5000, log });
       if (status < 200 || status >= 300) {
-        this.catalog = { ...this.catalog, reachable: status !== 0, scripts: [], flows: [], fetched: Date.now(), error: trouble(status, scripts) };
+        this.catalog = { ...this.catalog, reachable: status !== 0, scripts: [], flows: [], groups: null, fetched: Date.now(), error: trouble(status, scripts) };
         return this.catalog;
       }
       let flows = {};
       try {
-        const [fs, fj] = await this.call('GET', '/api/flows', null, { timeout: 5000 });
+        const [fs, fj] = await this.call('GET', '/api/flows', null, { timeout: 5000, log });
         if (fs >= 200 && fs < 300) flows = fj;
       } catch {
         /* scripts without flows */
+      }
+      let groups = null;
+      try {
+        const [es, ej] = await this.call('GET', '/api/endpoints', null, { timeout: 5000, log });
+        if (es >= 200 && es < 300 && Array.isArray(ej.groups)) groups = ej.groups.filter((g) => g?.id && Array.isArray(g.routes)).map(groupJSON);
+      } catch {
+        /* an older Tool Mac Tool Run: no route list */
       }
       this.catalog = {
         reachable: true,
         folder: scripts.folder || null,
         scripts: (scripts.scripts || []).filter((s) => s?.name).map(scriptJSON),
         flows: (flows.flows || []).filter((f) => f?.name).map((f) => ({ name: f.name, summary: f.summary || '', inputs: inputsOf(f.inputs) })),
+        groups,
         fetched: Date.now(),
         error: null,
       };
     } catch (err) {
-      this.catalog = { reachable: false, folder: null, scripts: [], flows: [], fetched: Date.now(), error: err.message };
+      this.catalog = { reachable: false, folder: null, scripts: [], flows: [], groups: null, fetched: Date.now(), error: err.message };
     }
     return this.catalog;
   }
@@ -123,7 +199,7 @@ export class ToolRun {
    * Runs a tool; the answer is text for the model. `onStatus(s)` hears how a run is going:
    * { state: 'sending' | 'waiting' | 'running' | 'done', request, run, output }.
    */
-  async run(name, args = {}, { signal, onStatus = () => {} } = {}) {
+  async run(name, args = {}, { signal, onStatus = () => {}, log } = {}) {
     try {
       switch (name) {
         case 'list_scripts': {
@@ -141,7 +217,7 @@ export class ToolRun {
           const stdin = str(args.stdin ?? args.input);
           if (stdin) body.stdin = stdin;
           body.why = str(args.why ?? args.reason) || 'The user asked for it';
-          return await this.stream('/api/run', body, { signal, onStatus, label: script });
+          return await this.stream('/api/run', body, { signal, onStatus, log, label: script });
         }
         case 'run_flow': {
           const flow = str(args.flow ?? args.name);
@@ -149,7 +225,7 @@ export class ToolRun {
           const body = { flow, why: str(args.why ?? args.reason) || 'The user asked for it' };
           const a = list(args.args ?? args.arguments);
           if (a) body.args = a;
-          return await this.stream('/api/compose', body, { signal, onStatus, label: flow });
+          return await this.stream('/api/compose', body, { signal, onStatus, log, label: flow });
         }
         case 'run_flow_code': {
           const source = str(args.source ?? args.code);
@@ -157,12 +233,12 @@ export class ToolRun {
           const body = { source, why: str(args.why ?? args.reason) || 'The user asked for it' };
           const n = str(args.name);
           if (n) body.name = n;
-          return await this.stream('/api/compose', body, { signal, onStatus, label: n || 'Flow code' });
+          return await this.stream('/api/compose', body, { signal, onStatus, log, label: n || 'Flow code' });
         }
         case 'check_flow': {
           const source = str(args.source ?? args.code);
           if (!source) return 'Give the Flow code as source.';
-          const [status, json] = await this.call('POST', '/api/check', { source }, { signal });
+          const [status, json] = await this.call('POST', '/api/check', { source }, { signal, log });
           if (json.ok === true) {
             const b = (json.bindings || []).map((x) => `${x.name}: ${x.type}`);
             return `The code is fine.${b.length ? ` It defines ${b.join(', ')}.` : ''}`;
@@ -171,7 +247,7 @@ export class ToolRun {
         }
         case 'list_runs': {
           const limit = Math.min(50, Math.max(1, Number(args.limit) || 10));
-          const [status, json] = await this.call('GET', `/api/runs?limit=${limit}`, null, { signal });
+          const [status, json] = await this.call('GET', `/api/runs?limit=${limit}`, null, { signal, log });
           const t = trouble(status, json);
           if (t) return t;
           const runs = json.runs || [];
@@ -181,15 +257,19 @@ export class ToolRun {
         case 'read_run': {
           const id = str(args.id ?? args.run);
           if (!id) return "Give the run's id.";
-          const [status, json] = await this.call('GET', `/api/runs/${encodeURIComponent(id)}`, null, { signal });
+          const [status, json] = await this.call('GET', `/api/runs/${encodeURIComponent(id)}`, null, { signal, log });
           return trouble(status, json) || outcome(json);
         }
         case 'stop_run': {
           const id = str(args.id ?? args.run);
           if (!id) return "Give the run's id.";
-          const [status, json] = await this.call('POST', `/api/runs/${encodeURIComponent(id)}/stop`, { why: str(args.why) || 'The user asked to stop it' }, { signal, timeout: 150_000 });
+          const [status, json] = await this.call('POST', `/api/runs/${encodeURIComponent(id)}/stop`, { why: str(args.why) || 'The user asked to stop it' }, { signal, log, timeout: 150_000 });
           return trouble(status, json) || (json.stopping ? 'Stopping it.' : 'It had already ended.');
         }
+        case 'library':
+          return await this.library(args, { signal, log });
+        case 'call_api':
+          return await this.callApi(args, { signal, log, onStatus });
       }
       return null;
     } catch (err) {
@@ -198,9 +278,89 @@ export class ToolRun {
     }
   }
 
+  /** The file library: one operation, answered at once (nothing is asked on the Mac). */
+  async library(args, { signal, log }) {
+    const { op: rawOp, ...rest } = args || {};
+    const op = str(rawOp)?.toLowerCase().replace(/[\s-]+/g, '_');
+    if (!op) return `Say which op: ${LIBRARY_OPS.join(', ')}.`;
+    if (!LIBRARY_OPS.includes(op)) return `There's no library op called ${op}. The ops: ${LIBRARY_OPS.join(', ')}.`;
+    const [status, json] = await this.call('POST', '/api/library', { op, ...rest }, { signal, log });
+    if (status >= 200 && status < 300) {
+      const { request: _, client: __, ...answer } = json;
+      return clip(JSON.stringify(answer));
+    }
+    return trouble(status, json);
+  }
+
+  /** Any route Tool Mac Tool Run lists. One that asks on the Mac waits for the click (up to its two minutes). */
+  async callApi(args, { signal, log, onStatus }) {
+    const method = (str(args.method) || 'GET').toUpperCase();
+    let p = str(args.path ?? args.route ?? args.url);
+    if (!p) return 'Give the path of the route, as listed (e.g. /api/straw).';
+    // A whole address on this server comes down to its path; another server's never.
+    if (/^https?:/i.test(p)) {
+      const u = new URL(p);
+      if (u.origin !== new URL(this.url).origin) return `call_api only reaches Tool Mac Tool Run (${this.url}).`;
+      p = u.pathname + u.search;
+    }
+    if (!p.startsWith('/')) p = `/${p}`;
+    if (!p.startsWith('/api/') && p !== '/api') return 'call_api is for routes under /api/, as listed.';
+    if (!['GET', 'POST', 'PUT', 'DELETE'].includes(method)) return 'The method is GET, POST, PUT or DELETE.';
+    const route = this.routeFor(method, p);
+    const asks = !!route?.asks;
+    let body = args.body ?? args.json ?? args.data;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        return 'body must be a JSON object.';
+      }
+    }
+    if (body !== undefined && (typeof body !== 'object' || Array.isArray(body) || body === null)) return 'body must be a JSON object.';
+    if (method === 'GET' || method === 'DELETE') body = undefined;
+    else body = { ...(body || {}), ...(asks ? { why: str(body?.why ?? args.why) || 'The user asked for it' } : {}) };
+    onStatus({ state: asks ? 'waiting' : 'sending', label: `${method} ${p}` });
+    const [status, json] = await this.call(method, p, body ?? (method === 'GET' || method === 'DELETE' ? null : {}), { signal, log, timeout: asks ? 150_000 : 30_000 });
+    onStatus({ state: 'done', label: `${method} ${p}` });
+    const t = trouble(status, json);
+    if (t) return route ? t : `${t}${status === 404 ? ' That route isn\'t one listed: use one from the list.' : ''}`;
+    const { client: _, ...answer } = json;
+    return `${method} ${p}: ${status}\n${clip(JSON.stringify(answer))}`;
+  }
+
+  /** The listed route a request is for ({name} matching any one segment), or null. */
+  routeFor(method, p) {
+    const pathOnly = p.split('?')[0];
+    for (const g of this.catalog.groups || []) {
+      for (const r of g.routes) {
+        if (r.method !== method) continue;
+        const re = new RegExp(`^${r.path.replace(/[.*+?^$()|[\]\\]/g, '\\$&').replace(/\\?\{[^}]+\\?\}/g, '[^/]+')}$`);
+        if (re.test(pathOnly)) return r;
+      }
+    }
+    return null;
+  }
+
   /** A run, streamed (see the API's "Streaming"), cancellable all the way through. */
-  async stream(path, body, { signal, onStatus, label }) {
+  async stream(path, body, { signal, onStatus, log, label }) {
     if (signal?.aborted) return 'Cancelled by the user before it was sent.';
+    const started = Date.now();
+    const sent = { client: CLIENT, ...body, stream: true };
+    const n = this.note(log, { method: 'POST', url: this.url + path, body: sent, state: 'sending', events: [] });
+    const events = n.rec.events || [];
+    const noteEvent = (ev) => {
+      if (events.length < MAX_EVENTS) events.push(ev);
+      else if (ev.type !== 'output') events.push(ev);
+      n.set({});
+    };
+    try {
+      return await this.streamed(path, sent, { signal, onStatus, log, label, noteEvent, n });
+    } finally {
+      n.set({ state: n.rec.state === 'sending' || n.rec.state === 'streaming' ? 'done' : n.rec.state, ms: Date.now() - started }, true);
+    }
+  }
+
+  async streamed(path, sent, { signal, onStatus, log, label, noteEvent, n }) {
     const ctrl = new AbortController();
     let request = null;
     let runId = null;
@@ -209,7 +369,7 @@ export class ToolRun {
     const onAbort = () => {
       cancelled = true;
       // Running: it's stopped on the Mac. Waiting: hanging up takes the card away.
-      if (runId) this.call('POST', `/api/runs/${encodeURIComponent(runId)}/stop`, { why: 'The user cancelled it' }).catch(() => {});
+      if (runId) this.call('POST', `/api/runs/${encodeURIComponent(runId)}/stop`, { why: 'The user cancelled it' }, { log }).catch(() => {});
       ctrl.abort();
     };
     signal?.addEventListener('abort', onAbort, { once: true });
@@ -220,15 +380,17 @@ export class ToolRun {
         res = await this.fetch(this.url + path, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Client': CLIENT },
-          body: JSON.stringify({ client: CLIENT, ...body, stream: true }),
+          body: JSON.stringify(sent),
           signal: ctrl.signal,
         });
       } catch (err) {
+        n.set({ state: cancelled ? 'cancelled' : 'failed', error: err.message });
         if (cancelled) return 'Cancelled by the user before it was sent.';
         throw new Error(`Tool Mac Tool Run isn't answering at ${this.url}. Is it running, with its API on?`);
       }
       request = res.headers.get('x-request-id');
       const type = res.headers.get('content-type') || '';
+      n.set({ status: res.status, request: request || undefined, state: 'streaming' });
       if (!type.includes('ndjson')) {
         // An error before anything was asked (no such script, a Flow mistake…), or an older
         // Tool Mac Tool Run that answers once it's over.
@@ -238,6 +400,7 @@ export class ToolRun {
         } catch {
           /* empty */
         }
+        n.set({ response: json, request: request || json.request || undefined });
         onStatus({ state: 'done', request, ok: json.ok === true });
         return trouble(res.status, json) || outcome(json);
       }
@@ -258,6 +421,7 @@ export class ToolRun {
               continue;
             }
             request = ev.request || request;
+            noteEvent(ev);
             switch (ev.type) {
               case 'waiting':
                 onStatus({ state: 'waiting', request, label });
@@ -289,6 +453,7 @@ export class ToolRun {
         if (!cancelled) throw err;
       }
       if (cancelled) {
+        n.set({ state: 'cancelled' });
         onStatus({ state: 'done', request, ok: false, cancelled: true, label });
         return runId
           ? `Cancelled by the user while it was running: it was stopped.${output.trim() ? ` What it printed before:\n${tail(output)}` : ''}`
@@ -301,6 +466,29 @@ export class ToolRun {
     }
   }
 }
+
+/** Whether the file library answers there (an older Tool Mac Tool Run has none). */
+export function hasLibrary(catalog) {
+  return !!catalog?.groups?.some((g) => g.id === 'library' && g.on);
+}
+
+/** The route groups call_api is for: those no other tool covers. */
+export function otherGroups(catalog) {
+  return (catalog?.groups || []).filter((g) => !COVERED.includes(g.id) && !(g.id === 'library' && hasLibrary(catalog)));
+}
+
+function groupJSON(g) {
+  return {
+    id: String(g.id),
+    title: String(g.title || g.id),
+    about: String(g.about || ''),
+    on: g.on !== false,
+    routes: g.routes.filter((r) => r?.method && r?.path).map((r) => ({ method: String(r.method).toUpperCase(), path: String(r.path), summary: String(r.summary || ''), asks: !!r.asks_on_the_mac })),
+  };
+}
+
+/** Long JSON cut to what the model can read. */
+const clip = (s) => (s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}… (cut short: ${s.length} characters in all; ask for less, e.g. a limit or one name)` : s);
 
 function scriptJSON(s) {
   return {
@@ -360,13 +548,17 @@ export function trouble(status, json = {}) {
       return 'Tool Mac Tool Run has no scripts folder chosen yet; the user picks one in its panel.';
     case 'flow_mistake':
       return mistake(json);
+    case 'straw_mistake':
+      return mistake(json).replace('Flow', 'Straw');
+    case 'unauthorized':
+      return `Tool Mac Tool Run wants its token (${error}): it's shared on the network, and this address isn't this Mac's own.`;
     case 'unknown_script':
     case 'unknown_flow':
     case 'unknown_run':
     case 'unknown_request':
       return error;
   }
-  return `Tool Mac Tool Run said ${status}: ${error}`;
+  return `Tool Mac Tool Run said ${status}: ${error}${json.fix ? ` Fix: ${json.fix}` : ''}`;
 }
 
 const str = (v) => (typeof v === 'string' ? (v.trim() ? v : null) : typeof v === 'number' ? String(v) : null);

@@ -93,6 +93,19 @@ test('chat over the API, waiting for the answer; the character speaks it in its 
   assert.match(a.tools.error, /isn't answering/);
 });
 
+test('what went to the model, over the API; a size by name', async () => {
+  const [, m] = await get('/api/trace/model?limit=1');
+  assert.equal(m.items.length, 1);
+  assert.equal(m.items[0].purpose, 'answer');
+  assert.match(m.items[0].messages.at(-1).content, /hi there$/);
+  const [, c] = await get('/api/trace/calls');
+  assert.ok(Array.isArray(c.items));
+  assert.deepEqual(core.actions.setSize({ size: 'Large' }), { size: 'Large' });
+  assert.equal(settings.get().size, 'Large');
+  assert.throws(() => core.actions.setSize({ size: 'Tiny' }), /no size called Tiny/);
+  core.actions.setSize({ size: 'Medium' });
+});
+
 test('picking a character picks its voice, and its name', async () => {
   const [, s] = await post('/api/settings', { avatar: 'avatarsdk' });
   assert.equal(s.voice, 'am_puck');

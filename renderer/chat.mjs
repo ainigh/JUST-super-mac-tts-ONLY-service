@@ -51,7 +51,7 @@ function renderStatus() {
       return btn;
     }),
   );
-  $('sizeName').textContent = status.size;
+  renderSizes();
   $('mic').setAttribute('aria-pressed', String(status.listening));
   $('mic').title = status.listening ? 'Listening: click to stop listening' : 'Not listening: click to listen';
   document.body.dataset.ears = status.listening ? status.ears?.state || 'off' : 'off';
@@ -64,6 +64,26 @@ function renderStatus() {
   $('listenWhileSpeaking').checked = status.listenWhileSpeaking;
   $('retryVoice').hidden = status.face?.tts?.state !== 'failed';
   $('think').checked = status.think;
+}
+
+/** S, M, L, H: the character's size, one click each. */
+function renderSizes() {
+  const box = $('size');
+  const sizes = status.sizes || ['Small', 'Medium', 'Large', 'Huge'];
+  if (box.childElementCount !== sizes.length) {
+    box.replaceChildren(
+      ...sizes.map((name) => {
+        const b = document.createElement('button');
+        b.textContent = name[0];
+        b.title = name;
+        b.dataset.size = name;
+        b.setAttribute('role', 'radio');
+        b.onclick = () => act('setSize', { size: name });
+        return b;
+      }),
+    );
+  }
+  for (const b of box.children) b.setAttribute('aria-checked', String(b.dataset.size === status.size));
 }
 
 function doing() {
@@ -267,6 +287,10 @@ function renderTools() {
     'Built in',
     tools.builtin.filter((t) => match(t.name, t.description)).map((t) => item(t.name, t.description.split('. ')[0].replace(/\.$/, '') + '.', '', '', t.name === 'schedule' ? 'Remind me in 10 minutes to ' : `Use ${t.name} to `)),
   );
+  section(
+    'Through Tool Mac Tool Run',
+    (tools.mac || []).filter((t) => match(t.name, t.description)).map((t) => item(t.name, t.description.split('. ')[0].replace(/\.$/, '') + '.', '', '', t.name === 'library' ? 'In my notes, ' : `Use ${t.name} to `)),
+  );
   const groups = {};
   for (const s of tools.scripts) (groups[s.group] ||= []).push(s);
   for (const [g, scripts] of Object.entries(groups)) {
@@ -278,6 +302,14 @@ function renderTools() {
     );
   }
   section('Flows', tools.flows.filter((f) => match(f.name, f.summary)).map((f) => item(f.name, f.summary, '', '', `Run the flow ${f.name} `)));
+  // The routes it reaches with call_api (what Tool Mac Tool Run adds later shows up here by itself).
+  const covered = ['about', 'scripts', 'runs', ...((tools.mac || []).some((t) => t.name === 'library') ? ['library'] : [])];
+  for (const g of (tools.groups || []).filter((x) => !covered.includes(x.id))) {
+    section(
+      `${g.title}${g.on ? '' : ' (turned off)'}`,
+      g.routes.filter((r) => match(r.path, r.summary, g.title)).map((r) => item(`${r.method} ${r.path}`, r.summary, '', r.asks ? 'Asks on the Mac first' : '', `Using Tool Mac Tool Run's ${g.title}, `)),
+    );
+  }
 }
 
 function renderLater() {
@@ -421,6 +453,122 @@ function renderErrors() {
   }
 }
 
+// ---------------------------------------------------------------- the model's log, and the calls
+
+const traceCards = { model: new Map(), calls: new Map() }; // item id → its card
+const LIST = { model: 'modelList', calls: 'callList' };
+const COUNT = { model: 'modelCount', calls: 'callCount' };
+const PURPOSES = { answer: 'Answer', learning: 'Learning (after a request)', expressions: 'Expressions (for a client)' };
+
+async function loadTrace(log) {
+  const r = await act('trace', { log });
+  if (!r) return;
+  clearTrace(log);
+  for (const item of r.items) renderTrace(log, item);
+}
+
+function clearTrace(log) {
+  traceCards[log].clear();
+  $(LIST[log]).replaceChildren();
+  $(COUNT[log]).textContent = '';
+}
+
+function renderTrace(log, item) {
+  let li = traceCards[log].get(item.id);
+  // What was open stays open as the card is drawn again.
+  const open = new Set(li ? [...li.querySelectorAll('details[open]')].map((d) => d.dataset.key) : []);
+  if (!li) {
+    li = document.createElement('li');
+    li.className = 'card trace';
+    traceCards[log].set(item.id, li);
+    $(LIST[log]).prepend(li);
+    $(COUNT[log]).textContent = String(traceCards[log].size);
+  }
+  li.dataset.state = item.state || '';
+  li.replaceChildren(...(log === 'model' ? modelCard(item) : callCard(item)));
+  for (const d of li.querySelectorAll('details')) if (open.has(d.dataset.key)) d.open = true;
+}
+
+const el = (tag, cls, text) => Object.assign(document.createElement(tag), cls ? { className: cls } : {}, text !== undefined ? { textContent: text } : {});
+const pretty = (v) => (typeof v === 'string' ? v : JSON.stringify(v, null, 2));
+const took = (ms) => (ms === undefined ? '' : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
+
+function head(title, bits, copyOf) {
+  const h = el('div', 'head');
+  h.append(el('h4', '', title));
+  for (const b of bits.filter(Boolean)) h.append(el('span', `meta${b.cls ? ` ${b.cls}` : ''}`, b.text ?? b));
+  if (copyOf) {
+    const c = el('button', '', 'Copy');
+    c.onclick = async () => {
+      await copyText(copyOf());
+      c.textContent = 'Copied';
+      setTimeout(() => (c.textContent = 'Copy'), 1500);
+    };
+    h.append(c);
+  }
+  return h;
+}
+
+function fold(key, summary, body, open = false) {
+  const d = el('details');
+  d.dataset.key = key;
+  d.open = open;
+  d.append(el('summary', '', summary), body instanceof Node ? body : el('pre', '', body));
+  return d;
+}
+
+function stateBit(state) {
+  return { text: state, cls: `state-${state}` };
+}
+
+function modelCard(m) {
+  const msgs = m.messages || [];
+  const chars = msgs.reduce((n, x) => n + String(x.content).length, 0);
+  const out = [
+    head(PURPOSES[m.purpose] || m.purpose, [m.model, stateBit(m.state), took(m.ms), new Date(m.at).toLocaleTimeString()], () => pretty({ url: m.url, request: { ...m.request, messages: msgs }, response: m.text, error: m.error })),
+  ];
+  out.push(el('p', 'url', `POST ${m.url}${m.request ? `  ${JSON.stringify(m.request)}` : ''}`));
+  const sent = el('div', 'messages');
+  msgs.forEach((x, i) => sent.append(fold(`m${i}`, `${x.role} · ${String(x.content).length} characters`, String(x.content), i === msgs.length - 1)));
+  out.push(fold('sent', `Sent: ${msgs.length} messages, ${chars.toLocaleString()} characters`, sent));
+  out.push(fold('back', 'Came back', m.text || (m.state === 'asking' ? '…' : '(nothing)'), true));
+  if (m.error) out.push(el('p', 'bad', m.error));
+  return out;
+}
+
+function callCard(c) {
+  const out = [];
+  if (c.kind === 'http') {
+    out.push(head('A request', [stateBit(c.state), new Date(c.at).toLocaleTimeString()], () => pretty(c)));
+    out.push(httpBlock(c, 'h'));
+    return out;
+  }
+  const where = c.kind === 'catalog' ? 'Tool Mac Tool Run' : c.where === 'mac' ? 'Tool Mac Tool Run' : c.where === 'local' ? 'in this app' : '';
+  out.push(head(c.name, [where, stateBit(c.state), took(c.ms), new Date(c.at).toLocaleTimeString()], () => pretty(c)));
+  if (c.args && Object.keys(c.args).length) out.push(fold('args', 'Arguments', pretty(c.args), true));
+  (c.http || []).forEach((h, i) => out.push(httpBlock(h, `h${i}`)));
+  if (c.kind === 'tool' && !(c.http || []).length && c.state !== 'working') out.push(el('p', 'url', c.where === 'local' ? 'Done in this app: no request.' : 'No request was made.'));
+  if (c.result !== undefined) out.push(fold('result', c.kind === 'catalog' ? 'What came of it' : 'What went back to the model', c.result, c.kind !== 'catalog'));
+  return out;
+}
+
+function httpBlock(h, key) {
+  const box = el('div', 'http');
+  const line = el('div', 'line');
+  line.append(el('b', '', h.method), el('span', 'addr', ` ${h.url}`));
+  const bits = [h.status !== undefined ? `→ ${h.status}` : '', h.request ? `request ${h.request}` : '', took(h.ms), h.state && h.state !== 'done' ? h.state : ''].filter(Boolean);
+  if (bits.length) line.append(el('span', 'meta', `  ${bits.join(' · ')}`));
+  box.append(line);
+  if (h.body !== undefined) box.append(fold(`${key}s`, 'Sent', pretty(h.body)));
+  if (h.events?.length) {
+    const outputs = h.events.filter((e) => e.type === 'output').length;
+    box.append(fold(`${key}e`, `Came back, as it happened: ${h.events.length} events${outputs ? ` (${outputs} of printing)` : ''}`, h.events.map((e) => JSON.stringify(e)).join('\n'), true));
+  }
+  if (h.response !== undefined) box.append(fold(`${key}r`, 'Came back', pretty(h.response), !h.events?.length));
+  if (h.error) box.append(el('p', 'bad', h.error));
+  return box;
+}
+
 /** Onto the clipboard: the app's when it can, else the page's. */
 async function copyText(text) {
   const r = await act('copy', { text });
@@ -449,6 +597,7 @@ function tab(name) {
   $('compose').hidden = name !== 'chat';
   if (name === 'mind') loadModels();
   if (name === 'prompts') renderPrompts();
+  if (name === 'model' || name === 'calls') loadTrace(name);
   if (name === 'chat') scrollDown();
 }
 
@@ -479,9 +628,8 @@ $('input').addEventListener('keydown', (e) => {
 $('input').addEventListener('input', grow);
 $('mic').onclick = () => act('set', { listening: !status?.listening });
 $('close').onclick = () => bridge.close();
-$('smaller').onclick = () => act('cycleSize', { step: -1 });
-$('bigger').onclick = () => act('cycleSize', { step: 1 });
-$('sizeName').onclick = () => act('cycleSize', { step: 1 });
+$('clearModel').onclick = () => act('clearTrace', { log: 'model' });
+$('clearCalls').onclick = () => act('clearTrace', { log: 'calls' });
 $('toolSearch').addEventListener('input', renderTools);
 $('refreshTools').onclick = async () => {
   $('toolStatus').textContent = 'Asking Tool Mac Tool Run…';
@@ -534,6 +682,10 @@ bridge.onEvent((ev) => {
     case 'cleared':
       for (const li of shown.values()) li.remove();
       shown.clear();
+      break;
+    case 'trace':
+      if (ev.cleared) clearTrace(ev.log);
+      else renderTrace(ev.log, ev.item);
       break;
     case 'assistant':
       if (status) {
@@ -596,6 +748,8 @@ memory = await act('memory');
 renderMemory();
 errorList = (await act('errors'))?.errors || [];
 renderErrors();
+await loadTrace('model');
+await loadTrace('calls');
 $('input').focus();
 // The times ("in 12 minutes") move on.
 setInterval(async () => {

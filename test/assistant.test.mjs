@@ -7,7 +7,10 @@ import test from 'node:test';
 import { Assistant, display, isFailure } from '../src/main/assistant.mjs';
 import { Memory } from '../src/main/memory.mjs';
 import { Scheduler } from '../src/main/scheduler.mjs';
-import { ToolRun } from '../src/main/toolrun.mjs';
+import { ToolRun, hasLibrary, otherGroups } from '../src/main/toolrun.mjs';
+import { systemPrompt } from '../src/main/prompt.mjs';
+import { Trace } from '../src/main/trace.mjs';
+import { Ollama } from '../src/main/model.mjs';
 import { CHARACTERS } from '../src/shared/characters.mjs';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -34,6 +37,30 @@ async function fakeToolRun() {
       });
     }
     if (url.pathname === '/api/flows') return json(200, { flows: [{ name: 'morning.flow', summary: 'The day' }] });
+    if (url.pathname === '/api/endpoints') {
+      const route = (method, path, summary, asks = false) => ({ method, path, summary, asks_on_the_mac: asks });
+      return json(200, {
+        groups: [
+          { id: 'about', title: 'About the API', about: '', routes: [route('GET', '/api/health', 'is it up')] },
+          { id: 'scripts', title: 'Scripts and flows', about: '', routes: [route('POST', '/api/run', 'run a script', true)] },
+          { id: 'library', title: 'File library', about: 'The notes', switch: 'library', on: true, routes: [route('POST', '/api/library', 'any operation')] },
+          { id: 'straw', title: 'Straw', about: 'Chrome', routes: [route('GET', '/api/straw', "Straw's words"), route('POST', '/api/straw/run', 'run Straw code', true)] },
+          // What the brief has on the way: a group this app has never heard of.
+          { id: 'memory', title: 'Memory', about: 'The memory board', routes: [route('GET', '/api/memory/files/{name}', 'one memory file')] },
+          { id: 'runs', title: 'Runs and requests', about: '', switch: 'runs', on: true, routes: [route('GET', '/api/runs', 'the latest runs')] },
+        ],
+      });
+    }
+    if (url.pathname === '/api/library') {
+      seen.library = b;
+      if (b.name === 'Ghost') return json(404, { error: 'no note called Ghost', code: 'not_found', fix: 'There is Groceries', request: 'L2' });
+      return res.writeHead(200, { 'Content-Type': 'application/json', 'X-Request-Id': 'L1' }).end(JSON.stringify({ request: 'L1', name: b.name, action: 'appended' }));
+    }
+    if (url.pathname === '/api/straw/run') {
+      seen.straw = b;
+      return json(200, { request: 'S1', state: 'succeeded', ok: true, stdout: 'Compute\n' });
+    }
+    if (url.pathname === '/api/memory/files/PEOPLE') return json(200, { name: 'PEOPLE', text: '- Sam: my brother' });
     const stop = url.pathname.match(/^\/api\/runs\/(.+)\/stop$/);
     if (stop) {
       seen.stopped.push(stop[1]);
@@ -130,6 +157,74 @@ test('the scripts are fetched for the prompt and the chat; Tool Mac Tool Run not
     const off = new ToolRun({ url: () => 'http://127.0.0.1:9' });
     assert.match((await off.refresh()).error, /isn't answering/);
     assert.match(await off.run('run_script', { script: 'a.sh' }), /isn't answering/);
+  } finally {
+    fake.close();
+  }
+});
+
+test('the routes are fetched too: the library is a tool of its own, the rest (what ships later too) go to call_api', async () => {
+  const fake = await fakeToolRun();
+  try {
+    const t = new ToolRun({ url: () => fake.url });
+    const c = await t.refresh();
+    assert.ok(hasLibrary(c));
+    assert.deepEqual(otherGroups(c).map((g) => g.id), ['straw', 'memory']);
+    const p = systemPrompt({ character: CHARACTERS[0], catalog: c, memory: new Memory() });
+    assert.match(p, /^- library: /m);
+    assert.match(p, /^- call_api: /m);
+    assert.match(p, /^- GET \/api\/memory\/files\/\{name\}: one memory file$/m);
+    assert.match(p, /^- POST \/api\/straw\/run: run Straw code \[asks on the Mac\]$/m);
+    assert.doesNotMatch(p, /^- POST \/api\/run:/m, 'run_script covers it');
+    assert.match(p, /use library: the user's notes/);
+    // An older Tool Mac Tool Run, without the route list: neither tool is offered.
+    const old = systemPrompt({ character: CHARACTERS[0], catalog: { ...c, groups: null }, memory: new Memory() });
+    assert.doesNotMatch(old, /^- (library|call_api): /m);
+  } finally {
+    fake.close();
+  }
+});
+
+test('library: one op, answered at once; call_api: a listed route, never another server', async () => {
+  const fake = await fakeToolRun();
+  try {
+    const t = new ToolRun({ url: () => fake.url });
+    await t.refresh();
+    const out = await t.run('library', { op: 'append', name: 'Shopping', text: '- eggs' });
+    assert.deepEqual(JSON.parse(out), { name: 'Shopping', action: 'appended' });
+    assert.deepEqual(fake.seen.library, { client: 'Super Face', op: 'append', name: 'Shopping', text: '- eggs' });
+    assert.match(await t.run('library', { op: 'read', name: 'Ghost' }), /no note called Ghost.*Fix: There is Groceries/);
+    assert.match(await t.run('library', { op: 'shred' }), /no library op called shred/);
+    assert.match(await t.run('call_api', { method: 'GET', path: '/api/memory/files/PEOPLE' }), /^GET \/api\/memory\/files\/PEOPLE: 200\n.*Sam: my brother/);
+    assert.match(await t.run('call_api', { method: 'POST', path: '/api/straw/run', body: { source: 'open cloudflare.com' }, why: 'Find Compute' }), /: 200\n.*Compute/);
+    assert.equal(fake.seen.straw.why, 'Find Compute', 'a route that asks on the Mac carries the why');
+    assert.match(await t.run('call_api', { path: 'https://example.com/api/x' }), /only reaches Tool Mac Tool Run/);
+    assert.match(await t.run('call_api', { path: '/etc/passwd' }), /routes under \/api\//);
+    assert.match(await t.run('call_api', { path: '/api/nowhere' }), /isn't one listed/);
+  } finally {
+    fake.close();
+  }
+});
+
+test('every call is noted for the Calls tab: the tool, each request (address, body, status, request id), the stream, the result', async () => {
+  const fake = await fakeToolRun();
+  try {
+    const trace = new Trace({ name: 'calls' });
+    const t = new ToolRun({ url: () => fake.url, trace });
+    await t.refresh();
+    assert.equal(trace.list()[0].kind, 'catalog');
+    assert.deepEqual(trace.list()[0].http.map((h) => h.url.replace(fake.url, '')), ['/api/scripts', '/api/flows', '/api/endpoints']);
+    const log = trace.open({ kind: 'tool', name: 'run_script' });
+    await t.run('run_script', { script: 'hello.sh', args: ['Sam'] }, { log });
+    const h = log.http[0];
+    assert.equal(h.url, `${fake.url}/api/run`);
+    assert.equal(h.body.script, 'hello.sh');
+    assert.equal(h.status, 200);
+    assert.equal(h.request, 'REQ1');
+    assert.deepEqual(h.events.map((e) => e.type), ['waiting', 'started', 'output', 'done']);
+    const lib = trace.open({ kind: 'tool', name: 'library' });
+    await t.run('library', { op: 'append', name: 'Shopping', text: '- eggs' }, { log: lib });
+    assert.equal(lib.http[0].request, 'L1');
+    assert.deepEqual(lib.http[0].response, { request: 'L1', name: 'Shopping', action: 'appended' });
   } finally {
     fake.close();
   }
@@ -356,4 +451,28 @@ test('what the chat shows, and what counts as a failure', () => {
   assert.ok(isFailure('backup.sh: failed (exit code 3), 1 seconds.'));
   assert.ok(isFailure("It didn't run: the user clicked Don't Run on their Mac."));
   assert.ok(!isFailure('hello.sh: succeeded (exit code 0).\nIt printed:\nfailed: 0'));
+});
+
+test('every request to the model is noted for the Model tab: what was sent, and what came back as it streamed', async () => {
+  const trace = new Trace({ name: 'model' });
+  const lines = ['{"message":{"content":"<think>hm</think>Hel"}}', '{"message":{"content":"lo!"}}', '{"done":true}'].map((l) => l + '\n');
+  const fetch = async (url, { body }) => {
+    assert.equal(url, 'http://ollama/api/chat');
+    assert.equal(JSON.parse(body).model, 'qwen3:8b');
+    return new Response(new ReadableStream({ start: (c) => (lines.forEach((l) => c.enqueue(new TextEncoder().encode(l))), c.close()) }), { status: 200 });
+  };
+  const m = new Ollama({ current: () => ({ url: 'http://ollama', model: 'qwen3:8b' }), fetch, trace });
+  const text = await m.chat([{ role: 'system', content: 'You are Ivy' }, { role: 'user', content: 'hi' }], { onText: () => {} });
+  assert.equal(text, 'Hello!');
+  const [rec] = trace.list();
+  assert.equal(rec.purpose, 'answer');
+  assert.equal(rec.state, 'done');
+  assert.deepEqual(rec.messages, [{ role: 'system', content: 'You are Ivy' }, { role: 'user', content: 'hi' }]);
+  assert.equal(rec.text, '<think>hm</think>Hello!', 'what came back, thinking and all');
+  assert.equal(rec.request.model, 'qwen3:8b');
+  assert.equal(rec.request.messages, undefined, 'the messages are noted apart');
+  const failing = new Ollama({ current: () => ({ url: 'http://127.0.0.1:9', model: 'x' }), trace });
+  await assert.rejects(failing.chat([{ role: 'user', content: 'hi' }], { purpose: 'learning' }));
+  assert.equal(trace.list()[1].state, 'failed');
+  assert.match(trace.list()[1].error, /isn't answering/);
 });

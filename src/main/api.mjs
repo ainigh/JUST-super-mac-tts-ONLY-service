@@ -43,6 +43,8 @@ const ROUTES = {
   '/api/chat': 'GET POST',
   '/api/chat/new': 'POST',
   '/api/chat/clear': 'POST',
+  '/api/trace/model': 'GET',
+  '/api/trace/calls': 'GET',
   '/api/cancel': 'POST',
   '/api/heard': 'POST',
   '/api/tools': 'GET POST',
@@ -257,6 +259,11 @@ export function createApi({ speech, face, settings, version, updater = null, doc
       case '/api/chat/clear':
         needCore().actions.clearChat();
         return [200, { ok: true }];
+      case '/api/trace/model':
+      case '/api/trace/calls': {
+        const limit = Math.min(80, Math.max(1, Number(url.searchParams.get('limit')) || 20));
+        return [200, { items: needCore().actions.trace({ log: route.split('/').pop() }).items.slice(-limit) }];
+      }
       case '/api/cancel':
         return [200, needCore().actions.cancel()];
       case '/api/heard': {
@@ -444,7 +451,8 @@ export function createApi({ speech, face, settings, version, updater = null, doc
     const write = (e) => res.write(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
     write({ type: 'hello', speaking: speech.speaking, current: speech.current, at: Date.now() });
     const off = speech.subscribe(write);
-    const offCore = core ? core.subscribe(write) : () => {};
+    // The traces (every prompt in full, every request) are the chat's, and /api/trace/*'s: not sent here.
+    const offCore = core ? core.subscribe((e) => e.type !== 'trace' && write(e)) : () => {};
     const ping = setInterval(() => res.write(': ping\n\n'), 15000);
     req.on('close', () => {
       off();

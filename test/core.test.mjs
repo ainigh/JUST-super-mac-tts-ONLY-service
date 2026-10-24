@@ -6,7 +6,6 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { calls, isSilent, looksBroken, sayable, words } from '../src/main/calls.mjs';
-import { Memory } from '../src/main/memory.mjs';
 import { Ollama, pick, stripThinking } from '../src/main/model.mjs';
 import { canonical, catalogPrompt, claimsInability, promisesWork, stamp, systemPrompt } from '../src/main/prompt.mjs';
 import { Scheduler, dueFrom, fromNow, longTime, parseAt, runTool } from '../src/main/scheduler.mjs';
@@ -97,30 +96,15 @@ test('the schedule: several at once, cancelled, kept, and done when due', async 
   s2.stop();
 });
 
-test('memory: sections, no repeats, a cap, forgetting by words', () => {
-  const file = path.join(tmp(), 'memory.json');
-  const m = new Memory({ file });
-  assert.match(m.remember('user', 'Lives in Leeds'), /Noted in user/);
-  assert.match(m.remember('preferences', 'lives in leeds'), /Already noted/);
-  assert.match(m.remember('playbook', 'weather.py takes a city'), /Noted in playbook/);
-  assert.match(m.remember('nowhere', 'x'), /No section/);
-  assert.match(new Memory({ file }).prompt(), /- Lives in Leeds/);
-  assert.equal(m.forget(null, 'leeds'), 'Forgotten.');
-  for (let i = 0; i < 59; i++) m.remember('mistakes', `note ${i}`);
-  assert.match(m.remember('user', 'one too many'), /full/);
-});
-
-test('the prompt: the character, the scripts with what they take, memory, the day', () => {
-  const m = new Memory();
-  m.remember('user', 'Prefers Celsius');
-  m.setInstructions('Call me Sam.');
+test('the prompt: the character, the scripts with what they take, what it has learned, the day', () => {
+  const m = { prompt: () => "Your playbook:\n- Prefers Celsius\n\nThe user's standing instructions (follow them):\nCall me Sam." };
   const catalog = {
     reachable: true,
     error: null,
     scripts: [{ name: 'utilities/weather.py', summary: 'The weather', inputs: [{ prompt: 'City', kind: 'argument', optional: true }], dangers: [] }, { name: 'utilities/library.py', summary: 'Notes', inputs: [], dangers: [] }],
     flows: [{ name: 'morning.flow', summary: 'The day' }],
   };
-  const p = systemPrompt({ character: CHARACTERS[2], catalog, memory: m, now: new Date(2026, 9, 24).getTime() });
+  const p = systemPrompt({ character: CHARACTERS[2], catalog, notes: m, now: new Date(2026, 9, 24).getTime() });
   assert.match(p, /You are Sofia/);
   assert.match(p, /utilities\/weather\.py: The weather \| takes: City \(optional\)/);
   assert.match(p, /utilities\/library\.py is the user's notes library/);

@@ -79,10 +79,14 @@
         <h3>Listening</h3>
         <label class="check"><input type="checkbox" id="listenWhileSpeaking" /> Keep listening while I talk (so you can cut in)</label>
         <label class="check"><input type="checkbox" id="busyTone" /> A soft tone while I work something out</label>
-        <h3>Its own notes <span class="count" id="memoryCount"></span></h3>
-        <p class="hint">How to work with you, learned as it goes. What it remembers about your world (people, places, dates, plans) is in Tool Mac Tool Run's Memory and Mind boards.</p>
+        <h3>Its playbook <span class="count" id="memoryCount"></span></h3>
+        <p class="hint" id="playbookHint">What it has learned about getting things done for you, a line each. Kept in Tool Mac Tool Run's library, as the note <b>Super Face playbook</b> (edit it there too).</p>
         <div id="memory"></div>
+        <h3>About you</h3>
+        <p class="hint">What it has learned about you, in Tool Mac Tool Run's MEMORY, as notes on <b>the user</b> (change them on its Memory board). Everything else it remembers about your world is there too.</p>
+        <ul class="notes" id="aboutUser"></ul>
         <h3>Standing instructions</h3>
+        <p class="hint">Kept in Tool Mac Tool Run's library, as the note <b>Super Face instructions</b>.</p>
         <textarea id="instructions" rows="3" placeholder="Anything I should always do or keep in mind, in your words."></textarea>
         <div class="row end"><button id="saveInstructions">Save</button></div>
         <h3>Conversation</h3>

@@ -85,7 +85,7 @@ curl -s localhost:8769/api/echo -d '{"text": "nice to meet you"}'
 | `GET  /api/tools`, `POST /api/tools` | every tool it has (built in, and Tool Mac Tool Run's scripts and flows); POST asks again |
 | `GET  /api/schedules`, `POST /api/schedules` | what it has set itself to do later; set one |
 | `POST /api/schedules/cancel` | cancels one (`{"id": "s3"}`) or all (`{"id": "all"}`) |
-| `GET  /api/memory`, `POST /api/memory` | what it has learned, and the user's standing instructions |
+| `GET  /api/memory`, `POST /api/memory` | what it has learned, as kept in Tool Mac Tool Run: its playbook and the user's standing instructions (library notes), what MEMORY has on the user; `POST {"instructions"}` writes the instructions, `{"forget": "<a playbook line>"}` takes one out |
 | `GET  /api/errors` | what went wrong (the voice, the ears, the avatar, the model, the app), and `report`: all of it with versions and state, as text to paste |
 | `GET  /` | a status page, with a box to try it |
 | `GET  /api.md` | this document |
@@ -360,10 +360,15 @@ it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) a
 - **Every other route** Tool Mac Tool Run lists (Straw, automation, system docs, and whatever it
   adds later) is reached with `call_api` (`method`, `path`, `body`, `why`), only under `/api/` on
   that server; one marked as asking on the Mac waits for the click there.
-- **Its own tools**: `schedule` (`in_minutes`, or `at`: a local date and time such as
-  `"2026-10-24 17:30"`, `"17:30"`, `"tomorrow 9:00"`, `"friday 8:00"`), `list_schedules`,
-  `cancel_schedule` (an id, or `"all"`); `learn` and `unlearn` (its own notes: how to work with
-  the user, which scripts work for what, its mistakes).
+- **Its own tools**: only the schedule: `schedule` (`in_minutes`, or `at`: a local date and time
+  such as `"2026-10-24 17:30"`, `"17:30"`, `"tomorrow 9:00"`, `"friday 8:00"`), `list_schedules`,
+  `cancel_schedule` (an id, or `"all"`).
+- **What it learns is kept in Tool Mac Tool Run**: its playbook (which scripts and arguments work
+  for what, how the user likes things done, its mistakes) is the library note `Super Face playbook`,
+  added to with `library` (`append`; `write` to drop a line); the user's standing instructions are
+  the note `Super Face instructions`; what it learns about the user themselves goes to MEMORY with
+  `remember` (`PEOPLE`, about `the user`, `notes: ["pref …"]`). All three are read for its prompt
+  at the start of every request. An older version's `memory.json` is moved there once.
 - **Later**: when something scheduled comes due, the character shows itself (if it wasn't showing)
   and the model is given the task to do now. Kept across restarts; one due while the app was
   closed is done as it opens, saying it's late.

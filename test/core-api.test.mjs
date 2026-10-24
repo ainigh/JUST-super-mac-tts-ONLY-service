@@ -194,14 +194,15 @@ test('the schedule over the API: set, listed, cancelled; one due shows the chara
   assert.equal(list.schedules.length, 0);
 });
 
-test('memory and the tool list over the API', async () => {
-  let [, m] = await post('/api/memory', { remember: { section: 'user', note: 'Likes tea' }, instructions: 'Be brief.' });
-  assert.deepEqual(m.notes.user, ['Likes tea']);
-  assert.equal(m.instructions, 'Be brief.');
-  [, m] = await post('/api/memory', { forget: { note: 'tea' } });
-  assert.deepEqual(m.notes.user, []);
+test('what it has learned, and the tool list, over the API: without Tool Mac Tool Run there is nowhere to keep it', async () => {
+  const [, m] = await post('/api/memory', { instructions: 'Be brief.' });
+  assert.equal(m.library, false, "its playbook and instructions are Tool Mac Tool Run's library's");
+  assert.deepEqual(m.playbook, []);
+  assert.equal(m.instructions, '');
+  assert.match(m.error, /isn't reachable/);
+  assert.deepEqual(m.names, { playbook: 'Super Face playbook', instructions: 'Super Face instructions', user: 'the user' });
   const [, tools] = await get('/api/tools');
-  assert.deepEqual(tools.builtin.map((t) => t.name), ['schedule', 'list_schedules', 'cancel_schedule', 'learn', 'unlearn']);
+  assert.deepEqual(tools.builtin.map((t) => t.name), ['schedule', 'list_schedules', 'cancel_schedule'], 'the schedule alone is its own');
   assert.equal(tools.reachable, false);
   const [, h] = await get('/api/health');
   assert.equal(h.character, 'Ivy');

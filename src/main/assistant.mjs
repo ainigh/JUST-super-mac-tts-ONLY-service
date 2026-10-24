@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { calls, isSilent, looksBroken, sayable, words } from './calls.mjs';
-import * as memoryTools from './memory.mjs';
+import { PLAYBOOK, THE_USER } from './notes.mjs';
 import { NOTE, ALL_TOOLS, toolsFor, canonical, claimsInability, promisesWork, systemPrompt, toolResult, userMessage } from './prompt.mjs';
 import * as scheduleTools from './scheduler.mjs';
 import { TOOL_NAMES as RUN_TOOLS, coveredGroups } from './toolrun.mjs';
@@ -24,7 +24,7 @@ export class Assistant {
    * @param {import('./model.mjs').Ollama} o.model
    * @param {import('./toolrun.mjs').ToolRun} o.toolrun
    * @param {import('./scheduler.mjs').Scheduler} o.scheduler
-   * @param {import('./memory.mjs').Memory} o.memory
+   * @param {import('./notes.mjs').Notes} o.notes - what it has learned, kept in Tool Mac Tool Run
    * @param {() => object} o.character - the character now (its name, looks)
    * @param {(text: string) => void} o.speak - says a sentence (or a few) in the character's voice
    * @param {() => void} o.stopSpeaking
@@ -33,8 +33,8 @@ export class Assistant {
    * @param {import('./trace.mjs').Trace} [o.trace] - where each tool call is noted, with what it sent and got
    * @param {() => number} [o.now]
    */
-  constructor({ model, toolrun, scheduler, memory, character, speak, stopSpeaking, emit = () => {}, file = null, trace = null, now = Date.now }) {
-    Object.assign(this, { model, toolrun, scheduler, memory, character, speak, stopSpeaking, emit, file, trace, now });
+  constructor({ model, toolrun, scheduler, notes, character, speak, stopSpeaking, emit = () => {}, file = null, trace = null, now = Date.now }) {
+    Object.assign(this, { model, toolrun, scheduler, notes, character, speak, stopSpeaking, emit, file, trace, now });
     this.history = []; // what the model sees: { role, content }
     this.log = []; // what the chat shows: entries
     this.inbox = []; // what's come in and not been answered: { text, how, at, entry }
@@ -214,9 +214,11 @@ export class Assistant {
     // routes that fit it (the rest are only named), given to the model with its instructions.
     if (!turn.context) {
       const asked = turn.batch.map((b) => b.text).join('\n');
-      [turn.context, turn.matches] = await Promise.all([this.toolrun.context(this.recent(), { signal: turn.ctrl.signal }), this.toolrun.matches(asked, { signal: turn.ctrl.signal })]);
+      const signal = turn.ctrl.signal;
+      // Its playbook, the standing instructions and what MEMORY has on the user, read fresh too.
+      [turn.context, turn.matches] = await Promise.all([this.toolrun.context(this.recent(), { signal }), this.toolrun.matches(asked, { signal }), this.notes?.refresh({ signal })]);
     }
-    const system = systemPrompt({ character: this.character(), catalog: this.toolrun.catalog, memory: this.memory, context: turn.context, matches: turn.matches, now: this.now() });
+    const system = systemPrompt({ character: this.character(), catalog: this.toolrun.catalog, notes: this.notes, context: turn.context, matches: turn.matches, now: this.now() });
     const messages = [{ role: 'system', content: system }, ...this.history];
     const out = { text: '', spokenTo: 0, entry: null, spokenAny: false };
     const flush = (final) => {
@@ -303,8 +305,6 @@ export class Assistant {
       } else if (scheduleTools.TOOLS.some((t) => t.name === call.name)) {
         text = scheduleTools.runTool(this.scheduler, call.name, args, this.now());
         failed = /^(I couldn't|Say |That time|There are already|Nothing scheduled has)/.test(text);
-      } else if (memoryTools.TOOLS.some((t) => t.name === call.name)) {
-        text = memoryTools.runTool(this.memory, call.name, args);
       } else if (RUN_TOOLS.includes(call.name)) {
         turn.toolRunning = true;
         this.emitState();
@@ -365,16 +365,20 @@ export class Assistant {
     this.reflecting = ctrl;
     this.emitState();
     try {
-      const system = systemPrompt({ character: this.character(), catalog: this.toolrun.catalog, memory: this.memory, now: this.now() });
+      const system = systemPrompt({ character: this.character(), catalog: this.toolrun.catalog, notes: this.notes, now: this.now() });
       const text = await this.model.chat([{ role: 'system', content: system }, ...this.history, { role: 'user', content: NOTE.reflect }], { signal: ctrl.signal, purpose: 'learning' });
+      let learned = false;
       for (const c of calls(text).slice(0, 3)) {
         const call = canonical(c, this.toolrun.catalog);
-        if (!memoryTools.TOOLS.some((t) => t.name === call.name)) continue;
-        const result = memoryTools.runTool(this.memory, call.name, call.arguments || {});
-        if (/^(Noted|Forgotten)/.test(result)) {
-          this.add({ kind: 'note', text: `${call.name === 'learn' ? 'Learned' : 'Forgot'}: ${call.arguments?.note ?? ''}`.trim() });
+        const what = learning(call);
+        if (!what) continue; // only its playbook, and notes on the user, are written here
+        const result = await this.toolrun.run(call.name, call.arguments, { signal: ctrl.signal });
+        if (result && !isFailure(result)) {
+          learned = true;
+          this.add({ kind: 'note', text: what });
         }
       }
+      if (learned) await this.notes?.refresh();
     } catch {
       /* cut short, or no model: nothing learned this time */
     } finally {
@@ -496,4 +500,19 @@ export function display(text) {
     .replace(/\[(nod|shake|shrug|wave|thumbup|thumbdown|ok|index|side|namaste|handup|yes|no|smile|grin|wink|thinking|happy|sad|angry|love|fear|neutral|warm|laughing|playful|frown|pensive|shocked|delighted|beaming|starstruck|adoring)\]/gi, '')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
+}
+
+/** What a call made while it reflects saves, said for the chat; null when it isn't one it may make then. */
+function learning(call) {
+  const a = call.arguments || {};
+  if (call.name === 'library' && String(a.name ?? '').trim().toLowerCase() === PLAYBOOK.toLowerCase()) {
+    const op = String(a.op ?? '').toLowerCase();
+    if (op === 'append') return `Learned: ${String(a.text ?? '').replace(/^-\s*/, '').trim()}`;
+    if (op === 'write') return 'Rewrote its playbook.';
+  }
+  if (call.name === 'remember' && String(a.about ?? '').trim().toLowerCase() === THE_USER) {
+    const notes = (Array.isArray(a.notes) ? a.notes : [a.notes ?? a.text]).filter(Boolean).map((n) => String(n).replace(/^pref\s+/, ''));
+    return `Learned about you: ${notes.join('; ')}`;
+  }
+  return null;
 }

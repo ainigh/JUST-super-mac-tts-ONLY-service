@@ -4,7 +4,7 @@
 
 import path from 'node:path';
 import { Assistant } from './assistant.mjs';
-import { Memory } from './memory.mjs';
+import { Notes } from './notes.mjs';
 import { Ollama } from './model.mjs';
 import { NOTE, systemPrompt } from './prompt.mjs';
 import { Scheduler, fromNow, longTime } from './scheduler.mjs';
@@ -53,7 +53,9 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
   const traces = { model: new Trace({ name: 'model', keep: 40, emit, now }), calls: new Trace({ name: 'calls', keep: 80, emit, now }) };
   const model = new Ollama({ current: () => ({ url: settings.get().ollamaUrl, model: settings.get().model, think: settings.get().think }), fetch: f, trace: traces.model });
   const toolrun = new ToolRun({ url: () => settings.get().toolRunUrl, fetch: f, trace: traces.calls });
-  const memory = new Memory({ file: file('memory.json'), onChange: (m) => emit({ type: 'memory', memory: m }) });
+  // What it learns is kept in Tool Mac Tool Run (its playbook and the standing instructions in the
+  // library, what it knows of the user in MEMORY); memory.json, from before, is moved there once.
+  const notes = new Notes({ toolrun, oldFile: file('memory.json'), onChange: (m) => emit({ type: 'memory', memory: m }) });
   const scheduler = new Scheduler({
     file: file('schedule.json'),
     now,
@@ -78,7 +80,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     model,
     toolrun,
     scheduler,
-    memory,
+    notes,
     character,
     speak: speakAs,
     stopSpeaking: () => speech.stop('assistant'),
@@ -208,14 +210,14 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       {
         id: 'system',
         title: 'The assistant (system prompt)',
-        when: 'Sent with every message, built fresh each time: the character, the three habits, the tools, the scripts Tool Mac Tool Run has now, the memory and your standing instructions, and the day.',
-        text: systemPrompt({ character: character(), catalog: toolrun.catalog, memory, now: now() }),
+        when: 'Sent with every message, built fresh each time: the character, the three habits, the tools, the scripts Tool Mac Tool Run has now, its playbook, what MEMORY has on you and your standing instructions (all three kept in Tool Mac Tool Run), and the day.',
+        text: systemPrompt({ character: character(), catalog: toolrun.catalog, notes, now: now() }),
       },
       { id: 'promised', title: 'Words that promise work, with no tool call', when: 'Sent back once when an answer says it will do something but calls no tool.', text: NOTE.promised },
       { id: 'broken', title: 'A tool call that can’t be read', when: 'Sent back once when an answer looks like a tool call but isn’t valid JSON.', text: NOTE.broken },
       { id: 'cannot', title: '“I can’t”, with tools that could', when: 'Sent back once when an answer says it can’t, or has no access, while Tool Mac Tool Run is there.', text: NOTE.cannot },
       { id: 'review', title: 'The critic: after a tool fails', when: 'Added to a failed tool’s result (twice per request at most).', text: NOTE.review },
-      { id: 'reflect', title: 'Learning: after a request that took work', when: 'Asked quietly (nothing is said) after a request with a failure or two tool calls or more: its answer may save notes to memory.', text: NOTE.reflect },
+      { id: 'reflect', title: 'Learning: after a request that took work', when: 'Asked quietly (nothing is said) after a request with a failure or two tool calls or more: its answer may add a line to its playbook (in Tool Mac Tool Run’s library) or a note on you (in MEMORY).', text: NOTE.reflect },
       { id: 'onlyFirst', title: 'More than one tool call in an answer', when: 'Added to the result when an answer has several calls: only the first is made.', text: NOTE.onlyFirst('run_script', ['schedule']) },
       { id: 'outOfRounds', title: 'Ten tool calls for one request', when: 'Added to the tenth tool result of one request.', text: NOTE.outOfRounds(10) },
       { id: 'unknownTool', title: 'A tool that doesn’t exist', when: 'The result of a call to a tool there isn’t.', text: NOTE.unknownTool('fly_to_mars', toolrun.catalog) },
@@ -254,6 +256,8 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
 
   async function refreshTools() {
     await toolrun.refresh();
+    await notes.moveOld();
+    await notes.refresh();
     const t = assistant.tools();
     emit({ type: 'tools', tools: t });
     return t;
@@ -300,11 +304,11 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     refreshTools,
     schedules,
     cancelSchedule: ({ id }) => ({ ok: scheduler.cancel(id).length > 0 }),
-    memory: () => memory.json(),
-    forget: ({ section, note }) => ({ result: memory.forget(section, note) }),
-    instructions: ({ text }) => {
-      memory.setInstructions(text);
-      return { ok: true };
+    memory: async () => (await notes.refresh()).json(),
+    forget: async ({ note }) => ({ result: await notes.forget(note) }),
+    instructions: async ({ text }) => {
+      const result = await notes.setInstructions(text);
+      return { ok: result === 'Saved.', result };
     },
     models: async () => {
       try {
@@ -363,7 +367,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     model,
     toolrun,
     scheduler,
-    memory,
+    notes,
     actions,
     heard,
     speakAs,

@@ -2,10 +2,13 @@
 // one does) and a scripted model: runs, cards refused, cancelling while a card waits and while a
 // run runs, the loop, the nudges, the schedule, interruptions.
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import http from 'node:http';
 import test from 'node:test';
 import { Assistant, display, isFailure } from '../src/main/assistant.mjs';
-import { Memory } from '../src/main/memory.mjs';
+import { Notes, PLAYBOOK, INSTRUCTIONS } from '../src/main/notes.mjs';
 import { Scheduler } from '../src/main/scheduler.mjs';
 import { ToolRun, hasLibrary, otherGroups } from '../src/main/toolrun.mjs';
 import { canonical, systemPrompt } from '../src/main/prompt.mjs';
@@ -17,7 +20,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A stand-in for Tool Mac Tool Run; with `search`, one that finds things by a few words (GET /api/search). */
 async function fakeToolRun({ search = false } = {}) {
-  const seen = { closedWhileWaiting: 0, stopped: [], runs: [], searches: [] };
+  const seen = { closedWhileWaiting: 0, stopped: [], runs: [], searches: [], notes: {} };
   const server = http.createServer(async (req, res) => {
     let body = '';
     for await (const c of req) body += c;
@@ -72,6 +75,11 @@ async function fakeToolRun({ search = false } = {}) {
     if (url.pathname === '/api/library') {
       seen.library = b;
       if (b.name === 'Ghost') return json(404, { error: 'no note called Ghost', code: 'not_found', fix: 'There is Groceries', request: 'L2' });
+      // The notes it keeps, for the ops what's learned uses.
+      const notes = seen.notes;
+      if (b.op === 'read_many') return json(200, { request: 'L3', notes: b.names.filter((n) => n in notes).map((n) => ({ name: n, text: notes[n] })), missing: b.names.filter((n) => !(n in notes)) });
+      if (b.op === 'write') notes[b.name] = b.text;
+      if (b.op === 'append') notes[b.name] = `${notes[b.name] ?? ''}${notes[b.name] && !notes[b.name].endsWith('\n') ? '\n' : ''}${b.text}\n`;
       return res.writeHead(200, { 'Content-Type': 'application/json', 'X-Request-Id': 'L1' }).end(JSON.stringify({ request: 'L1', name: b.name, action: 'appended' }));
     }
     if (url.pathname === '/api/straw/run') {
@@ -83,6 +91,7 @@ async function fakeToolRun({ search = false } = {}) {
     if (url.pathname === '/api/memory') {
       (seen.memory ||= []).push(b);
       if (b.op === 'upcoming') return json(200, { request: 'M0', days: b.days, lines: ['2026-10-27 (in 3 days): birthday 10-27 — ada'] });
+      if (b.op === 'recall' && b.name === 'the user') return json(200, seen.aboutUser ? { request: 'M3', found: true, lines: seen.aboutUser } : { request: 'M3', found: false, lines: [] });
       if (b.op === 'recall') return json(200, { request: 'M1', name: b.name, found: true, categories: ['PEOPLE'], nodes: [{ name: 'ada', scope: '', links: 1 }], about: [{ node: 'ada', links: [{ node: 'gardening', direction: 'out', labels: ['likes'] }] }], lines: ['| PEOPLE | ada', '| ada - likes | gardening'] });
       if (b.op === 'remember') return json(200, { request: 'M2', file: b.category, node: String(b.about).toLowerCase(), added_to_file: `- ${b.about}: ${b.text || ''}` });
       return json(400, { error: `no memory op ${b.op}`, code: 'bad_name' });
@@ -166,13 +175,13 @@ async function setup(steps, fake) {
   const events = [];
   let stops = 0;
   const scheduler = new Scheduler({ onFire: () => {} });
-  const memory = new Memory();
+  const notes = new Notes({ toolrun });
   const model = scriptedModel(steps);
   const a = new Assistant({
     model,
     toolrun,
     scheduler,
-    memory,
+    notes,
     character: () => CHARACTERS[0],
     speak: (t) => said.push(t),
     stopSpeaking: () => stops++,
@@ -181,7 +190,7 @@ async function setup(steps, fake) {
   const idle = async () => {
     for (let i = 0; i < 400 && (a.busy || a.inbox.length || a.reflecting); i++) await wait(5);
   };
-  return { a, model, said, events, scheduler, memory, toolrun, idle, stops: () => stops };
+  return { a, model, said, events, scheduler, notes, toolrun, idle, stops: () => stops };
 }
 
 test('the scripts are fetched for the prompt and the chat; Tool Mac Tool Run not running is said plainly', async () => {
@@ -207,7 +216,7 @@ test('the routes are fetched too: the library is a tool of its own, the rest (wh
     const c = await t.refresh();
     assert.ok(hasLibrary(c));
     assert.deepEqual(otherGroups(c).map((g) => g.id), ['straw', 'browser', 'calendar'], "a group a tool covers isn't call_api's; one that's off is listed as off");
-    const p = systemPrompt({ character: CHARACTERS[0], catalog: c, memory: new Memory() });
+    const p = systemPrompt({ character: CHARACTERS[0], catalog: c });
     assert.match(p, /^- library: /m);
     assert.match(p, /^- call_api: /m);
     for (const tool of ['remember', 'recall', 'memory', 'mind', 'show', 'copy']) assert.match(p, new RegExp(`^- ${tool}: `, 'm'), tool);
@@ -221,7 +230,7 @@ test('the routes are fetched too: the library is a tool of its own, the rest (wh
     assert.doesNotMatch(p, /^- POST \/api\/run:/m, 'run_script covers it');
     assert.match(p, /use library: the user's notes/);
     // An older Tool Mac Tool Run, without the route list: neither tool is offered.
-    const old = systemPrompt({ character: CHARACTERS[0], catalog: { ...c, groups: null }, memory: new Memory() });
+    const old = systemPrompt({ character: CHARACTERS[0], catalog: { ...c, groups: null } });
     assert.doesNotMatch(old, /^- (library|call_api): /m);
   } finally {
     fake.close();
@@ -233,7 +242,7 @@ test('where Tool Mac Tool Run searches, the scripts are only named, what fits th
   try {
     const t = new ToolRun({ url: () => fake.url });
     const c = await t.refresh();
-    const p = systemPrompt({ character: CHARACTERS[0], catalog: c, memory: new Memory() });
+    const p = systemPrompt({ character: CHARACTERS[0], catalog: c });
     assert.match(p, /^- find: /m);
     assert.doesNotMatch(p, /^- list_scripts: /m, 'find does it better');
     assert.match(p, /^utilities\/: weather$/m, 'a script by its name alone');
@@ -245,7 +254,7 @@ test('where Tool Mac Tool Run searches, the scripts are only named, what fits th
     const fits = await t.matches('will it rain in Leeds? and remember it');
     assert.deepEqual(fits, ['script utilities/weather.py: The weather'], 'a route a tool covers is left out');
     assert.equal(fake.seen.searches.at(-1).next, 'false');
-    const withFits = systemPrompt({ character: CHARACTERS[0], catalog: c, memory: new Memory(), matches: fits });
+    const withFits = systemPrompt({ character: CHARACTERS[0], catalog: c, matches: fits });
     assert.match(withFits, /^What fits what was just said[^\n]*\n- script utilities\/weather\.py: The weather\n/m);
     // find, as a tool: each thing as it's called; a route a tool covers says which.
     assert.equal(await t.run('find', { q: 'birthday or straw' }), 'route POST /api/memory/remember: remember (the remember tool does this)\nroute POST /api/straw/run: run Straw code [asks on the Mac]');
@@ -330,9 +339,10 @@ test("MEMORY, the mind, and showing: each a tool, its arguments as Tool Mac Tool
     const c = t.catalog;
     assert.deepEqual(canonical({ name: 'link', arguments: { from: 'a', label: 'b', to: 'c' } }, c), { name: 'mind', arguments: { op: 'add', from: 'a', label: 'b', to: 'c' } });
     assert.deepEqual(canonical({ name: 'upcoming', arguments: {} }, c), { name: 'memory', arguments: { op: 'upcoming' } });
-    assert.equal(canonical({ name: 'remember', arguments: { section: 'user', note: 'Celsius' } }, c).name, 'learn');
+    assert.deepEqual(canonical({ name: 'remember', arguments: { section: 'user', note: 'Celsius' } }, c), { name: 'remember', arguments: { category: 'PEOPLE', about: 'the user', notes: ['pref Celsius'] } }, 'about the user: a note on them in MEMORY');
+    assert.deepEqual(canonical({ name: 'learn', arguments: { section: 'playbook', note: 'weather.py takes a city' } }, c), { name: 'library', arguments: { op: 'append', name: PLAYBOOK, text: '- weather.py takes a city' } }, 'its old learn: a line of its playbook');
     assert.equal(canonical({ name: 'remember', arguments: { category: 'PEOPLE', about: 'Ada' } }, c).name, 'remember');
-    assert.deepEqual(canonical({ name: 'remember', arguments: { about: 'Ada', text: 'my sister' } }, { groups: [] }), { name: 'learn', arguments: { section: 'user', note: 'Ada: my sister' } }, 'without MEMORY, a fact goes in its own notes');
+    assert.deepEqual(canonical({ name: 'remember', arguments: { about: 'Ada', text: 'my sister' } }, { groups: [] }), { name: 'library', arguments: { op: 'append', name: PLAYBOOK, text: '- Ada: my sister' } }, 'without MEMORY, a fact goes in its playbook');
   } finally {
     fake.close();
   }
@@ -496,7 +506,7 @@ test('words that promise work with no call are sent back once; "(nothing)" is ne
 test('a broken call is asked for again; a failed run brings the critic in; then it learns, quietly', async () => {
   const fake = await fakeToolRun();
   try {
-    const { a, model, said, memory, idle } = await setup(
+    const { a, model, said, notes, idle } = await setup(
       [
         '{"tool": "run_script", "arguments": {"script": "hello.sh"',
         '{"tool": "run_script", "arguments": {"script": "nope.sh"}}',
@@ -515,8 +525,59 @@ test('a broken call is asked for again; a failed run brings the critic in; then 
     await idle();
     assert.match(model.asked[1].at(-1).content, /looked like a tool call, but it couldn't be read/);
     assert.deepEqual(said, ['You chose not to run it, so I left it.']);
-    assert.deepEqual(memory.notes.playbook, ['nope.sh is always refused']);
+    // Its old way of writing it down (remember with a section) is a line of its playbook, in the library.
+    assert.equal(fake.seen.notes[PLAYBOOK], '- nope.sh is always refused\n');
+    assert.deepEqual(notes.playbook, ['- nope.sh is always refused'], 'read back once it is written');
     assert.ok(a.log.some((e) => e.kind === 'note' && e.text === 'Learned: nope.sh is always refused'));
+  } finally {
+    fake.close();
+  }
+});
+
+test('what it has learned is read from Tool Mac Tool Run with every request: its playbook, the standing instructions, MEMORY on the user', async () => {
+  const fake = await fakeToolRun();
+  try {
+    // As the user may have left them after editing them in Tool Mac Tool Run: a title, the lines.
+    fake.seen.notes[PLAYBOOK] = '# Super Face playbook\n\n- weather.py takes the city first\n';
+    fake.seen.notes[INSTRUCTIONS] = '# Super Face instructions\n\nCall me Sam.\n';
+    fake.seen.aboutUser = ['| PEOPLE | the user', '| the user @pref celsius'];
+    const { a, model, idle, notes } = await setup(['Hello, Sam.'], fake);
+    a.say('hi');
+    await idle();
+    const system = model.asked[0][0].content;
+    assert.match(system, /^Your playbook \(the library note "Super Face playbook"[^\n]*\n- weather\.py takes the city first$/m);
+    assert.match(system, /^What MEMORY has on the user themselves[^\n]*\n\| PEOPLE \| the user\n\| the user @pref celsius$/m);
+    assert.match(system, /^The user's standing instructions \(follow them\):\nCall me Sam\.$/m);
+    assert.match(system, /library, op append, name "Super Face playbook"/);
+    assert.doesNotMatch(system, /^- (learn|unlearn): /m, 'no tools of its own for it');
+    // The Mind tab: a line taken out, the instructions written.
+    assert.equal(await notes.forget('- weather.py takes the city first'), 'Saved.');
+    assert.doesNotMatch(fake.seen.notes[PLAYBOOK], /weather/);
+    assert.match(fake.seen.notes[PLAYBOOK], /^# Super Face playbook\n/, 'its head kept');
+    assert.equal(await notes.forget('not there'), 'No line says that.');
+    await notes.setInstructions('Be brief.');
+    assert.equal(notes.instructions, 'Be brief.');
+    assert.deepEqual(notes.playbook, []);
+  } finally {
+    fake.close();
+  }
+});
+
+test('what an older version kept in memory.json is moved to Tool Mac Tool Run once', async () => {
+  const fake = await fakeToolRun();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-notes-'));
+  const oldFile = path.join(dir, 'memory.json');
+  fs.writeFileSync(oldFile, JSON.stringify({ notes: { user: ['Lives in Leeds'], playbook: ['weather.py takes a city'], mistakes: ['nope.sh is refused'] }, instructions: 'Call me Sam.' }));
+  try {
+    const toolrun = new ToolRun({ url: () => fake.url });
+    await toolrun.refresh();
+    const notes = new Notes({ toolrun, oldFile });
+    assert.equal(await notes.moveOld(), true);
+    assert.deepEqual(notes.playbook, ['- weather.py takes a city', '- Mistake: nope.sh is refused']);
+    assert.equal(notes.instructions, 'Call me Sam.');
+    assert.deepEqual(fake.seen.memory.find((m) => m.op === 'remember'), { client: 'Super Face', op: 'remember', category: 'PEOPLE', about: 'the user', notes: ['pref Lives in Leeds'] });
+    assert.ok(!fs.existsSync(oldFile) && fs.existsSync(`${oldFile}.moved`));
+    assert.equal(await notes.moveOld(), false, 'once');
   } finally {
     fake.close();
   }

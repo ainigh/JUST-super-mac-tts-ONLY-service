@@ -312,13 +312,14 @@ export function createApi({ speech, face, settings, version, updater = null, doc
       }
       case '/api/memory': {
         const c = needCore();
+        // What it has learned, as kept in Tool Mac Tool Run: its playbook and the standing
+        // instructions (the library), what MEMORY has on the user.
         if (method === 'POST') {
           const b = await body(req);
-          if (typeof b.instructions === 'string') c.memory.setInstructions(b.instructions);
-          if (b.remember) c.memory.remember(b.remember.section, b.remember.note);
-          if (b.forget) c.memory.forget(b.forget.section, b.forget.note);
+          if (typeof b.instructions === 'string') await c.notes.setInstructions(b.instructions);
+          if (b.forget) await c.notes.forget(typeof b.forget === 'string' ? b.forget : b.forget.note);
         }
-        return [200, c.memory.json()];
+        return [200, (await c.notes.refresh()).json()];
       }
       case '/api/errors': {
         const c = needCore();

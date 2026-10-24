@@ -5,16 +5,15 @@
 // tools, since local models are small. The harness adds the rest at the moments it matters: a
 // review when a tool fails, a nudge when words promise work no call does, a chance to learn after.
 
-import * as memoryTools from './memory.mjs';
+import { PLAYBOOK, THE_USER } from './notes.mjs';
 import * as scheduleTools from './scheduler.mjs';
 import * as runTools from './toolrun.mjs';
 
-/** Every tool the model has, in the order it's told them. Local ones are run here; the rest over Tool Mac Tool Run. */
-export const ALL_TOOLS = [
-  ...runTools.TOOLS.map((t) => ({ ...t, where: 'mac' })),
-  ...scheduleTools.TOOLS.map((t) => ({ ...t, where: 'local' })),
-  ...memoryTools.TOOLS.map((t) => ({ ...t, where: 'local' })),
-];
+/**
+ * Every tool the model has, in the order it's told them. All are Tool Mac Tool Run's but the
+ * schedule, which is run here; what it learns is kept there too (the library, MEMORY).
+ */
+export const ALL_TOOLS = [...runTools.TOOLS.map((t) => ({ ...t, where: 'mac' })), ...scheduleTools.TOOLS.map((t) => ({ ...t, where: 'local' }))];
 
 /** Names a small model tends to use for the tools, and the tool each means. */
 const ALIASES = {
@@ -29,7 +28,6 @@ const ALIASES = {
   cancel: 'cancel_schedule', cancel_reminder: 'cancel_schedule', delete_schedule: 'cancel_schedule', remove_schedule: 'cancel_schedule',
   unschedule: 'cancel_schedule', cancel_timer: 'cancel_schedule',
   memorize: 'remember', memorise: 'remember', save_memory: 'remember', add_memory: 'remember', store: 'remember', save_fact: 'remember',
-  note_to_self: 'learn', learn_this: 'learn', save_note: 'learn', forget: 'unlearn', delete_memory: 'unlearn', remove_memory: 'unlearn',
   lookup: 'recall', look_up: 'recall', what_do_i_know: 'recall', who_is: 'recall', get_memory: 'recall', search_memory: 'recall',
   upcoming: 'memory', birthdays: 'memory',
   link: 'mind', relate: 'mind', connect: 'mind', mind_add: 'mind', mind_query: 'mind', graph: 'mind',
@@ -65,10 +63,15 @@ export function canonical(call, catalog) {
   const raw = String(call.name).trim();
   const n = raw.toLowerCase().replace(/[\s-]+/g, '_');
   const a = call.arguments && typeof call.arguments === 'object' ? call.arguments : {};
-  // remember with a section and a note is the old remember: the assistant's own notes. Without
-  // MEMORY, a fact the user told it goes there too, rather than nowhere.
-  if (n === 'remember' && ((a.section && a.note && !a.category && !a.about) || !runTools.hasGroup(catalog, 'memory'))) {
-    return { name: 'learn', arguments: a.note ? a : { section: a.section || 'user', note: [a.about, a.text].filter(Boolean).join(': ') || a.note } };
+  // learn (its old notes tool), or remember with a section and a note, is a line of its playbook;
+  // about the user, a note on them in MEMORY. Without MEMORY, a fact the user told it goes in the
+  // playbook too, rather than nowhere.
+  const memory = runTools.hasGroup(catalog, 'memory');
+  if (['learn', 'note_to_self', 'save_note', 'learn_this'].includes(n) || (n === 'remember' && ((a.section && a.note && !a.category && !a.about) || !memory))) {
+    const note = String(a.note ?? ([a.about, a.text].filter(Boolean).join(': ') || a.text || '')).trim();
+    const user = /^(user|prefs?|preferences?|about_user)$/i.test(String(a.section ?? ''));
+    if (user && memory) return { name: 'remember', arguments: { category: 'PEOPLE', about: THE_USER, notes: [`pref ${note}`] } };
+    return { name: 'library', arguments: { op: 'append', name: PLAYBOOK, text: `- ${note}` } };
   }
   if (ALL_TOOLS.some((t) => t.name === n)) return { name: n, arguments: call.arguments };
   if (ALIASES[n]) {
@@ -137,7 +140,7 @@ export function catalogPrompt(catalog) {
  * The system prompt. What comes first stays the same from one message to the next (so Ollama
  * reuses what it has read); the day is last, and each message carries its exact time.
  */
-export function systemPrompt({ character, catalog, memory, context = [], matches = [], now = Date.now(), typedOnly = false }) {
+export function systemPrompt({ character, catalog, notes, context = [], matches = [], now = Date.now(), typedOnly = false }) {
   const name = character.name;
   const libraryScript = (catalog?.scripts || []).find((s) => /(^|\/)(library|notes?)\.[a-z]+$/i.test(s.name));
   const library = runTools.hasLibrary(catalog);
@@ -172,7 +175,7 @@ What needs no tool (knowing, explaining, judging, deciding, writing) you answer 
 - Only ever write what the user said: never invent or guess. If it contradicts what's remembered, ask which is right before changing anything.${
       has('mind') ? '\n- To link things without a file (who works where, what belongs to what), use mind with op add. Rename and forget in the mind only when asked: they stay in its record.' : ''
     }
-- Your own notes (learn, below) are for how to work with the user, not for facts about their world.`);
+- Your playbook (below) is for how to get things done, not for facts about their world.`);
   }
   if (has('screen') || has('browser')) {
     p.push(
@@ -188,8 +191,18 @@ What needs no tool (knowing, explaining, judging, deciding, writing) you answer 
   p.push(`Time:
 - Each message says when it was said, to the second. For anything later (a reminder, a check, a follow-up) use schedule, with in_minutes or at. Write its task as an instruction to your future self with every detail, since then you'll get only the task.
 - A message starting "Scheduled task" is one you set earlier, due now: do it now (say the reminder, run what it asks) and tell the user, as if you'd just remembered.`);
-  p.push(`Learning:
-- Your own notes, below, are what you've learned about working with the user. Read them before you act and follow them. The moment you learn something that will matter next time (how they like things done, which script and arguments worked for what, a mistake and how to avoid it), save it with learn, in one short line. Correct or remove notes that turn out wrong with unlearn. Request ids and one-off facts don't belong there.`);
+  if (library || has('memory')) {
+    p.push(
+      [
+        'Learning (it is all kept in Tool Mac Tool Run):',
+        library &&
+          `- Your playbook, below, is what you've learned about getting things done for the user: which script and arguments work for what, how they like things done, mistakes not to make again. Read it before you act. The moment you learn something that will matter next time, add it in one short line: library, op append, name "${PLAYBOOK}", text "- …". To fix or drop a line that proved wrong, write the note whole without it (op write). Request ids and one-off facts don't belong there.`,
+        has('memory') && `- What you learn about the user themselves (a preference, where they live, what to call them) goes to MEMORY: remember, category PEOPLE, about "${THE_USER}", notes ["pref …"].`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  }
   p.push(`Tool calls: to use a tool, end your answer with the call as one line of JSON on its own line: {"tool": "name", "arguments": {...}}. One call per answer. Its result comes back as the next message, marked as a tool result (it's from the Mac, not the user); then you go on: another call, or your answer to the user. Never write that JSON unless you mean to call the tool, and don't name tools to the user.
 The tools:
 ${toolsFor(catalog).map(manualLine).join('\n')}
@@ -207,9 +220,20 @@ The tool result: Scheduled s1 for today at 15:40.
 You answer: Sure, I'll remind you at 15:40.
 Later, the message: Scheduled task s1, set at 15:20: Remind the user to call Sam.
 You answer: It's time to call Sam!
+${
+    has('memory')
+      ? `
 The user says: no, I always mean Celsius and my city is Leeds
 You answer: Got it.
-{"tool": "learn", "arguments": {"section": "user", "note": "Lives in Leeds; wants temperatures in Celsius"}}${
+{"tool": "remember", "arguments": {"category": "PEOPLE", "about": "${THE_USER}", "notes": ["pref temperatures in Celsius", "lives in Leeds"]}}`
+      : ''
+  }${
+    library
+      ? `
+The tool result for a run: weather.py failed: "give the city first, then the units"
+You answer: {"tool": "library", "arguments": {"op": "append", "name": "${PLAYBOOK}", "text": "- weather.py takes the city first, then the units"}}`
+      : ''
+  }${
     has('memory')
       ? `
 The user says: my sister Ada's birthday is on the 14th of March
@@ -230,10 +254,7 @@ The tool result: {"name": "Shopping", "action": "appended", …}
 You answer: Eggs are on your shopping list.`
       : ''
   }`);
-  if (memory) {
-    p.push(memory.prompt());
-    if (memory.instructions?.trim()) p.push(`The user's standing instructions (follow them):\n${memory.instructions.trim()}`);
-  }
+  if (notes) p.push(notes.prompt());
   // What changes from one message to the next comes last.
   if (catalog?.upcoming?.length) p.push(`Coming up in the next week, from MEMORY (bring it up when it's relevant, or when they ask what's coming):\n${catalog.upcoming.map((l) => `- ${l}`).join('\n')}`);
   if (matches.length) p.push(`What fits what was just said, from a search of the scripts, flows and routes (run a script by its name; find looks for others):\n${matches.map((l) => `- ${l}`).join('\n')}`);
@@ -285,8 +306,7 @@ export const NOTE = {
   review:
     "Note from the Mac (not the user): that didn't work. Before anything else, look at why: the wrong script, the wrong arguments, something the error or the output tells you? Try once more a different way if one could work; otherwise tell the user plainly what went wrong and what would fix it. Don't repeat the same call unchanged.",
   /** After a request that took work: the moment to learn. */
-  reflect:
-    "Note from the Mac (not the user), not said aloud: the request is over. Is there something you learned from it about working with the user that will matter next time (how they like things done, which script or arguments worked, or a mistake to avoid) that isn't in your own notes yet? If so, answer with the learn call (or unlearn, for a note that proved wrong). If not, answer only (nothing).",
+  reflect: `Note from the Mac (not the user), not said aloud: the request is over. Is there something you learned from it that will matter next time and isn't in your playbook yet (which script or arguments worked, how the user likes things done, a mistake to avoid)? If so, answer with only the library call that adds it to "${PLAYBOOK}" (or writes the note again without a line that proved wrong), or, for something about the user themselves, the remember call. If not, answer only (nothing).`,
 };
 
 /** The answer promises work ("let me check", "I'll remind you") without the call that does it. */

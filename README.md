@@ -154,7 +154,7 @@ scripts/smoke-mac.sh # on a Mac, after dist: opens the app, waits for it, makes 
 | `src/main/core.mjs` | the assistant and what it works with, what's heard, the actions the chat and the API share |
 | `src/main/assistant.mjs` | the conversation: the model, tool calls, cancelling, the harness's notes, learning |
 | `src/main/prompt.mjs` | what the model is told (one model, the three habits), and the notes it gets when it slips |
-| `src/main/model.mjs`, `toolrun.mjs`, `scheduler.mjs`, `memory.mjs`, `calls.mjs` | Ollama, Tool Mac Tool Run, the schedule, memory, reading tool calls |
+| `src/main/model.mjs`, `toolrun.mjs`, `scheduler.mjs`, `notes.mjs`, `calls.mjs` | Ollama, Tool Mac Tool Run, the schedule, what it has learned (read from Tool Mac Tool Run), reading tool calls |
 | `src/main/api.mjs`, `speech.mjs` | the API; the record of what's said |
 | `src/shared/` | the characters, the catalog of what it can show, voices, text into sentences and cues, the director, the echo check |
 | `renderer/` | the character's page (TalkingHead, HeadTTS, the ears) and the chat; `voice-glue.mjs` runs inside HeadTTS's worker to say what went wrong there, `ort-local.mjs` gives transformers.js ONNX Runtime from the app rather than a CDN |

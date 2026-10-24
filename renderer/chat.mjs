@@ -359,34 +359,42 @@ function renderLater() {
 
 function renderMemory() {
   if (!memory) return;
-  $('memoryCount').textContent = `${memory.count} of ${memory.max} notes`;
+  $('memoryCount').textContent = memory.playbook?.length ? `${memory.playbook.length} lines` : '';
   const box = $('memory');
   box.replaceChildren();
-  for (const s of memory.sections) {
-    const h = document.createElement('h4');
-    h.textContent = s.title;
-    const ul = document.createElement('ul');
-    ul.className = 'notes';
-    const notes = memory.notes[s.id] || [];
-    if (!notes.length) {
-      const li = document.createElement('li');
-      li.className = 'hint';
-      li.textContent = 'Nothing yet.';
-      ul.append(li);
-    }
-    for (const n of notes) {
-      const li = document.createElement('li');
-      const span = document.createElement('span');
-      span.textContent = n;
-      const x = document.createElement('button');
-      x.textContent = '×';
-      x.title = 'Forget this';
-      x.onclick = () => act('forget', { section: s.id, note: n });
-      li.append(span, x);
-      ul.append(li);
-    }
-    box.append(h, ul);
+  const ul = document.createElement('ul');
+  ul.className = 'notes';
+  const hint = (text) => {
+    const li = document.createElement('li');
+    li.className = 'hint';
+    li.textContent = text;
+    return li;
+  };
+  if (!memory.library) ul.append(hint(`Tool Mac Tool Run's library isn't on${memory.error ? ` (${memory.error})` : ''}: there's nowhere to keep it.`));
+  else if (!memory.playbook?.length) ul.append(hint('Nothing yet.'));
+  for (const line of memory.playbook || []) {
+    const li = document.createElement('li');
+    const span = document.createElement('span');
+    span.textContent = line.replace(/^-\s*/, '');
+    const x = document.createElement('button');
+    x.textContent = '×';
+    x.title = 'Take this line out of the playbook';
+    x.onclick = () => act('forget', { note: line });
+    li.append(span, x);
+    ul.append(li);
   }
+  box.append(ul);
+  const about = $('aboutUser');
+  about.replaceChildren();
+  if (!memory.memory) about.append(hint("Tool Mac Tool Run's MEMORY isn't on."));
+  else if (!memory.aboutUser?.length) about.append(hint('Nothing yet.'));
+  for (const line of memory.aboutUser || []) {
+    const li = document.createElement('li');
+    li.textContent = line;
+    about.append(li);
+  }
+  $('instructions').disabled = !memory.library;
+  $('saveInstructions').disabled = !memory.library;
   if (document.activeElement !== $('instructions')) $('instructions').value = memory.instructions || '';
 }
 

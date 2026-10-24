@@ -386,6 +386,7 @@ function grow() {
   const t = $('input');
   t.style.height = 'auto';
   t.style.height = `${Math.min(120, t.scrollHeight)}px`;
+  t.style.overflowY = t.scrollHeight > 120 ? 'auto' : 'hidden';
 }
 
 for (const b of document.querySelectorAll('#tabs button')) b.onclick = () => tab(b.dataset.tab);

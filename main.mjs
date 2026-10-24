@@ -5,7 +5,7 @@
 // (Moonshine); this process holds the assistant (the core: the model, the tools, the schedule,
 // memory), owns the windows, and answers the API.
 
-import { app, BrowserWindow, Menu, Tray, clipboard, globalShortcut, ipcMain, nativeImage, screen, session, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, Menu, Tray, clipboard, globalShortcut, ipcMain, nativeImage, screen, shell, systemPreferences } from 'electron';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -527,9 +527,7 @@ function refreshMenu() {
 app.on('second-instance', show);
 
 app.whenReady().then(async () => {
-  // The microphone: asked for once (macOS shows its own prompt), and allowed to the app's pages.
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, done) => done(['media', 'audioCapture', 'speaker-selection'].includes(permission)));
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => ['media', 'audioCapture', 'speaker-selection'].includes(permission));
+  // The microphone: macOS asks the user once (Electron itself allows its pages everything they ask for).
   if (process.platform === 'darwin' && !process.env.SUPERFACE_NO_MIC) systemPreferences.askForMediaAccess('microphone').catch(() => {});
   rendererUrl = await startStatic();
   tray = new Tray(nativeImage.createEmpty());

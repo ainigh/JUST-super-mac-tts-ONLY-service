@@ -24,11 +24,13 @@ export class Ears {
    * @param {string} o.transformers - transformers.js's module URL
    * @param {(state: object) => void} o.onState - { state: 'off'|'loading'|'listening'|'hearing'|'writing'|'paused'|'failed', … }
    * @param {(p: {text: string, at: number, seconds: number}) => void} o.onHeard
+   * @param {(message: string, detail?: string) => void} [o.onError] - what went wrong, for the Errors tab
    */
-  constructor({ transformers, onState, onHeard }) {
+  constructor({ transformers, onState, onHeard, onError = () => {} }) {
     this.transformers = transformers;
     this.onState = onState;
     this.onHeard = onHeard;
+    this.onError = onError;
     this.worker = null;
     this.modelReady = null; // resolves once the models are loaded
     this.stream = null;
@@ -62,9 +64,13 @@ export class Ears {
           if (this.on && m.text) this.onHeard({ text: m.text, at: m.at, seconds: m.seconds });
         } else if (m.type === 'error') {
           console.warn('Ears:', m.message);
+          this.onError(m.message);
         }
       };
-      this.worker.onerror = (e) => reject(new Error(e.message || 'the ears could not start'));
+      this.worker.onerror = (e) => {
+        this.onError(`the ears' worker failed: ${e.message || 'a script error'}`, `${e.filename || ''}:${e.lineno || ''}`);
+        reject(new Error(e.message || 'the ears could not start'));
+      };
     });
     this.worker.postMessage({ type: 'init', transformers: this.transformers, model });
     this.modelReady.catch(() => {
@@ -97,6 +103,7 @@ export class Ears {
       this.on = false;
       const denied = /denied|not allowed|permission/i.test(err?.message || '') || err?.name === 'NotAllowedError';
       const none = err?.name === 'NotFoundError';
+      this.onError(`The ears didn’t start: ${err?.message || err}`, err?.stack || '');
       this.set('failed', {
         message: denied ? 'the microphone isn’t allowed: System Settings › Privacy & Security › Microphone' : none ? 'there’s no microphone' : err?.message || String(err),
       });

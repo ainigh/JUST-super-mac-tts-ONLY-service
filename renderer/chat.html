@@ -41,6 +41,8 @@
       <button role="tab" data-tab="tools">Tools <span class="count" id="toolCount"></span></button>
       <button role="tab" data-tab="later">Later <span class="count" id="laterCount"></span></button>
       <button role="tab" data-tab="mind">Mind</button>
+      <button role="tab" data-tab="prompts">Prompts</button>
+      <button role="tab" data-tab="errors">Errors <span class="count bad" id="errorCount"></span></button>
     </nav>
 
     <main>
@@ -82,6 +84,22 @@
         <div class="row end"><button id="saveInstructions">Save</button></div>
         <h3>Conversation</h3>
         <button id="newChat" class="quiet">Start a new chat</button>
+      </section>
+
+      <section id="prompts" class="pane" role="tabpanel" hidden>
+        <p class="hint">What the model is told, as it stands right now (built fresh for every message), and the notes the app adds at the moments they're due. Your own standing instructions are in Mind, and are part of the first one.</p>
+        <div id="promptList"></div>
+      </section>
+
+      <section id="errors" class="pane" role="tabpanel" hidden>
+        <div class="row">
+          <button id="copyReport" class="primary">Copy report</button>
+          <button id="retryVoice" hidden>Try the voice again</button>
+          <span class="grow"></span>
+          <button id="clearErrors" class="quiet">Clear</button>
+        </div>
+        <p id="copied" class="hint">The report has what went wrong and how everything stands (versions, GPU, voice, ears, model, tools): paste it wherever you report a problem.</p>
+        <ol id="errorList"></ol>
       </section>
     </main>
 

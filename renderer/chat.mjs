@@ -28,6 +28,7 @@ let status = null;
 let tools = null;
 let schedules = [];
 let memory = null;
+let errorList = [];
 const shown = new Map(); // entry id → its element
 
 // ---------------------------------------------------------------- the top: who, and what they're doing
@@ -61,6 +62,7 @@ function renderStatus() {
   $('toolCount').textContent = status.tools.reachable ? String(status.tools.scripts + status.tools.flows + 5) : '5';
   $('laterCount').textContent = status.schedules ? String(status.schedules) : '';
   $('listenWhileSpeaking').checked = status.listenWhileSpeaking;
+  $('retryVoice').hidden = status.face?.tts?.state !== 'failed';
   $('think').checked = status.think;
 }
 
@@ -72,6 +74,9 @@ function doing() {
   }
   if (a.phase === 'thinking') return 'Thinking…';
   if (a.error) return a.error;
+  if (status.face?.avatar === 'failed') return "I didn't load: see Errors";
+  if (status.face?.tts?.state === 'failed') return "My voice didn't load: see Errors";
+  if (status.face?.tts?.state === 'downloading') return `Getting my voice ready… ${Math.round((status.face.tts.progress || 0) * 100)}%`;
   if (status.speaking) return 'Talking…';
   if (a.phase === 'learning') return 'Taking notes…';
   if (!status.listening) return 'Not listening (the mic is off): type below';
@@ -350,6 +355,78 @@ async function loadModels() {
   $('modelHint').textContent = r.error ? `${r.error} Get Ollama at ollama.com, then: ollama pull qwen3:8b` : r.models.length ? 'One model does all of it: talking, tools, and the face.' : 'In Terminal: ollama pull qwen3:8b';
 }
 
+async function renderPrompts() {
+  const list = (await act('prompts')) || [];
+  $('promptList').replaceChildren(
+    ...list.map((p) => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      const head = document.createElement('div');
+      head.className = 'head';
+      const h = document.createElement('h4');
+      h.textContent = p.title;
+      const copy = document.createElement('button');
+      copy.textContent = 'Copy';
+      copy.onclick = async () => {
+        await copyText(p.text);
+        copy.textContent = 'Copied';
+        setTimeout(() => (copy.textContent = 'Copy'), 1500);
+      };
+      head.append(h, copy);
+      const when = document.createElement('p');
+      when.textContent = p.when;
+      const pre = document.createElement('pre');
+      pre.textContent = p.text;
+      card.append(head, when, pre);
+      return card;
+    }),
+  );
+}
+
+function renderErrors() {
+  $('errorCount').textContent = errorList.length ? String(errorList.length) : '';
+  const ol = $('errorList');
+  ol.replaceChildren(
+    ...[...errorList].reverse().map((e) => {
+      const li = document.createElement('li');
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const src = document.createElement('span');
+      src.className = 'source';
+      src.textContent = e.source;
+      const when = document.createElement('span');
+      when.textContent = new Date(e.at).toLocaleString() + (e.count > 1 ? ` · ×${e.count}` : '');
+      meta.append(src, when);
+      const msg = document.createElement('div');
+      msg.className = 'msg';
+      msg.textContent = e.message;
+      li.append(meta, msg);
+      if (e.detail) {
+        const d = document.createElement('details');
+        const s = document.createElement('summary');
+        s.textContent = 'Details';
+        const pre = document.createElement('pre');
+        pre.textContent = e.detail;
+        d.append(s, pre);
+        li.append(d);
+      }
+      return li;
+    }),
+  );
+  if (!errorList.length) {
+    const li = document.createElement('li');
+    li.className = 'hint';
+    li.textContent = 'No errors.';
+    ol.append(li);
+  }
+}
+
+/** Onto the clipboard: the app's when it can, else the page's. */
+async function copyText(text) {
+  const r = await act('copy', { text });
+  if (!r?.copied) await navigator.clipboard.writeText(text);
+}
+
 // ---------------------------------------------------------------- wiring
 
 async function act(name, args) {
@@ -371,6 +448,7 @@ function tab(name) {
   for (const p of document.querySelectorAll('.pane')) p.hidden = p.id !== name;
   $('compose').hidden = name !== 'chat';
   if (name === 'mind') loadModels();
+  if (name === 'prompts') renderPrompts();
   if (name === 'chat') scrollDown();
 }
 
@@ -411,6 +489,26 @@ $('refreshTools').onclick = async () => {
   renderTools();
 };
 $('cancelAll').onclick = () => act('cancelSchedule', { id: 'all' });
+$('copyReport').onclick = async () => {
+  const r = await act('copyReport');
+  if (r && !r.copied) await navigator.clipboard.writeText(r.text);
+  $('copied').textContent = 'Copied: paste it wherever you report the problem.';
+};
+$('clearErrors').onclick = () => act('clearErrors');
+$('retryVoice').onclick = async () => {
+  const b = $('retryVoice');
+  b.disabled = true;
+  b.textContent = 'Starting the voice…';
+  const r = await act('retryVoice');
+  b.disabled = false;
+  b.textContent = 'Try the voice again';
+  status = (await act('status')) || status;
+  renderStatus();
+  $('copied').textContent = r?.ok ? 'The voice is working now.' : `It still didn't start${r?.message ? `: ${r.message}` : ''}. Copy the report and send it.`;
+};
+// What goes wrong in the chat itself goes in the list too.
+addEventListener('error', (e) => act('reportError', { source: 'chat', message: e.message, detail: e.error?.stack || '' }));
+addEventListener('unhandledrejection', (e) => act('reportError', { source: 'chat', message: String(e.reason?.message || e.reason), detail: e.reason?.stack || '' }));
 $('model').onchange = () => act('set', { model: $('model').value });
 $('think').onchange = () => act('set', { think: $('think').checked });
 $('listenWhileSpeaking').onchange = () => act('set', { listenWhileSpeaking: $('listenWhileSpeaking').checked });
@@ -467,6 +565,10 @@ bridge.onEvent((ev) => {
       memory = ev.memory;
       renderMemory();
       break;
+    case 'errors':
+      errorList = ev.errors;
+      renderErrors();
+      break;
     case 'focus':
       $('input').focus();
       break;
@@ -483,6 +585,8 @@ schedules = (await act('schedules')) || [];
 renderLater();
 memory = await act('memory');
 renderMemory();
+errorList = (await act('errors'))?.errors || [];
+renderErrors();
 $('input').focus();
 // The times ("in 12 minutes") move on.
 setInterval(async () => {

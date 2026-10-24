@@ -37,8 +37,10 @@ Run script), and no wake word.
   instructions) in the chat's **Mind** tab.
 - **The chat**: click the character. What you both said, each tool at work (waiting for your click,
   running, what it printed, Cancel), every tool there is (fetched from Tool Mac Tool Run as it
-  opens), what's scheduled, its memory and model; the character picker and the size buttons
-  (smaller and bigger go round). Click it again to hide it.
+  opens), what's scheduled, its memory and model, the **Prompts** it's given as they stand now
+  (each with Copy), and the **Errors** (with **Copy report**, to paste wherever you report a
+  problem, and **Try the voice again**); the character picker and the size buttons (smaller and
+  bigger go round). Click it again to hide it.
 - **The face**: [TalkingHead](https://github.com/met4citizen/TalkingHead) (8 moods, 27 expressions,
   8 hand gestures, nods and shakes, 10 poses) and Kokoro through
   [HeadTTS](https://github.com/met4citizen/HeadTTS), with each word and viseme timed, so the lips
@@ -72,6 +74,11 @@ What it works with, on the same Mac:
    ```bash
    gh api -H "Accept: application/vnd.github.raw" repos/ainigh/JUST-super-mac-tts-ONLY-service/contents/extras/library.py > ~/Scripts/utilities/library.py && chmod +x ~/Scripts/utilities/library.py
    ```
+
+**Something not working?** Click the character, open **Errors**, and **Copy report**: it has what
+went wrong (a voice that didn't start says why, from inside the voice's own worker) and how
+everything stands (versions, GPU, voice, ears, model, tools). **Try the voice again** starts the
+voice again without restarting the app.
 
 **Update**: the menu shows **Update to …** when there's a newer release (or `POST /api/update
 {"install": true}`); running the install line again works too.
@@ -128,7 +135,7 @@ scripts/smoke-mac.sh # on a Mac, after dist: opens the app, waits for it, makes 
 | `src/main/model.mjs`, `toolrun.mjs`, `scheduler.mjs`, `memory.mjs`, `calls.mjs` | Ollama, Tool Mac Tool Run, the schedule, memory, reading tool calls |
 | `src/main/api.mjs`, `speech.mjs` | the API; the record of what's said |
 | `src/shared/` | the characters, the catalog of what it can show, voices, text into sentences and cues, the director, the echo check |
-| `renderer/` | the character's page (TalkingHead, HeadTTS, the ears) and the chat |
+| `renderer/` | the character's page (TalkingHead, HeadTTS, the ears) and the chat; `voice-glue.mjs` runs inside HeadTTS's worker to say what went wrong there, `ort-local.mjs` gives transformers.js ONNX Runtime from the app rather than a CDN |
 | `scripts/` | fetching the characters, the browser dev server, packaging for the Mac |
 | `extras/library.py` | the notes library script, as Tool Mac Tool Run ships it, for folders set up before it did |
 

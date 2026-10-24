@@ -6,10 +6,11 @@ import path from 'node:path';
 import { Assistant } from './assistant.mjs';
 import { Memory } from './memory.mjs';
 import { Ollama } from './model.mjs';
+import { NOTE, systemPrompt } from './prompt.mjs';
 import { Scheduler, fromNow, longTime } from './scheduler.mjs';
 import { ToolRun } from './toolrun.mjs';
 import { CHARACTERS, SIZES, characterOf, nextSize, resolveCharacter } from '../shared/characters.mjs';
-import { modelRequest } from '../shared/director.mjs';
+import { SYSTEM as EXPRESSIONS_PROMPT, modelRequest } from '../shared/director.mjs';
 import { words } from '../shared/text.mjs';
 
 /** Said alone, these stop it talking (and any answer still being written); a run carries on. */
@@ -22,9 +23,19 @@ const NOISE = new Set(['uh', 'um', 'umm', 'hmm', 'mm', 'mhm', 'ah', 'oh', 'eh', 
 /** A phrase ending like this isn't over: the rest is waited for a moment. */
 const UNFINISHED = /(\b(and|but|or|so|because|then|the|a|an|to|of|with|for|that|my|your|is|are|if|when|about|like)|,)\s*$/i;
 
+const MAX_ERRORS = 200;
+
 export function createCore({ settings, speech, dataDir, host = {}, fetch: f = globalThis.fetch, now = Date.now }) {
   const listeners = new Set();
+  const errors = []; // what went wrong, newest last: { id, at, source, message, detail, count }
+  let nextError = 1;
+  const seenErrorEntries = new Set();
   const emit = (ev) => {
+    // The assistant's own errors (no model, Ollama down…) go to the error log too.
+    if (ev.type === 'entry' && ev.entry.kind === 'error' && !seenErrorEntries.has(ev.entry.id)) {
+      seenErrorEntries.add(ev.entry.id);
+      reportError({ source: 'model', message: ev.entry.text });
+    }
     for (const fn of listeners) {
       try {
         fn(ev);
@@ -133,6 +144,75 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     assistant.say(h.text, { how: 'said', at: h.at });
   }
 
+  // ---------------------------------------------------------------- what went wrong
+
+  /** Something went wrong, anywhere (the character's page, its workers, the model, the app): kept for the Errors tab. */
+  function reportError({ source = 'app', message, detail = '' }) {
+    const msg = String(message ?? '').trim();
+    if (!msg) return null;
+    const last = errors.at(-1);
+    // The same thing again, straight after: counted, not listed twice.
+    if (last && last.source === source && last.message === msg && now() - last.at < 60_000) {
+      last.count++;
+      last.at = now();
+      if (detail && !last.detail) last.detail = String(detail);
+    } else {
+      errors.push({ id: nextError++, at: now(), source, message: msg.slice(0, 1000), detail: String(detail || '').slice(0, 8000), count: 1 });
+      if (errors.length > MAX_ERRORS) errors.splice(0, errors.length - MAX_ERRORS);
+    }
+    emit({ type: 'errors', errors });
+    return errors.at(-1);
+  }
+
+  /** Everything worth knowing to report a problem, as text to paste. */
+  function errorReport() {
+    const about = host.about?.() || {};
+    const face = host.face?.() || {};
+    const s = settings.get();
+    const a = assistant.state();
+    const c = toolrun.catalog;
+    const time = (ms) => new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+    const lines = [
+      `Super Face ${about.version || '?'}, report made ${time(now())} UTC`,
+      `System: ${about.os || process.platform} · Electron ${about.electron || '?'} · Chrome ${about.chrome || '?'} · ${about.arch || process.arch}`,
+      `GPU (WebGPU): ${face.gpu || 'unknown'}`,
+      `Character: ${character().name} (${s.avatar}), avatar ${face.avatar || '?'}${face.message ? `: ${face.message}` : ''}`,
+      `Voice: ${face.tts?.state || '?'}${face.tts?.message ? `: ${face.tts.message}` : ''}${face.backend ? ` (on ${face.backend})` : ''}`,
+      `Ears: ${s.listening ? ears.state : 'off (not listening)'}${ears.message ? `: ${ears.message}` : ''}${ears.device ? ` (on ${ears.device})` : ''}`,
+      `Model: ${a.model || '(the best Ollama has)'} at ${s.ollamaUrl}${a.error ? `: ${a.error}` : ''}`,
+      `Tools: ${c.reachable && !c.error ? `${c.scripts.length} scripts, ${c.flows.length} flows` : `Tool Mac Tool Run not available (${c.error || 'not asked'})`} at ${s.toolRunUrl}`,
+      ...(face.userAgent ? [`Page: ${face.userAgent}`] : []),
+      '',
+      errors.length ? `Errors (${errors.length}, oldest first):` : 'No errors.',
+    ];
+    for (const e of errors) {
+      lines.push(`[${time(e.at)}] ${e.source}: ${e.message}${e.count > 1 ? ` (×${e.count})` : ''}`);
+      if (e.detail) lines.push(...e.detail.split('\n').slice(0, 40).map((l) => `    ${l}`));
+    }
+    return lines.join('\n');
+  }
+
+  /** The prompts as they stand now: what the model is told, and the notes the app adds when they're due. */
+  function prompts() {
+    return [
+      {
+        id: 'system',
+        title: 'The assistant (system prompt)',
+        when: 'Sent with every message, built fresh each time: the character, the three habits, the tools, the scripts Tool Mac Tool Run has now, the memory and your standing instructions, and the day.',
+        text: systemPrompt({ character: character(), catalog: toolrun.catalog, memory, now: now() }),
+      },
+      { id: 'promised', title: 'Words that promise work, with no tool call', when: 'Sent back once when an answer says it will do something but calls no tool.', text: NOTE.promised },
+      { id: 'broken', title: 'A tool call that can’t be read', when: 'Sent back once when an answer looks like a tool call but isn’t valid JSON.', text: NOTE.broken },
+      { id: 'cannot', title: '“I can’t”, with tools that could', when: 'Sent back once when an answer says it can’t, or has no access, while Tool Mac Tool Run is there.', text: NOTE.cannot },
+      { id: 'review', title: 'The critic: after a tool fails', when: 'Added to a failed tool’s result (twice per request at most).', text: NOTE.review },
+      { id: 'reflect', title: 'Learning: after a request that took work', when: 'Asked quietly (nothing is said) after a request with a failure or two tool calls or more: its answer may save notes to memory.', text: NOTE.reflect },
+      { id: 'onlyFirst', title: 'More than one tool call in an answer', when: 'Added to the result when an answer has several calls: only the first is made.', text: NOTE.onlyFirst('run_script', ['schedule']) },
+      { id: 'outOfRounds', title: 'Ten tool calls for one request', when: 'Added to the tenth tool result of one request.', text: NOTE.outOfRounds(10) },
+      { id: 'unknownTool', title: 'A tool that doesn’t exist', when: 'The result of a call to a tool there isn’t.', text: NOTE.unknownTool('fly_to_mars', toolrun.catalog) },
+      { id: 'expressions', title: 'Expressions, for what other apps send', when: 'Asked of the model when another app makes the character speak (POST /api/speak) with expressions from the model. Not used for the assistant’s own words: they carry their cues.', text: EXPRESSIONS_PROMPT },
+    ];
+  }
+
   // ---------------------------------------------------------------- what the chat and the API can do
 
   function schedules() {
@@ -157,6 +237,8 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       speaking: speech.speaking,
       tools: { reachable: toolrun.catalog.reachable && !toolrun.catalog.error, scripts: toolrun.catalog.scripts.length, flows: toolrun.catalog.flows.length, error: toolrun.catalog.error },
       schedules: scheduler.list().length,
+      face: (({ avatar, tts, backend, message } = {}) => ({ avatar, tts, backend, message }))(host.face?.()),
+      errors: errors.length,
     };
   }
 
@@ -214,6 +296,25 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       host.resize ? host.resize(name) : settings.set({ size: name });
       return { size: name };
     },
+    errors: () => ({ errors, report: errorReport() }),
+    clearErrors: () => {
+      errors.length = 0;
+      emit({ type: 'errors', errors });
+      return { ok: true };
+    },
+    /** The report, on the clipboard (the app's, when there is one; else it's handed back to copy). */
+    copyReport: () => {
+      const text = errorReport();
+      const copied = !!host.copy?.(text);
+      return { ok: true, copied, text };
+    },
+    copy: ({ text }) => ({ ok: true, copied: !!host.copy?.(String(text ?? '')) }),
+    reportError: ({ source, message, detail }) => ({ ok: !!reportError({ source: source || 'chat', message, detail }) }),
+    retryVoice: async () => {
+      if (!host.retryVoice) throw new Error('the voice can only be started again in the app');
+      return host.retryVoice();
+    },
+    prompts,
     set: (patch = {}) => {
       const allowed = {};
       if ('model' in patch) {
@@ -250,6 +351,9 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     direct,
     speakAs,
     setEars,
+    reportError,
+    errorReport,
+    prompts,
     status,
     refreshTools,
     character,

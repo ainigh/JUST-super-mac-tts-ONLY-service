@@ -253,10 +253,17 @@ body[data-ears='writing'] #face::after {
   border-bottom: 1px solid var(--line);
 }
 
+#tabs {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
 #tabs button {
+  flex: none;
   background: transparent;
   border-radius: 8px 8px 0 0;
-  padding: 6px 10px;
+  padding: 6px 7px;
+  font-size: 12.5px;
   color: var(--muted);
   border-bottom: 2px solid transparent;
 }
@@ -648,4 +655,105 @@ select {
   padding: 0 6px;
   background: transparent;
   color: var(--muted);
+}
+
+/* ---------------------------------------------------------------- prompts, errors */
+
+.count.bad {
+  color: #fff;
+  background: var(--bad);
+  border-radius: 999px;
+  padding: 0 5px;
+  font-size: 10px;
+}
+
+.count.bad:empty {
+  display: none;
+}
+
+.grow {
+  flex: 1;
+}
+
+.card {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+
+.card .head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card h4 {
+  flex: 1;
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.card .head button {
+  padding: 2px 8px;
+  font-size: 11.5px;
+}
+
+.card p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.card pre,
+#errorList pre {
+  margin: 6px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--theirs);
+  padding: 6px 8px;
+  border-radius: 8px;
+  user-select: text;
+}
+
+#errorList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#errorList li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  user-select: text;
+}
+
+#errorList .meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+#errorList .source {
+  background: rgba(255, 69, 58, 0.15);
+  color: var(--bad);
+  border-radius: 999px;
+  padding: 0 7px;
+}
+
+#errorList .msg {
+  margin-top: 2px;
+}
+
+#errorList summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11.5px;
+  margin-top: 3px;
 }

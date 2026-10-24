@@ -73,7 +73,25 @@ ipcMain.on('reply', (_e, { id, ok, result, error }) => {
 });
 
 const speech = new Speech({ send: (type, data) => send(type, data) });
-const core = createCore({ settings, speech, dataDir: app.getPath('userData'), host: { show: () => show(), resize: (name) => (win ? resize(name) : settings.set({ size: name })) } });
+const core = createCore({
+  settings,
+  speech,
+  dataDir: app.getPath('userData'),
+  host: {
+    show: () => show(),
+    resize: (name) => (win ? resize(name) : settings.set({ size: name })),
+    face: () => face,
+    about: () => ({
+      version: VERSION,
+      os: `macOS ${process.getSystemVersion?.() || ''} (${process.platform})`.trim(),
+      arch: process.arch,
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+    }),
+    copy: (text) => (clipboard.writeText(text), true),
+    retryVoice: () => ask('retryVoice', {}, 10 * 60_000),
+  },
+});
 
 // What the core says goes to the chat (and the speaking state, so it can offer to stop).
 let lastPhase = 'idle';
@@ -118,6 +136,8 @@ ipcMain.on('event', (_e, ev) => {
     if (face.avatar === 'ready' && face.tts.state === 'ready' && !settings.get().welcomed) welcome();
     if (face.avatar === 'loading' && was.avatar !== 'loading') earsSent = null; // the page started again
     updateEars();
+    // The chat shows how the avatar and the voice are doing (and says when the voice didn't load).
+    if (face.avatar !== was.avatar || face.tts.state !== was.tts?.state) chat?.webContents.send('ui:event', { type: 'status', status: core.status() });
     return;
   }
   if (ev.type === 'ears') {
@@ -126,6 +146,10 @@ ipcMain.on('event', (_e, ev) => {
   }
   if (ev.type === 'heard') {
     core.heard(ev);
+    return;
+  }
+  if (ev.type === 'error') {
+    core.reportError(ev);
     return;
   }
   speech.event(ev);
@@ -236,6 +260,7 @@ function createWindow() {
   });
   win.webContents.on('render-process-gone', (_e, d) => {
     console.error('Super Face: the avatar crashed:', d.reason);
+    core.reportError({ source: 'app', message: `The character's page stopped (${d.reason}, exit code ${d.exitCode}); it's reloaded` });
     for (const id of [...speech.order]) speech.finish(id, 'failed', 'the avatar crashed');
     setTimeout(() => win?.reload(), 1000);
   });
@@ -420,6 +445,7 @@ function serve() {
   apiServer = http.createServer((req, res) => handle(req, res));
   apiServer.on('error', (err) => {
     apiState = err.code === 'EADDRINUSE' ? `port ${s.port} is in use` : err.message;
+    core.reportError({ source: 'api', message: `The API didn't start: ${apiState}` });
     console.error('Super Face API:', apiState);
     refreshMenu();
   });

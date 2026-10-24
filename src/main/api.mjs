@@ -48,6 +48,7 @@ const ROUTES = {
   '/api/schedules': 'GET POST',
   '/api/schedules/cancel': 'POST',
   '/api/memory': 'GET POST',
+  '/api/errors': 'GET',
 };
 
 /** Settings a client may change through POST /api/settings, and how each is checked. */
@@ -294,6 +295,10 @@ export function createApi({ speech, face, settings, version, updater = null, doc
           if (b.forget) c.memory.forget(b.forget.section, b.forget.note);
         }
         return [200, c.memory.json()];
+      }
+      case '/api/errors': {
+        const c = needCore();
+        return [200, c.actions.errors()];
       }
       case '/api/update': {
         if (!updater) throw new HTTPError(503, 'unavailable', 'updates are only available in the app');

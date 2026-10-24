@@ -34,6 +34,7 @@
       "package.json",
       "node_modules/@met4citizen/**",
       "node_modules/three/build/**",
+      "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.*",
       "node_modules/@huggingface/transformers/dist/**",
       "!node_modules/@huggingface/transformers/dist/*.node.*",
       "!**/*.map",

@@ -179,3 +179,39 @@ test('memory and the tool list over the API', async () => {
   assert.equal(h.character, 'Ivy');
   assert.equal(h.assistant.busy, false);
 });
+
+test('errors: kept, the same one counted, in a report to copy; the model being down is one of them', async () => {
+  core.actions.clearErrors();
+  core.reportError({ source: 'voice', message: 'The voice didn’t start on the CPU (WebAssembly), try 1 of 2, after 10.2s', detail: 'Error: Loading models failed.\n    at connect' });
+  core.reportError({ source: 'voice', message: 'The voice didn’t start on the CPU (WebAssembly), try 1 of 2, after 10.2s' });
+  core.reportError({ source: 'ears', message: 'there’s no microphone' });
+  const [, e] = await get('/api/errors');
+  assert.equal(e.errors.length, 2);
+  assert.equal(e.errors[0].count, 2);
+  assert.match(e.report, /^Super Face .*, report made \d{4}-\d\d-\d\d/);
+  assert.match(e.report, /Voice: /);
+  assert.match(e.report, /Errors \(2, oldest first\):\n\[.*\] voice: The voice didn’t start .* \(×2\)\n    Error: Loading models failed\./);
+  const r = core.actions.copyReport();
+  assert.equal(r.copied, false, 'no clipboard outside the app: handed back to copy');
+  assert.equal(r.text, core.errorReport());
+
+  const realChat = core.model.chat;
+  core.model.chat = async () => {
+    throw Object.assign(new Error("Ollama isn't answering at http://127.0.0.1:11434. Is it running?"), { code: 'unreachable' });
+  };
+  core.assistant.say('hello?');
+  await idle();
+  core.model.chat = realChat;
+  assert.ok(core.actions.errors().errors.some((x) => x.source === 'model' && /isn't answering/.test(x.message)));
+  core.actions.clearErrors();
+  assert.equal(core.actions.errors().errors.length, 0);
+});
+
+test('the prompts as they stand: the system prompt built now, and every note the app can add', () => {
+  const list = core.actions.prompts();
+  assert.equal(list[0].id, 'system');
+  assert.match(list[0].text, /^You are Ivy/);
+  assert.match(list[0].text, /Today is \w+day/);
+  assert.deepEqual(list.map((p) => p.id), ['system', 'promised', 'broken', 'cannot', 'review', 'reflect', 'onlyFirst', 'outOfRounds', 'unknownTool', 'expressions']);
+  for (const p of list) assert.ok(p.title && p.when && p.text, p.id);
+});

@@ -293,7 +293,8 @@ quiet on for a minute ends `failed`, so nobody waits on it for ever.
 `captions` (true/false), `hideAfter` (seconds after speaking before it hides; 0 stays), `model`
 (an Ollama model's name; empty: the best one Ollama has), `think` (true: it thinks before
 answering), `ollamaUrl`, `toolRunUrl`, `listening` (the ears on while it shows), and
-`listenWhileSpeaking` (it can be cut in on), and answers all of them. `GET /api/update` says `{"state": "idle" | "checking" |
+`listenWhileSpeaking` (it can be cut in on), `fillers` (true: a few words while it works something out, "On it.",
+"Still on it."), and answers all of them. `GET /api/update` says `{"state": "idle" | "checking" |
 "upToDate" | "available" | "installing" | "failed", "version", "latest"}`; `POST /api/update` checks
 again, `{"install": true}` installs and restarts.
 

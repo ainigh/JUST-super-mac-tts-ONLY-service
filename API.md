@@ -355,9 +355,13 @@ it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) a
 - **Showing and Chrome's page**: `show` (a window in front of everything, with copy buttons:
   your text, a file, or a node of the mind), `copy` (to the clipboard), `chrome_page` (`url`,
   `tabs`, `page`, `has`, `find`, `highlight`, `outline`: reads Chrome's page to guide the user
-  through a site; it never clicks, opens or searches: asked to google or open a page, the call
-  goes to the `browser/` script that does it, `browser/google` or `browser/open-page`, when the
-  folder has it, and the model is told to ask Google for what no script does).
+  through a site; it never clicks, opens or searches; the model is told to ask Google, with
+  `browser/google`, for what no script does).
+- **A call that misses** is never left to guesswork, whatever the tool: an op a tool doesn't have
+  that is a script's name (`chrome_page` asked to `google`: `browser/google.sh`) runs that script
+  with the words given (asking on the Mac, as every run does); any other tool, op or route that
+  isn't there comes back with what Tool Mac Tool Run's search has for the call's words, each with
+  how to call it.
 - Each of these is offered only when Tool Mac Tool Run lists its group and has it switched on.
 - **Every other route** Tool Mac Tool Run lists (Straw, automation, system docs, and whatever it
   adds later) is reached with `call_api` (`method`, `path`, `body`, `why`), only under `/api/` on

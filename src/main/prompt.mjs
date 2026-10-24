@@ -73,11 +73,6 @@ export function canonical(call, catalog) {
     if (user && memory) return { name: 'remember', arguments: { category: 'PEOPLE', about: THE_USER, notes: [`pref ${note}`] } };
     return { name: 'library', arguments: { op: 'append', name: PLAYBOOK, text: `- ${note}` } };
   }
-  // The page tool asked to ask Google, open a page, or do what a browser/ script does: that script.
-  if (n === 'chrome_page' || ALIASES[n] === 'chrome_page') {
-    const script = webScript(a, catalog);
-    if (script) return script;
-  }
   if (ALL_TOOLS.some((t) => t.name === n)) return { name: n, arguments: call.arguments };
   if (ALIASES[n]) {
     const op = ALIAS_OP[n];
@@ -92,29 +87,6 @@ export function canonical(call, catalog) {
   const flow = (catalog?.flows || []).find((f) => f.name === raw || f.name.replace(/\.flow$/, '') === raw);
   if (flow) return { name: 'run_flow', arguments: { flow: flow.name, ...(call.arguments || {}) } };
   return { name: n, arguments: call.arguments, unknown: true };
-}
-
-/** Ops that ask the web rather than read the page: the browser/ script that does each, by its bare name. */
-const WEB_OPS = {
-  google: 'google', search_google: 'google', google_search: 'google', web_search: 'google', search_web: 'google', ask_google: 'google', look_up: 'google', lookup: 'google',
-  open: 'open-page', open_page: 'open-page', open_url: 'open-page', go: 'open-page', goto: 'open-page', go_to: 'open-page', navigate: 'open-page', visit: 'open-page', load: 'open-page',
-};
-
-/**
- * A chrome_page call that's for a browser/ script (op "google", "open", or a script's own name,
- * such as "youtube"): that script, run with the words it was given; null when it isn't one, or
- * the script isn't in the folder.
- */
-function webScript(a, catalog) {
-  const op = String(a.op ?? a.what ?? a.action ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-  if (!op) return null;
-  const scripts = (catalog?.scripts || []).filter((s) => s.name.startsWith('browser/'));
-  const bare = (s) => s.name.slice('browser/'.length).replace(/\.[a-z0-9]+$/i, '').toLowerCase();
-  const want = WEB_OPS[op] ?? op.replace(/_/g, '-');
-  const script = scripts.find((s) => bare(s) === want);
-  if (!script || script.name === 'browser/browser.sh') return null;
-  const words = a.text ?? a.q ?? a.query ?? a.url ?? a.address ?? a.words ?? a.search;
-  return { name: 'run_script', arguments: { script: script.name, args: words === undefined || words === null || words === '' ? [] : [String(words)], why: a.why || 'You asked for it' } };
 }
 
 function manualLine(t) {

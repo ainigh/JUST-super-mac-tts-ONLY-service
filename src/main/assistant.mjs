@@ -341,12 +341,27 @@ export class Assistant {
       failed = true;
     }
     const cancelled = turn.ctrl.signal.aborted;
+    // A call that missed (a tool, an op or a route there isn't, or asking a reader to act): what
+    // Tool Mac Tool Run has for its words, so the model is shown the way rather than guessing again.
+    if (failed && !cancelled && MISSED.test(text)) text += await this.alternatives(call, turn.ctrl.signal);
     if (failed && !cancelled) turn.failures++;
     this.update(entry, { state: cancelled ? 'cancelled' : failed ? 'failed' : 'done', result: text, endedAt: this.now() });
     this.trace?.change(log, { state: cancelled ? 'cancelled' : failed ? 'failed' : 'done', result: text, ms: this.now() - entry.startedAt }, { final: true });
     turn.toolEntry = null;
     this.emitState();
     return { text, failed, cancelled };
+  }
+
+  /** What Tool Mac Tool Run has for the words of a call that missed: a few lines to append, or ''. */
+  async alternatives(call, signal) {
+    const a = call.arguments && typeof call.arguments === 'object' ? call.arguments : {};
+    const words = [call.unknown ? call.name : '', a.op, a.action, a.text, a.q, a.query, a.url, a.path, a.name]
+      .filter((w) => typeof w === 'string' && w.trim())
+      .map((w) => w.replace(/[_/{}]+/g, ' ').replace(/\bapi\b/gi, '').trim())
+      .join(' ')
+      .slice(0, 200);
+    const lines = await this.toolrun.suggest(words, { signal });
+    return lines.length ? `\n\nWhat Tool Mac Tool Run has for "${words}" (call one of these instead, as it says):\n${lines.map((l) => `- ${l}`).join('\n')}` : '';
   }
 
   /** Cancels one tool (from its card in the chat): the request carries on with "cancelled" as its result. */
@@ -489,6 +504,9 @@ export class Assistant {
 }
 
 /** A tool's answer means it didn't work. */
+/** A call that missed what's there: no such tool, op or route, or a reader asked to act. */
+const MISSED = /^There's no (tool called|[\w-]+ op called)|^chrome_page only reads|That route isn't one listed/m;
+
 export function isFailure(text) {
   return /^[^\n]*: (failed|could_not_start|stopped)\b|^It didn't (run|work)|isn't answering|^Tool Mac Tool Run said|^The (Flow|Straw) code has a mistake|^There's no tool|^There's no [\w-]+ op called|^chrome_page only reads|^(Say|Give) (which|what|whose|the)\b|^call_api (only|is for)|^The method is|^body must be|wants its token|^No script|has no scripts folder|turned off in Tool Mac Tool Run/m.test(String(text));
 }

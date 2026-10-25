@@ -133,6 +133,8 @@ export class Assistant {
       busy: !!t,
       phase: t ? (t.toolRunning ? 'tool' : 'thinking') : this.reflecting ? 'learning' : 'idle',
       queued: this.inbox.length,
+      /** Runs on the Mac it asked for that aren't over yet (waiting for Run, or running): it waits on them. */
+      pending: this.log.filter((e) => e.kind === 'tool' && e.number && ['waiting', 'running'].includes(e.state)).length,
       tool: t?.toolEntry ? { id: t.toolEntry.id, name: t.toolEntry.name, state: t.toolEntry.state } : null,
       model: this.model.current().model || this.model.picked || '',
       error: this.lastError.code && this.now() - this.lastError.at < 120_000 ? this.lastError.message : null,
@@ -388,6 +390,7 @@ export class Assistant {
   async stopRun(e) {
     const said = await this.toolrun.stopSay(e.number, { request: e.request });
     this.update(e, { state: 'cancelled', result: `${e.result ? `${e.result}\n\n` : ''}Cancelled: ${said}`, endedAt: this.now() });
+    this.emitState(); // one less to wait on
     return said;
   }
 

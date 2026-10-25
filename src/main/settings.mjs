@@ -8,7 +8,6 @@ export const DEFAULTS = {
   port: 8769,
   serving: true,
   avatar: 'brunette',
-  view: 'full',
   voice: 'af_heart',
   speed: 1,
   mood: 'neutral',
@@ -45,6 +44,8 @@ export class Settings {
     this.value = { ...DEFAULTS, ...read(file) };
     // Expressions came from the model once: they're read from the words now.
     if (this.value.expressions === 'model') this.value.expressions = 'rules';
+    // The framing was a setting once: it's always head to toes now.
+    delete this.value.view;
     this.listeners = new Set();
   }
 

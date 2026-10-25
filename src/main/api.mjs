@@ -61,7 +61,6 @@ const ROUTES = {
 /** Settings a client may change through POST /api/settings, and how each is checked. */
 const SETTABLE = {
   avatar: (v, ctx) => (ctx.avatars.includes(v) ? v : bad(`avatar is one of ${ctx.avatars.join(', ')}`)),
-  view: (v) => (['full', 'mid', 'upper', 'head'].includes(v) ? v : bad('view is full, mid, upper or head')),
   voice: (v) => resolveVoice(v)?.id ?? bad(`no voice named ${v}`, 'unknown_voice'),
   speed: (v) => speedOf(v),
   mood: (v) => moodName(v) ?? bad(`no mood named ${v}`, 'unknown_name'),

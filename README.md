@@ -59,15 +59,19 @@ Run script), and no wake word.
   you report a problem, and **Try the voice again**); the character picker and the size buttons
   (S, M, L, H). Click it again to hide it.
 - **The face**: [TalkingHead](https://github.com/met4citizen/TalkingHead) (8 moods, 27 expressions,
-  8 hand gestures, nods and shakes, 10 poses) and Kokoro through
+  8 hand gestures and 5 for both hands, nods and shakes, 10 poses) and Kokoro through
   [HeadTTS](https://github.com/met4citizen/HeadTTS), with each word and viseme timed, so the lips
   follow the words. What it shows is read from the sentences themselves, not asked of the model:
   each is read for what kind it is (hello, thanks, sorry, good or bad news, a question, an offer,
   an instruction, not knowing, a "but"…), and the face, hands, head and eyes follow, some at the
-  very word (`src/shared/director.mjs`). While it works something out, it turns away and gets busy (heads
-  down, a look up, a frown of thought, a hand counting things off, turning to the other side now and then);
-  the moment you talk, or it has something to say, it turns back and faces you. A soft pip every couple of
-  seconds says it's busy, not gone (too short for its own ears to take for speech; **Mind** turns it off).
+  very word (`src/shared/director.mjs`).
+- **Its stance** says how things stand, always head to toes: **sitting** about with nothing to do
+  (looking round, tilting its head, swaying, shifting, a sigh, a yawn); **down on one knee**, face
+  down and hands busy, while it works something out (side on to the page, at the browser); **standing
+  with its hands together** (clasped, held, rubbed) while runs on the Mac are still to come back;
+  **standing and talking with its hands and head** when it reports back. When you talk, it looks up
+  at you. A soft pip every couple of seconds while it works says it's busy, not gone (too short for
+  its own ears to take for speech; **Mind** turns it off).
 - **API**: [API.md](API.md), at `http://127.0.0.1:8769`: speak, stop, express, audio alone, the
   echo check, and the assistant (chat, cancel, tools, schedules, memory), with live events.
 

@@ -24,7 +24,6 @@ const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf
 const AVATARS = Object.fromEntries(CHARACTERS.map((c) => [c.id, `${c.name} (${c.body === 'F' ? 'woman' : 'man'})`]));
 const CHAT = [720, 600]; // the chat window: width, and height at most
 const STATIC_PORT = 18769; // the page's address stays the same, so what it downloads stays cached
-const VIEWS = { full: 'Head to toes', mid: 'Waist up', upper: 'Head and shoulders', head: 'Face' };
 
 if (!app.requestSingleInstanceLock()) app.quit();
 app.setName('Super Face');
@@ -103,18 +102,19 @@ function pageSide() {
 }
 
 // What the core says goes to the chat (and the speaking state, so it can offer to stop).
-let lastPhase = 'idle';
-let lastTool = null;
+let lastAttend = '';
 core.subscribe((ev) => {
   chat?.webContents.send('ui:event', ev);
   if (ev.type === 'assistant') {
     const phase = ev.state.phase;
     const tool = ev.state.tool?.name || null;
-    // The character gets down to work while it thinks or a tool runs (to the page, for the
-    // browser), and stands and faces the user again after.
-    if (phase !== lastPhase || tool !== lastTool) send('attend', { state: phase, tool, page: pageSide() });
-    lastPhase = phase;
-    lastTool = tool;
+    const pending = ev.state.pending || 0;
+    // The character's whole body says how things stand: on one knee at work while it thinks or a
+    // tool runs (to the page, for the browser), standing with its hands together while runs on the
+    // Mac are still to come back, sitting about when there's nothing.
+    const key = `${phase}/${tool}/${pending}`;
+    if (key !== lastAttend) send('attend', { state: phase, tool, pending, page: pageSide() });
+    lastAttend = key;
   }
 });
 speech.subscribe((ev) => {
@@ -217,7 +217,7 @@ ipcMain.on('drag:end', () => {
 
 // What the renderer is told when a setting it uses changes.
 settings.onChange((s, before) => {
-  const changed = ['avatar', 'view', 'voice', 'speed', 'mood', 'expressions', 'captions', 'busyTone'].filter((k) => s[k] !== before[k]);
+  const changed = ['avatar', 'voice', 'speed', 'mood', 'expressions', 'captions', 'busyTone'].filter((k) => s[k] !== before[k]);
   if (changed.length) send('settings', Object.fromEntries(changed.map((k) => [k, s[k]])));
   if (s.port !== before.port || s.serving !== before.serving) serve();
   if (s.alwaysOnTop !== before.alwaysOnTop) win?.setAlwaysOnTop(s.alwaysOnTop, 'floating');
@@ -276,6 +276,11 @@ function createWindow() {
     core.reportError({ source: 'app', message: `The character's page stopped (${d.reason}, exit code ${d.exitCode}); it's reloaded` });
     for (const id of [...speech.order]) speech.finish(id, 'failed', 'the avatar crashed');
     setTimeout(() => win?.reload(), 1000);
+  });
+  // A page (re)loaded starts sitting about: it's told what the assistant is doing now.
+  win.webContents.on('did-finish-load', () => {
+    lastAttend = '';
+    core.assistant.emitState();
   });
   win.loadURL(`${rendererUrl}/renderer/index.html`);
 }
@@ -525,7 +530,6 @@ function menu() {
     { label: tools.reachable && !tools.error ? `Tools: ${tools.tools.length} tools, ${tools.scripts.length} scripts, ${tools.flows.length} flows` : tools.reachable ? `Tools: ${tools.error}`.slice(0, 70) : 'Tools: Tool Mac Tool Run isn’t running', enabled: false },
     { type: 'separator' },
     radio('Character (and voice)', AVATARS, s.avatar, (k) => settings.set({ avatar: k, voice: characterOf(k).voice })),
-    radio('Framing', VIEWS, s.view, (k) => settings.set({ view: k })),
     radio('Speed', { 0.8: 'Slower', 0.9: 'A little slower', 1: 'Normal', 1.1: 'A little faster', 1.25: 'Faster' }, String(s.speed), (k) => settings.set({ speed: Number(k) })),
     radio('Mood at rest', Object.fromEntries(Object.keys(MOODS).filter((m) => m !== 'sleep').map((m) => [m, m[0].toUpperCase() + m.slice(1)])), s.mood, (k) => settings.set({ mood: k })),
     radio('Expressions', { rules: 'From the words', off: 'Only when asked' }, s.expressions, (k) => settings.set({ expressions: k })),

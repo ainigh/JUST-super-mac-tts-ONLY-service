@@ -157,9 +157,11 @@ test('show, hide, toggle, express', async () => {
 });
 
 test('settings can be read and changed, checked', async () => {
-  const s = await (await post('/api/settings', { voice: 'f2', view: 'mid' })).json();
+  const s = await (await post('/api/settings', { voice: 'f2' })).json();
   assert.equal(s.voice, 'af_bella');
-  assert.equal(s.view, 'mid');
+  // The framing is always head to toes: it isn't a setting.
+  assert.equal(s.view, undefined);
+  assert.equal((await post('/api/settings', { view: 'mid' })).status, 400);
   assert.equal((await post('/api/settings', { port: 1 })).status, 400);
   assert.equal((await post('/api/settings', { avatar: 'nobody' })).status, 400);
   const v = await (await fetch(`${base}/api/voices`)).json();

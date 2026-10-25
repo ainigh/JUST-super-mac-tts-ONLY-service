@@ -58,6 +58,15 @@ const toUi = (ev) => {
   for (const res of uiClients) res.write(`data: ${JSON.stringify(ev)}\n\n`);
 };
 core.subscribe(toUi);
+// What the assistant is doing goes to the character, as in the app (main.mjs), for its stance.
+let lastAttend = '';
+core.subscribe((ev) => {
+  if (ev.type !== 'assistant') return;
+  const { phase, tool, pending = 0 } = ev.state;
+  const key = `${phase}/${tool?.name}/${pending}`;
+  if (key !== lastAttend) send('attend', { state: phase, tool: tool?.name || null, pending, page: 0 });
+  lastAttend = key;
+});
 speech.subscribe((ev) => {
   if (['started', 'ended', 'stopped', 'failed'].includes(ev.type)) toUi({ type: 'speech', speaking: speech.speaking || speech.queued > 0 });
 });

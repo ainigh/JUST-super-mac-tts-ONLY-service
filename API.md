@@ -11,7 +11,7 @@ anything, talk to its assistant, or use its voice alone.
   lips follow the words exactly. The model downloads once (a few hundred MB); after that nothing
   leaves the Mac.
 - **The face and body**: [TalkingHead](https://github.com/met4citizen/TalkingHead): 8 moods, 27
-  expressions, 8 hand gestures and 2 for both hands made of them, nods and shakes, 10 body poses,
+  expressions, 8 hand gestures and 5 for both hands made of them, nods and shakes, 10 body poses,
   turning to the side, eye contact. Its hands are kept out of its head.
 - **What it shows** while it talks: what the caller asks for; then what's written in the text (an
   emoji, a `[tag]`); then what the sentences themselves call for, read from their words (no model,
@@ -20,9 +20,14 @@ anything, talk to its assistant, or use its voice alone.
   turns the face at that word; and the small words, at their word ("everything" opens the arms, "a
   bit" pinches, "down" looks down, "ago" turns to one side). It faces you for what's said to you and
   turns aside now and then. The assistant's words are read the same way: its model knows nothing of
-  the character. While the assistant works, the character gets down to it (kneeling, sitting or
-  bent over, turned away; to the page, at the browser), and stands and faces you when you talk or
-  it answers.
+  the character.
+- **Its stance**, always seen head to toes, says how things stand at a glance: with nothing to do
+  it **sits** on the floor and idles about (looking round, tilting its head, swaying, shifting, a
+  sigh, a yawn); while the assistant thinks or a tool runs it's **down on one knee**, face down at
+  the work, hands busy (turned side on to the page, at the browser); while runs it asked for on the
+  Mac aren't over (waiting for Run, or running) it **stands with its hands together** in front
+  (clasped, held, rubbed); and when it reports back it **stands and talks with its hands and head**.
+  When you talk, it looks up at you and faces you, as it is.
 - **The assistant**: [below](#the-assistant). One model that asks Peter (Tool Mac Tool Run) in words, a schedule, memory.
 
 This document is the contract for client apps. New fields may be added to responses, but nothing
@@ -78,7 +83,7 @@ curl -s localhost:8769/api/echo -d '{"text": "nice to meet you"}'
 | `POST /api/echo` | was a phrase someone heard the avatar's own voice? |
 | `GET  /api/events` | Server-Sent Events: each utterance queued, started, each sentence, ended |
 | `POST /api/tts` | text → audio (WAV, PCM, or JSON with word and viseme timing), not said |
-| `GET  /api/settings`, `POST /api/settings` | the avatar, framing, voice, speed, resting mood, … |
+| `GET  /api/settings`, `POST /api/settings` | the avatar, voice, speed, resting mood, … |
 | `GET  /api/update`, `POST /api/update` | whether there's a newer version; `{"install": true}` installs it |
 | `GET  /api/assistant` | the assistant: the character, what it's doing, the ears, the model, the tools |
 | `POST /api/chat`, `GET /api/chat` | a message to the assistant (`"wait": true` answers with its reply); the conversation |
@@ -209,7 +214,7 @@ Answers `{"ok": true, …what was shown}`.
 |---|---|
 | `mood` | neutral, happy, love, sad, fear, angry, disgust, sleep |
 | `expression` | neutral, smile, warm, grin, delighted, beaming, laughing, playful, wink, smirk, adoring, starstruck, kiss, thinking, glance, eyeroll, unamused, grimace, embarrassed, shocked, frown, disappointed, pensive, pleading, crying, angry, sleepy |
-| `gesture` | handup (also `wave`), index (also `point`), ok, thumbup, thumbdown, side, shrug, namaste; for both hands, wide, bothup |
+| `gesture` | handup (also `wave`), index (also `point`), ok, thumbup, thumbdown, side, shrug, namaste; for both hands, wide, bothup, clasp, hold, wring |
 | `head` | yes, no |
 | `pose` | straight, side, hip, turn, wide, back, bend, oneknee, kneel, sitting |
 | `look` | camera, ahead, away, down |
@@ -290,7 +295,7 @@ Headers: `X-Voice`, `X-Sample-Rate`, `X-Duration`.
 {"ok": true, "service": "superface", "version": "0.1.12", "port": 8769, "uptime": 3641,
  "visible": true, "speaking": false, "queued": 0, "avatar": "ready", "ready": true,
  "models": {"tts": {"state": "ready"}}, "expressions": "rules", "character": "Ivy",
- "assistant": {"busy": false, "phase": "idle", "queued": 0, "tool": null, "model": "qwen3:8b", "error": null},
+ "assistant": {"busy": false, "phase": "idle", "queued": 0, "pending": 0, "tool": null, "model": "qwen3:8b", "error": null},
  "ears": {"state": "listening", "device": "webgpu"}}
 ```
 
@@ -307,8 +312,7 @@ quiet on for a minute ends `failed`, so nobody waits on it for ever.
 ### Settings and updates
 
 `POST /api/settings` takes any of `avatar` (the character: `brunette` Ivy, `david` David,
-`avaturn` Sofia, `avatarsdk` Leo; its voice comes with it), `view` (`full`, `mid`, `upper`,
-`head`), `voice`, `speed`, `mood` (the resting mood), `expressions` (`rules`: read from the words; `off`: only what's asked),
+`avaturn` Sofia, `avatarsdk` Leo; its voice comes with it), `voice`, `speed`, `mood` (the resting mood), `expressions` (`rules`: read from the words; `off`: only what's asked),
 `captions` (true/false), `hideAfter` (seconds after speaking before it hides; 0 stays), `model`
 (an Ollama model's name; empty: the best one Ollama has), `think` (true: it thinks before
 answering), `ollamaUrl`, `toolRunUrl`, `listening` (the ears on while it shows), and
@@ -438,7 +442,8 @@ GPU, then the CPU; twice round). The chat's **Errors** tab shows them, with **Co
 ### `GET /api/events`, for the assistant
 
 Besides the speech events, the stream carries `entry` (a conversation entry added or changed),
-`assistant` (what it's doing: `phase` is `idle`, `thinking`, `tool` or `learning`), `ears` (`off`,
+`assistant` (what it's doing: `phase` is `idle`, `thinking`, `tool` or `learning`; `pending`, the
+runs on the Mac it asked for that aren't over), `ears` (`off`,
 `loading`, `listening`, `hearing`, `writing`, `paused`, `failed`), `heard`, `schedules`, `memory`,
 `tools`, `errors` and `status`.
 

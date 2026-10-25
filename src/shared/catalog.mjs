@@ -46,7 +46,7 @@ export const EXPRESSIONS = {
   sleepy: { emoji: '😴', means: 'falling asleep' },
 };
 
-/** Hand gestures: TalkingHead's gesture templates, and two for both hands made of them (renderer/gestures.mjs). */
+/** Hand gestures: TalkingHead's gesture templates, and five for both hands made of them (renderer/gestures.mjs). */
 export const GESTURES = {
   handup: 'a hand raised: hello, goodbye, stop, or "one moment"',
   index: 'pointing with the index finger: "this", "here", "first", making a point',
@@ -58,6 +58,9 @@ export const GESTURES = {
   namaste: 'hands together: thanks, please, respect',
   wide: 'both arms open wide: "all", "everything", "huge", "we"',
   bothup: 'both hands up: "stop", "whoa", "hold it"',
+  clasp: 'hands clasped low in front: waiting, patient',
+  hold: 'hands held together at the waist: waiting, ready',
+  wring: 'hands pressed together, rubbing: eager, anxious, "any moment now"',
 };
 
 /** Where it looks: at the user, ahead (the way it faces), away (thinking), or down. */

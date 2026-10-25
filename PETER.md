@@ -89,9 +89,15 @@ pm. The user said "let me see it", so:
 > 6 in the morning to 11 at night. I'll put its page up for you.
 > `@peter open https://www.walmart.com/store/1234-austin-tx in Chrome`
 
-> **Peter**: `Opened in Chrome. Walmart Supercenter in Austin, TX | 710 E Ben White Blvd…`
+> **Peter**: `Opened in your own Chrome window, side by side with the person's. Walmart Supercenter in Austin, TX | 710 E Ben White Blvd…`
 
-> **Model**: There it is.
+> **Model**: There it is, on the right.
+
+Chrome pages open **side by side** by default: a window of Super Face's own on the right half
+of the screen, the user's own Chrome window moved to the left half, so they keep working in theirs.
+"open … on my screen" opens it in the user's own window instead, and "… in the background" keeps
+it out of sight; "where is … on my page" works on what the user is looking at. "put my browser
+back" closes Super Face's window and puts theirs back where it was.
 
 ### 2. "From now on, when I say walmart…"
 

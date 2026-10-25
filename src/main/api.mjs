@@ -66,6 +66,7 @@ const SETTABLE = {
   hideAfter: (v) => (Number.isFinite(+v) && +v >= 0 && +v <= 3600 ? +v : bad('hideAfter is seconds, 0 to 3600')),
   ollamaUrl: (v) => (/^https?:\/\/[^\s]+$/.test(String(v)) ? String(v).replace(/\/+$/, '') : bad('ollamaUrl is an http address')),
   peterUrl: (v) => (/^https?:\/\/[^\s]+$/.test(String(v)) ? String(v).replace(/\/+$/, '') : bad('peterUrl is an http address')),
+  storageUrl: (v) => (/^https?:\/\/[^\s]+$/.test(String(v)) ? String(v).replace(/\/+$/, '') : bad('storageUrl is an http address')),
   model: (v) => String(v ?? '').trim(),
   think: (v) => !!v,
   listening: (v) => !!v,
@@ -291,8 +292,8 @@ export function createApi({ speech, face, settings, version, updater = null, doc
         return [200, { ok: true, ...c.heard({ text, at, seconds: Number(b.seconds) || 0 }) }];
       }
       case '/api/memory': {
-        // What it has learned, as Peter keeps it: its playbook and the standing instructions
-        // (notes), what MEMORY has on the user. Changed by asking Peter, in words.
+        // What it has learned: the standing instructions and its playbook, as its space in Storage
+        // Spaces has them. Changed by asking Peter, in words.
         return [200, (await needCore().notes.refresh()).json()];
       }
       case '/api/errors': {

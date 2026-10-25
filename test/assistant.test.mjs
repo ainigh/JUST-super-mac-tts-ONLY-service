@@ -2,12 +2,12 @@
 // as Peter does, offering templates, taking on runs and following them) and a scripted model: a
 // chat of three, every answer addressed (@user said, @peter sent, never said), Peter's answers
 // back in the chat as the user's are, a tone each way, runs that don't hold the conversation up
-// and whose news comes in later, cancelling, the nudges, learning, interruptions.
+// and whose news comes in later, cancelling, the nudges, its notes, interruptions.
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
-import { Assistant, display, learning } from '../src/main/assistant.mjs';
-import { NOTES_CLIENT, Notes, PLAYBOOK, INSTRUCTIONS } from '../src/main/notes.mjs';
+import { Assistant, display } from '../src/main/assistant.mjs';
+import { Notes } from '../src/main/notes.mjs';
 import { Peter } from '../src/main/peter.mjs';
 import { Trace } from '../src/main/trace.mjs';
 import { Ollama } from '../src/main/model.mjs';
@@ -15,20 +15,9 @@ import { CHARACTERS } from '../src/shared/characters.mjs';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** A template filled in as lines: its title, then "- label: value" each. */
-function lines(text) {
-  const [title, ...rest] = text.split('\n');
-  const out = { title: title.trim() };
-  for (const l of rest) {
-    const m = l.match(/^\s*-\s*([^:]+):\s*(.*)$/);
-    if (m) out[m[1].trim()] = m[2].trim();
-  }
-  return out;
-}
-
-/** A stand-in for Peter, answering in words. */
+/** A stand-in for Peter, answering in words (and for Storage Spaces: its SUPER space's notes). */
 async function fakePeter() {
-  const seen = { said: [], log: [], stopped: [], notes: {}, waiting: 0, aboutUser: null };
+  const seen = { said: [], log: [], stopped: [], space: {}, spaceReads: [], waiting: 0 };
   const server = http.createServer(async (req, res) => {
     let body = '';
     for await (const c of req) body += c;
@@ -44,26 +33,24 @@ async function fakePeter() {
       if (e) e.state = 'withdrawn';
       return json(200, { ok: true, message: "Taken back: the nightly backup won't run." });
     }
+    const note = url.pathname.match(/^\/api\/spaces\/super\/(prompt|memory)\/files\/([^/]+)$/);
+    if (note) {
+      const key = `${note[1]}/${decodeURIComponent(note[2])}`;
+      seen.spaceReads.push({ key, client: req.headers['x-client'], format: url.searchParams.get('format') });
+      return key in seen.space ? text(seen.space[key]) : json(404, { ok: false, code: 'not_found' });
+    }
     if (url.pathname === '/api/say') {
-      const exact = url.searchParams.get('exact') === 'true';
       const client = req.headers['x-client'];
       const t = body.trim();
-      if (client === NOTES_CLIENT) {
-        (seen.noteReads ||= []).push({ text: t, exact });
-        const read = t.match(/^read the note (.+)$/);
-        if (read) return text(read[1] in seen.notes ? `The note ${read[1]}:\n${seen.notes[read[1]]}\n\nYou can also say:\n- …` : `There's no note called ${read[1]}.`);
-        if (/^what do you know about the user$/.test(t)) return text(seen.aboutUser ? `What's known about the user:\n${seen.aboutUser.map((l) => `- ${l}`).join('\n')}` : 'Nothing is remembered about the user yet.');
-      }
-      seen.said.push({ text: body, client, replyTo: req.headers['x-reply-to'], type: req.headers['content-type'], exact });
-      const l = lines(t);
+      seen.said.push({ text: body, client, replyTo: req.headers['x-reply-to'], type: req.headers['content-type'] });
       if (/^search the web for /i.test(t)) return text(`The web has these for "${t.slice(19)}":\n1. Leeds weather\n   https://weather.example/leeds\n   Rain today`);
       if (/^read the page at /i.test(t)) return text('The page at https://weather.example/leeds:\nLeeds today: 12°C and rain, clearing by 6pm.');
       if (/^what's the weather in /i.test(t)) return text('Leeds: 12°C, rain.');
-      if (/weather/i.test(t)) return text("These can do that:\n1. Search the web\n     search the web for {what to look for}\n2. Weather\n     what's the weather in {a place}\nFill one in and say it back.");
+      if (/weather/i.test(t)) return text("Where? Ask again with the place, like: what's the weather in Leeds. I don't keep our conversation: send the whole request again.");
       if (/^run the nightly backup$/i.test(t)) {
         const n = seen.log.length + 1;
         seen.log.push({ number: n, asked: new Date().toISOString(), said: t, what: 'the nightly backup', state: 'waiting', waits_for_the_mac: true, request: `REQ${n}` });
-        return text("Asked for the nightly backup. I'll tell you how it goes.\n\nYou can also say: what happened to {something you asked for}");
+        return text('Asked for the nightly backup. The client is told how it went the moment it\'s over.');
       }
       if (/^take your time$/i.test(t)) {
         // Never answers: the request is still with Peter when it's called off.
@@ -71,11 +58,12 @@ async function fakePeter() {
         res.on('close', () => seen.waiting--);
         return;
       }
-      if (/^add to a note$/i.test(l.title)) {
-        seen.notes[l.name] = `${seen.notes[l.name] ?? ''}${l.text}\n`;
-        return text(`Added that to the end of the note ${l.name}.`);
+      const keep = t.match(/^add to Super Face's instructions: (.+)$/i);
+      if (keep) {
+        seen.space['prompt/instructions'] = `${seen.space['prompt/instructions'] ?? ''}- ${keep[1]}\n`;
+        return text("Added it to Super Face's instructions.");
       }
-      return text("I don't know how to do that yet.\n\nYou can also say: what can you do");
+      return text("I couldn't do that: I have no tool that can. I don't keep our conversation: send the whole request again.");
     }
     json(404, { error: 'no such route', code: 'not_found' });
   });
@@ -117,7 +105,7 @@ async function setup(steps, fake) {
   const events = [];
   const tones = [];
   let stops = 0;
-  const notes = new Notes({ peter });
+  const notes = new Notes({ url: () => fake?.url || 'http://127.0.0.1:9' });
   const model = scriptedModel(steps);
   const a = new Assistant({
     model,
@@ -130,7 +118,7 @@ async function setup(steps, fake) {
     emit: (e) => events.push(e),
   });
   const idle = async () => {
-    for (let i = 0; i < 400 && (a.busy || a.inbox.length || a.reflecting); i++) await wait(5);
+    for (let i = 0; i < 400 && (a.busy || a.inbox.length); i++) await wait(5);
   };
   return { a, model, said, events, tones, notes, peter, idle, stops: () => stops };
 }
@@ -158,8 +146,8 @@ test('a chat of three: @user is said, @peter is sent as it is (never said), and 
     assert.deepEqual(said, ['Let me check.', "It's 12 degrees and raining in Leeds, clearing by six. [shrug]"], 'what was written to Peter is never said');
     assert.deepEqual(fake.seen.said.map((x) => x.text), ['search the web for Leeds weather today', 'read the page at https://weather.example/leeds']);
     assert.deepEqual(
-      fake.seen.said.map((x) => [x.client, x.replyTo, x.type, x.exact]),
-      Array(2).fill(['Super Face', 'http://127.0.0.1:8769/api/peter', 'text/plain; charset=utf-8', false]),
+      fake.seen.said.map((x) => [x.client, x.replyTo, x.type]),
+      Array(2).fill(['Super Face', 'http://127.0.0.1:8769/api/peter', 'text/plain; charset=utf-8']),
       'as plain text, saying who it is and where to tell it how a run went',
     );
     assert.deepEqual(tones, ['to-peter', 'from-peter', 'to-peter', 'from-peter'], 'a tone for each message to Peter, and each back');
@@ -185,41 +173,45 @@ test('a chat of three: @user is said, @peter is sent as it is (never said), and 
   }
 });
 
-test('its notes are read through Peter, exactly (never his model), as a client of their own', async () => {
+test('its notes are read straight from its own space in Storage Spaces, never through Peter', async () => {
   const fake = await fakePeter();
-  fake.seen.notes[PLAYBOOK] = `# ${PLAYBOOK}\n\n- weather.py takes the city first`;
-  fake.seen.notes[INSTRUCTIONS] = 'Call me Sam.';
-  fake.seen.aboutUser = ['the user: lives in Leeds'];
+  fake.seen.space['memory/playbook'] = '# playbook\n\n- weather.py takes the city first';
+  fake.seen.space['prompt/instructions'] = 'Call me Sam.';
   try {
     const { a, model, idle } = await setup(['@user Hi Sam.'], fake);
     a.say('hello');
     await idle();
     const sys = model.asked[0][0].content;
-    assert.match(sys, /Your playbook[^\n]*\n- weather\.py takes the city first/);
-    assert.match(sys, /What MEMORY has on the user themselves:\n- the user: lives in Leeds/);
     assert.match(sys, /The user's standing instructions \(follow them\):\nCall me Sam\./);
-    assert.ok(fake.seen.noteReads.every((r) => r.exact), 'read exactly: Peter never asks his model for these');
-    assert.equal(fake.seen.said.length, 0, "the model's own messages to Peter aren't mixed up with them");
+    assert.match(sys, /What you've learned about getting things done for the user:\n- weather\.py takes the city first/);
+    assert.deepEqual(fake.seen.spaceReads.map((r) => [r.key, r.client, r.format]).sort(), [['memory/playbook', 'Super Face', 'text'], ['prompt/instructions', 'Super Face', 'text']]);
+    assert.equal(fake.seen.said.length, 0, 'Peter is never asked for them');
+    assert.ok(sys.indexOf('Call me Sam.') < sys.indexOf('Today is'), 'they come last, with the day');
   } finally {
     fake.close();
   }
 });
 
-test("an offer of Peter's is filled in and said back; once the request is over, his offers are folded to a line", async () => {
+test('nothing in its space yet, or Storage Spaces closed: no notes in the prompt, and it goes on', async () => {
+  const { a, model, notes, idle } = await setup(['@user Hi.']);
+  a.say('hello');
+  await idle();
+  assert.doesNotMatch(model.asked[0][0].content, /standing instructions|learned about getting things done/);
+  assert.match(notes.error, /Storage Spaces isn't answering/);
+});
+
+test('when Peter needs something, the model asks him again with the whole request; long answers of his are cut short later', async () => {
   const fake = await fakePeter();
   try {
     const { a, model, said, idle } = await setup(
       [
-        '@peter I need to know about the weather in Leeds',
+        '@peter what is the weather like',
         (m) => {
-          assert.match(m.at(-1).content, /These can do that:\n1\. Search the web/);
-          return "@peter\n```\nwhat's the weather in Leeds\n```";
+          assert.match(m.at(-1).content, /Where\? Ask again with the place[\s\S]*send the whole request again\.[\s\S]*Peter didn't do that\. Look at why first\./);
+          return "@peter what's the weather in Leeds";
         },
         '@user 12 degrees and rain.',
-        '@user nothing', // it took work: a moment to learn, and nothing to learn
         (m) => {
-          const offer = m.find((x) => /^\[Peter, /.test(x.content) && /offered/.test(x.content));
-          assert.match(offer?.content, /@qwen3 \(offered: Search the web, Weather\)$/);
           assert.ok(m.some((x) => /Leeds: 12°C, rain\./.test(x.content)), 'what came of it stays');
           return '@user You are welcome.';
         },
@@ -228,10 +220,10 @@ test("an offer of Peter's is filled in and said back; once the request is over, 
     );
     a.say('weather in Leeds?');
     await idle();
-    assert.equal(fake.seen.said[1].text, "what's the weather in Leeds", 'the fence around it is not sent');
+    assert.equal(fake.seen.said[1].text, "what's the weather in Leeds");
     a.say('thanks');
     await idle();
-    assert.equal(model.asked.length, 5);
+    assert.equal(model.asked.length, 4, 'no quiet learning pass after it');
     assert.deepEqual(said, ['12 degrees and rain.', 'You are welcome.']);
   } finally {
     fake.close();
@@ -245,7 +237,7 @@ test("a run doesn't hold the conversation up: asked for, followed, and its news 
       [
         "@user I'll ask for it.\n@peter run the nightly backup",
         (m) => {
-          assert.match(m.at(-1).content, /Asked for the nightly backup\. I'll tell you how it goes\./);
+          assert.match(m.at(-1).content, /Asked for the nightly backup\. The client is told how it went/);
           return "@user It's asked for. I'll tell you when it's done.";
         },
         (m) => {
@@ -413,20 +405,16 @@ test('an answer addressed to no one is the user\'s: said, and kept as "@user …
   void model;
 });
 
-test("JSON out of habit is sent back; what Peter can't do brings the critic in; then it learns, quietly", async () => {
+test("JSON out of habit is sent back; what Peter can't do brings the critic in", async () => {
   const fake = await fakePeter();
   try {
-    const { a, model, said, notes, idle } = await setup(
+    const { a, model, said, idle } = await setup(
       [
         '{"tool": "run_script", "arguments": {"script": "teleport.sh"}}',
         '@peter teleport me to Paris',
         (m) => {
-          assert.match(m.at(-1).content, /I don't know how to do that yet\.[\s\S]*that didn't work\. Before anything else, look at why/);
+          assert.match(m.at(-1).content, /I couldn't do that: I have no tool that can\.[\s\S]*Peter didn't do that\. Look at why first\./);
           return "@user Sorry, that's beyond what I can do.";
-        },
-        (m) => {
-          assert.match(m.at(-1).content, /the request is over\. Is there something you learned/);
-          return `@peter\nAdd to a note\n- name: ${PLAYBOOK}\n- text: - Peter can't teleport anyone`;
         },
       ],
       fake,
@@ -435,22 +423,23 @@ test("JSON out of habit is sent back; what Peter can't do brings the critic in; 
     await idle();
     assert.match(model.asked[1].at(-1).content, /there are no tools to call with JSON/);
     assert.deepEqual(said, ["Sorry, that's beyond what I can do."]);
-    assert.equal(fake.seen.notes[PLAYBOOK], "- Peter can't teleport anyone\n");
-    assert.ok(a.log.some((e) => e.kind === 'note' && e.text === "Learned: Peter can't teleport anyone"));
-    await notes.refresh();
-    assert.deepEqual(notes.playbook, ["- Peter can't teleport anyone"], 'read back from Peter');
+    assert.equal(model.asked.length, 3, 'nothing after it');
   } finally {
     fake.close();
   }
 });
 
-test('while it learns, only its playbook and notes on the user may be written', () => {
-  assert.equal(learning({ to: 'peter', text: `Add to a note\n- name: ${PLAYBOOK}\n- text: - weather.py takes the city first` }), 'Learned: weather.py takes the city first');
-  assert.equal(learning({ to: 'peter', text: `Write a note\n- name: ${PLAYBOOK}\n- text: - a\n- b` }), 'Rewrote its playbook.');
-  assert.equal(learning({ to: 'peter', text: 'Remember something\n- category: PEOPLE\n- about: the user\n- fact: likes Celsius' }), 'Learned about you: likes Celsius');
-  assert.equal(learning({ to: 'peter', text: 'Add to a note\n- name: Groceries\n- text: - eggs' }), null);
-  assert.equal(learning({ to: 'peter', text: 'run the nightly backup' }), null);
-  assert.equal(learning({ to: 'user', text: 'hello' }), null);
+test('what it learns is kept by Peter, when it asks him, word for word; it reads it back from its space', async () => {
+  const fake = await fakePeter();
+  try {
+    const { a, notes, idle } = await setup(["@peter Add to Super Face's instructions: When the user says walmart, say only whether it's open.", '@user Got it.'], fake);
+    a.say("from now on when I say walmart just tell me if it's open");
+    await idle();
+    await notes.refresh();
+    assert.equal(notes.instructions, "- When the user says walmart, say only whether it's open.");
+  } finally {
+    fake.close();
+  }
 });
 
 test("Peter not there is said plainly, and the model is told so", async () => {
@@ -521,6 +510,6 @@ test('every request to the model is noted for the Model tab: what was sent, and 
   assert.equal(rec.state, 'done');
   assert.equal(rec.text, '<think>hm</think>Hello!', 'what came back, thinking and all');
   const failing = new Ollama({ current: () => ({ url: 'http://127.0.0.1:9', model: 'x' }), trace });
-  await assert.rejects(failing.chat([{ role: 'user', content: 'hi' }], { purpose: 'learning' }));
+  await assert.rejects(failing.chat([{ role: 'user', content: 'hi' }]));
   assert.equal(trace.list()[1].state, 'failed');
 });

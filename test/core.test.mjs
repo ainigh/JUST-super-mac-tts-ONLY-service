@@ -59,17 +59,20 @@ test('the harness knows promises and "I can\'t"', () => {
   assert.ok(!claimsInability('It rained.'));
 });
 
-test('the prompt: a chat of three, every answer addressed, Peter a participant, what it has learned, the day', () => {
-  const m = { prompt: () => "Your playbook:\n- Prefers Celsius\n\nThe user's standing instructions (follow them):\nCall me Sam." };
+test('the prompt: a helpful assistant in a chat of three, an example, a short explanation, what it has learned, the day', () => {
+  const m = { prompt: () => "The user's standing instructions (follow them):\nCall me Sam.\n\nWhat you've learned about getting things done for the user:\n- Prefers Celsius" };
   const p = systemPrompt({ character: CHARACTERS[2], model: 'qwen3:8b', peter: { reachable: true }, notes: m, now: new Date(2026, 9, 24).getTime() });
-  assert.match(p, /You are Sofia/);
+  assert.match(p, /^You are Sofia, a helpful assistant/);
   assert.match(p, /In this chat you are @qwen3\./);
   assert.doesNotMatch(p, /3D|character|avatar|gesture|your (?:face|hands|body)|\[tags?\]|dark suit/i, 'the model knows nothing of the character it is shown as: how it moves comes from its words, afterwards');
-  assert.match(p, /@user, then what you say to the user\. It's read aloud/);
-  assert.match(p, /@peter, then what you ask Peter, in plain words\. It's never read aloud/);
-  assert.match(p, /@peter remind me in 20 minutes/, 'later is asked of Peter too');
-  assert.doesNotMatch(p, /@clock|web_fetch|run_script|"tool"|Arguments:|JSON/, 'no Clock, no tool names, arguments or JSON: only words');
-  assert.match(p, /ask Peter to add it to the note "Super Face instructions"/, 'standing instructions: where they go');
+  assert.match(p, /For example:\n\[the user\] @qwen3 /, 'an example first');
+  assert.match(p, /Start every answer with @user \(said aloud/);
+  assert.match(p, /@peter \(a message to Peter\)/);
+  assert.match(p, /how would I ask you to …\?/, 'how to find out what Peter can do');
+  assert.match(p, /ask Peter to add it, word for word, to Super Face's instructions/, 'what it learns is kept by Peter');
+  assert.doesNotMatch(p, /@clock|web_fetch|run_script|"tool"|Arguments:|JSON|template|\{[a-z ]+\}|Taken as/, 'no tools, templates or formats: only plain words');
+  assert.doesNotMatch(p, /concierge|JARVIS|the face|the engine|the critic/i, 'no persona');
+  assert.ok(p.length < 3000, `short: ${p.length} characters`);
   assert.match(p, /- Prefers Celsius/);
   assert.match(p, /Call me Sam\./);
   assert.match(p, /Today is Saturday 24 October 2026\.$/);

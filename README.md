@@ -35,8 +35,9 @@ wake word. How the three apps fit: [ARCHITECTURE.md in Tool Mac Tool Run](https:
   Peter calls back when it's over, and the character tells you how it went. **Cancel** any of it:
   the Stop button, a message's Cancel, or say "cancel". How it goes, with an example, is in
   [PETER.md](PETER.md).
-- **Its character**: it sees things through, listens to your exact words, offers the next step it can see
-  coming, and checks its work before it calls it done, while allowing that it may have missed something.
+- **A helpful assistant**: it answers from what it knows when that's enough (explaining, judging,
+  writing, helping with a problem), and asks Peter for anything to do or look up, telling you only
+  what he reports. No persona: its prompt is a small example and a short explanation.
 - **Later is Peter's**: "remind me in 20 minutes…", "at 5 check the build…", "every weekday at
   8…": the model asks Peter, who keeps the schedule; when it's due he calls back, the character
   appears and does it.
@@ -45,11 +46,12 @@ wake word. How the three apps fit: [ARCHITECTURE.md in Tool Mac Tool Run](https:
   links it all; it asks Peter before it answers about any of it. It can show you something in a
   window with copy buttons, copy to your clipboard, and read the page in Chrome to guide you
   through a site, all through Peter.
-- **Learning**: it keeps nothing of its own. What it learns about getting things done for you (which
-  scripts work for what, how you like things, its mistakes) is a note Peter keeps, **Super Face
-  playbook**; what it learns about you is MEMORY's, as notes on **the user**; your standing
-  instructions are the note **Super Face instructions**. It reads all three through Peter before
-  every request; you can read and change them in Tool Mac Tool Run's Library, or by asking.
+- **Learning**: Peter keeps it. "From now on…" goes to its standing instructions, and what it
+  learns about you to MEMORY (as notes on **the user**): the model asks Peter, word for word, and
+  he writes it. It reads its standing instructions and its playbook straight from its own space in
+  [Storage Spaces](https://github.com/ainigh/tool-mac-tool-run-storage-spaces) (SUPER/PROMPT
+  `instructions`, SUPER/MEMORY `playbook`) before every request; you can read and change them in
+  Storage Spaces' folder, or by asking.
 - **The chat**: click the character. The chat of three (each message to Peter shows how it stands:
   waiting for your click, running, done, with Cancel), the character picker and the size buttons
   (S, M, L, H), the model and "Think first"; the **Model** log (every request to the model, word for
@@ -123,8 +125,8 @@ voice again without restarting the app.
 | Listening while it talks, the soft tone | Its menu (right-click the icon or the character) |
 | Move it | Drag it |
 
-Its settings and chat are kept in `~/Library/Application Support/Super Face/`; what's scheduled, and
-what it has learned, Peter keeps.
+Its settings and chat are kept in `~/Library/Application Support/Super Face/`; what's scheduled
+Peter keeps, and what it has learned is in its space in Storage Spaces (Peter writes it).
 
 ## How it works
 
@@ -157,9 +159,9 @@ scripts/smoke-mac.sh # on a Mac, after dist: opens the app, waits for it, makes 
 |---|---|
 | `main.mjs` | the Electron main process: the menu bar, the character's window and the chat beside it, the API server |
 | `src/main/core.mjs` | the assistant and what it works with, what's heard, the actions the chat and the API share |
-| `src/main/assistant.mjs` | the chat of three: the model, messages to Peter and his answers, runs followed, cancelling, the harness's notes, learning |
-| `src/main/prompt.mjs` | what the model is told (a chat of three, the three habits, asking Peter), and the notes it gets when it slips |
-| `src/main/model.mjs`, `peter.mjs`, `notes.mjs`, `calls.mjs` | Ollama, Peter (Tool Mac Agent), what it has learned (read through Peter), who an answer is to (`@user`, `@peter`) |
+| `src/main/assistant.mjs` | the chat of three: the model, messages to Peter and his answers, runs followed, cancelling, the harness's notes |
+| `src/main/prompt.mjs` | what the model is told (a helpful assistant, a small example, a short explanation), and the notes it gets when it slips |
+| `src/main/model.mjs`, `peter.mjs`, `notes.mjs`, `calls.mjs` | Ollama, Peter (Tool Mac Agent), what it has learned (read from its space in Storage Spaces), who an answer is to (`@user`, `@peter`) |
 | `src/main/api.mjs`, `speech.mjs` | the API; the record of what's said |
 | `src/shared/` | the characters, the catalog of what it can show, voices, text into sentences and cues, the director, the echo check |
 | `renderer/` | the character's page (TalkingHead, HeadTTS, the ears) and the chat; `voice-glue.mjs` runs inside HeadTTS's worker to say what went wrong there, `ort-local.mjs` gives transformers.js ONNX Runtime from the app rather than a CDN |

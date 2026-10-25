@@ -10,7 +10,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { addressed, isSilent, looksLikeCall, maySayNothing, messages, sayable, withoutAsides, words } from './calls.mjs';
-import { PLAYBOOK, THE_USER } from './notes.mjs';
 import { NOTE, claimsInability, handleOf, peterMessage, promisesWork, systemPrompt, userMessage } from './prompt.mjs';
 import { troubled } from './peter.mjs';
 
@@ -19,7 +18,7 @@ const KEEP_LOG = 300; // chat entries kept
 const KEEP_MESSAGES = 40; // messages the model sees, at most
 const KEEP_CHARS = 32_000; // and their length, at most (the system prompt comes on top)
 const WAITING_REMINDER = 20_000; // a card unclicked this long: said once
-const KEEP_REPLY = 600; // a reply of Peter's from an earlier request, at most (offers are folded to a line)
+const KEEP_REPLY = 600; // a reply of Peter's from an earlier request, at most
 /** Peter's log states, as a message to him shows them. */
 const RUN_STATE = { waiting: 'waiting', running: 'running', worked: 'done', answered: 'done', done: 'done', failed: 'failed', denied: 'failed', not_answered: 'failed', could_not_start: 'failed', withdrawn: 'cancelled', stopped: 'cancelled' };
 
@@ -28,7 +27,7 @@ export class Assistant {
    * @param {object} o
    * @param {import('./model.mjs').Ollama} o.model
    * @param {import('./peter.mjs').Peter} o.peter
-   * @param {import('./notes.mjs').Notes} [o.notes] - what it has learned, kept by Peter
+   * @param {import('./notes.mjs').Notes} [o.notes] - the user's standing instructions and its playbook, in its space in Storage Spaces
    * @param {() => object} o.character - the character now (its name, looks)
    * @param {(text: string) => void} o.speak - says a sentence (or a few) in the character's voice
    * @param {() => void} o.stopSpeaking
@@ -43,7 +42,6 @@ export class Assistant {
     this.log = []; // what the chat shows: entries
     this.inbox = []; // what's come in and not been answered: { text, how, at, entry }
     this.turn = null; // the request being worked on
-    this.reflecting = null;
     this.nextId = 1;
     this.lastError = { code: null, at: 0 };
     this.saveTimer = null;
@@ -71,7 +69,6 @@ export class Assistant {
     const peter = how === 'peter';
     const entry = peter ? this.add({ kind: 'peter', text: t, from: 'Peter', to: this.handle, news: true }) : this.add({ kind: 'user', text: t, how, from: 'You', to: this.handle, queued: !!this.turn });
     this.inbox.push({ text: t, how, at, entry });
-    this.reflecting?.abort();
     const turn = this.turn;
     if (turn && !peter && !turn.toolRunning && !turn.calls) {
       // Mid-answer, nothing done yet: what was being said gives way to what's just been said.
@@ -102,7 +99,6 @@ export class Assistant {
     const had = !!this.turn || this.inbox.length > 0 || open.length > 0;
     for (const item of this.inbox) this.update(item.entry, { queued: false, dropped: true });
     this.inbox = [];
-    this.reflecting?.abort();
     if (this.turn) {
       this.turn.cancelled = true;
       this.turn.ctrl.abort();
@@ -137,7 +133,7 @@ export class Assistant {
     const t = this.turn;
     return {
       busy: !!t,
-      phase: t ? (t.toolRunning ? 'tool' : 'thinking') : this.reflecting ? 'learning' : 'idle',
+      phase: t ? (t.toolRunning ? 'tool' : 'thinking') : 'idle',
       queued: this.inbox.length,
       /** Runs on the Mac it asked Peter for that aren't over yet (waiting for Run, or running): it waits on them. */
       pending: this.log.filter((e) => e.kind === 'to-peter' && e.number && ['waiting', 'running'].includes(e.state)).length,
@@ -243,13 +239,12 @@ export class Assistant {
       this.save();
       this.emitState();
     }
-    if (!turn.ctrl.signal.aborted && (turn.failures > 0 || turn.calls >= 2) && !this.inbox.length) this.reflect();
   }
 
   /** The model's answer, streamed: its words to the user are said sentence by sentence as they come. */
   async answer(turn) {
-    // Once a request, at once: its playbook, the standing instructions and what MEMORY has on the
-    // user, read fresh (Peter keeps them).
+    // Once a request, at once: the standing instructions and its playbook, read fresh from its
+    // space in Storage Spaces (Peter writes them, when it asks him to).
     if (!turn.read) {
       turn.read = true;
       await this.notes?.refresh({ signal: turn.ctrl.signal }).catch(() => {});
@@ -406,30 +401,6 @@ export class Assistant {
     return true;
   }
 
-  // ---------------------------------------------------------------- learning
-
-  /** After a request that took work: a quiet moment to save what it taught (nothing is said). */
-  async reflect() {
-    const ctrl = new AbortController();
-    this.reflecting = ctrl;
-    this.emitState();
-    try {
-      const system = systemPrompt({ character: this.character(), model: this.model.current().model || this.model.picked || '', peter: this.peter.health, notes: this.notes, now: this.now() });
-      const text = await this.model.chat([{ role: 'system', content: system }, ...this.history, { role: 'user', content: NOTE.reflect }], { signal: ctrl.signal, purpose: 'learning' });
-      for (const m of messages(text).slice(0, 2)) {
-        const what = learning(m);
-        if (!what) continue; // only its playbook, and notes on the user, are written here
-        const result = await this.peter.say(m.text, { signal: ctrl.signal });
-        if (!result.failed && !/^(These can do that|Did you mean|Fill in the blanks|That needs|You might mean)/m.test(result.text)) this.add({ kind: 'note', text: what });
-      }
-    } catch {
-      /* cut short, or no model: nothing learned this time */
-    } finally {
-      if (this.reflecting === ctrl) this.reflecting = null;
-      this.emitState();
-    }
-  }
-
   // ---------------------------------------------------------------- the record
 
   failed(err) {
@@ -470,19 +441,14 @@ export class Assistant {
   }
 
   /**
-   * Peter's side of earlier requests, folded: a list of templates he offered is a line of their
-   * titles, a long answer is cut short. What the model reads later is what was asked and what came
-   * of it, not the back and forth. (The request at hand is left as it is.)
+   * Peter's side of earlier requests, folded: a long answer is cut short. What the model reads
+   * later is what was asked and what came of it. (The request at hand is left as it is.)
    */
   fold() {
     this.history = this.history.map((m) => {
       const head = m.content.match(/^\[Peter, [^\]]*\] @\S+ /);
       if (m.role !== 'user' || !head) return m;
       const body = m.content.slice(head[0].length);
-      if (/^(These can do that|You might mean|It sounds like|Fill in the blanks|Did you mean)/m.test(body)) {
-        const titles = [...body.matchAll(/^\s*\d+\. ([^\n]+)$/gm)].map((x) => x[1].trim());
-        return { ...m, content: head[0] + (titles.length ? `(offered: ${titles.join(', ')})` : '(said what he takes)') };
-      }
       if (body.length > KEEP_REPLY) return { ...m, content: `${head[0]}${body.slice(0, KEEP_REPLY)}… (cut short)` };
       return m;
     });
@@ -541,28 +507,6 @@ export function display(text) {
     .replace(/\[(nod|shake|shrug|wave|thumbup|thumbdown|ok|index|side|namaste|handup|yes|no|smile|grin|wink|thinking|happy|sad|angry|love|fear|neutral|warm|laughing|playful|frown|pensive|shocked|delighted|beaming|starstruck|adoring)\]/gi, '')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
-}
-
-/**
- * What a message sent while it reflects saves, said for the chat; null when it isn't one it may
- * send then (only to Peter, and only about its playbook or about the user).
- */
-export function learning(m) {
-  if (m.to !== 'peter') return null;
-  const lines = Object.fromEntries(
-    String(m.text)
-      .split('\n')
-      .map((l) => l.match(/^\s*[-*]?\s*([A-Za-z][A-Za-z ]{0,20}?)\s*:\s*(.*)$/))
-      .filter(Boolean)
-      .map((x) => [x[1].trim().toLowerCase(), x[2].trim()]),
-  );
-  const title = String(m.text).split('\n')[0].trim().toLowerCase();
-  if (String(lines.name ?? '').toLowerCase() === PLAYBOOK.toLowerCase()) {
-    if (/^write/.test(title)) return 'Rewrote its playbook.';
-    if (lines.text) return `Learned: ${lines.text.replace(/^-\s*/, '').trim()}`;
-  }
-  if (String(lines.about ?? '').toLowerCase() === THE_USER && lines.fact) return `Learned about you: ${lines.fact}`;
-  return null;
 }
 
 /** Peter's answer says it didn't go (re-exported for the tests). */

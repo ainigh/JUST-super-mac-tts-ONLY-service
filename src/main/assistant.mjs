@@ -220,9 +220,11 @@ export class Assistant {
         // The chat was cleared under it: nothing of this request stays.
       } else if (turn.ctrl.signal.aborted) {
         if (turn.interrupted && !turn.cancelled && !turn.spoke && !turn.calls) {
-          // Nothing said or done yet: asked again with what came after it, as one request.
+          // Nothing said or done yet: asked again with what came after it, as one request. Peter's
+          // news waits behind what the user has just said, so the user is answered first.
           this.history.length = mark;
-          this.inbox.unshift(...batch);
+          if (batch.every((b) => b.how === 'peter')) this.inbox.push(...batch);
+          else this.inbox.unshift(...batch);
           for (const item of batch) this.update(item.entry, { queued: true });
         } else if (turn.cancelled) {
           this.history.push({ role: 'user', content: 'Note from the app (not the user, not Peter): the user cancelled that request; drop it unless they ask again.' });

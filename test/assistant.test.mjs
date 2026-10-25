@@ -303,6 +303,29 @@ test('what the user says while Peter is working for them waits its turn; then it
   }
 });
 
+test("the user speaking while the model starts on Peter's news is answered first; the news is answered right after", async () => {
+  const { a, model, said, idle } = await setup([
+    (_m, signal) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+      }),
+    (m) => {
+      assert.match(m.at(-1).content, /^\[the user, said aloud, [^\]]+\] @qwen3 what time is it\?$/);
+      return "@user It's nine.";
+    },
+    (m) => {
+      assert.match(m.at(-1).content, /^\[Peter, [^\]]+\] @qwen3 Meanwhile: The backup finished\.$/);
+      return '@user And your backup is done.';
+    },
+  ]);
+  a.news('Meanwhile: The backup finished.');
+  await wait(10);
+  a.say('what time is it?', { how: 'said' });
+  await idle();
+  assert.deepEqual(said, ["It's nine.", 'And your backup is done.']);
+  assert.equal(model.asked.length, 3);
+});
+
 test('cancel: a run Peter is following is taken back, and the model is not asked again', async () => {
   const fake = await fakePeter();
   try {

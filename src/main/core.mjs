@@ -2,6 +2,7 @@
 // the schedule, memory), what's heard and what's done with it, and the actions the chat window
 // and the API share. The Electron main process and the browser dev server both build one.
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { Assistant } from './assistant.mjs';
 import { Notes } from './notes.mjs';
@@ -344,6 +345,35 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       return { ok: true, copied, text };
     },
     copy: ({ text }) => ({ ok: true, copied: !!host.copy?.(String(text ?? '')) }),
+    /**
+     * Back to how it was installed: everything stopped and forgotten (the chat, the schedule, the
+     * logs, the errors, the settings). In the app, its whole folder of data (the downloaded voice
+     * and ears too) goes to the Trash and it starts again; without the app (the browser dev
+     * server), its files go and it carries on from the defaults. What it learned is kept in Tool
+     * Mac Tool Run, whose own reset clears that.
+     */
+    factoryReset: () => {
+      assistant.cancel();
+      scheduler.cancel('all');
+      scheduler.stop();
+      assistant.clear();
+      traces.model.clear();
+      traces.calls.clear();
+      errors.length = 0;
+      emit({ type: 'errors', errors });
+      if (host.factoryReset) {
+        // A moment for this answer to get back, then the app's folder goes and it starts again.
+        setTimeout(() => host.factoryReset(), 300);
+        return { ok: true, relaunching: true };
+      }
+      for (const name of ['chat.json', 'schedule.json', 'memory.json', 'memory.json.moved']) {
+        const f = file(name);
+        if (f) fs.rmSync(f, { force: true });
+      }
+      settings.reset?.();
+      emit({ type: 'status', status: status() });
+      return { ok: true, relaunching: false };
+    },
     reportError: ({ source, message, detail }) => ({ ok: !!reportError({ source: source || 'chat', message, detail }) }),
     retryVoice: async () => {
       if (!host.retryVoice) throw new Error('the voice can only be started again in the app');

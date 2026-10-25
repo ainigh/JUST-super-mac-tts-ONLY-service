@@ -119,6 +119,7 @@ voice again without restarting the app.
 | Stop it talking / cancel what it's doing | Say "stop" / "cancel" (or "never mind"); or the red button in the chat |
 | Start over | Say "new chat", or **Mind › Start a new chat** (what was said stays, behind a line) |
 | Clear the chat | Say "clear the chat", or the bin at the top of the chat (what it has learned stays) |
+| Start from scratch | **Mind › Factory reset…**: its settings, chat, schedule, logs and the downloaded voice and ears go to the Trash, and it starts again as installed (what it learned is in Tool Mac Tool Run: its own Factory Reset clears that) |
 | Show or hide the character | Click the menu bar icon, or **⌘⇧A** anywhere |
 | Change character (and voice), size | The chat's top row (S, M, L, H); or right-click the icon or the character |
 | See what went to the model, and what came back | The chat's **Model** tab |

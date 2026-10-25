@@ -69,6 +69,19 @@ export class Settings {
   onChange(fn) {
     this.listeners.add(fn);
   }
+
+  /** Back to how it comes: the file goes, and every setting is its default again. */
+  reset() {
+    const before = this.value;
+    this.value = { ...DEFAULTS };
+    try {
+      fs.rmSync(this.file, { force: true });
+    } catch (err) {
+      console.error('Super Face: settings not reset:', err.message);
+    }
+    for (const fn of this.listeners) fn(this.value, before);
+    return this.value;
+  }
 }
 
 function read(file) {

@@ -263,3 +263,33 @@ test("Peter's news over the API (Tool Mac Tool Run calling back): the character 
   const [status] = await post('/api/peter', { text: ' ' });
   assert.equal(status, 400);
 });
+
+test('factory reset: everything stopped and forgotten; in the app, its folder goes and it starts again', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-reset-'));
+  const s = new Settings(path.join(dir, 'settings.json'));
+  s.set({ size: 'Huge', model: 'some-model' });
+  let reset = 0;
+  const c = createCore({ settings: s, speech, dataDir: dir, fetch: fakeFetch, host: { factoryReset: () => reset++ } });
+  c.start();
+  c.scheduler.add({ task: 'Water the plants.', due: Date.now() + 3_600_000 });
+  c.assistant.add({ kind: 'note', text: 'something said' });
+  c.reportError({ source: 'app', message: 'something went wrong' });
+  const r = c.actions.factoryReset();
+  assert.deepEqual(r, { ok: true, relaunching: true });
+  assert.deepEqual(c.scheduler.list(), []);
+  assert.deepEqual(c.assistant.log, []);
+  assert.equal(c.actions.errors().errors.length, 0);
+  await wait(350);
+  assert.equal(reset, 1, 'the app moves its folder to the Trash and starts again');
+  c.stop();
+
+  // Without the app around it (the browser dev server): its files go, the settings are the defaults.
+  const s2 = new Settings(path.join(dir, 'settings.json'));
+  const c2 = createCore({ settings: s2, speech, dataDir: dir, fetch: fakeFetch });
+  c2.scheduler.add({ task: 'Again.', due: Date.now() + 3_600_000 });
+  assert.equal(c2.actions.factoryReset().relaunching, false);
+  assert.equal(s2.get().size, 'Medium');
+  assert.equal(s2.get().model, '');
+  for (const f of ['settings.json', 'schedule.json', 'chat.json']) assert.ok(!fs.existsSync(path.join(dir, f)), f);
+  c2.stop();
+});

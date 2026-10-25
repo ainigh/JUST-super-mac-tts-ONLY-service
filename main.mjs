@@ -89,8 +89,29 @@ const core = createCore({
     }),
     copy: (text) => (clipboard.writeText(text), true),
     retryVoice: () => ask('retryVoice', {}, 10 * 60_000),
+    factoryReset,
   },
 });
+
+/**
+ * Factory reset: the app's whole folder of data (settings, chat, schedule, the downloaded voice
+ * and ears) goes to the Trash, so it can be had back, and the app starts again as installed.
+ */
+async function factoryReset() {
+  const dir = app.getPath('userData');
+  try {
+    await shell.trashItem(dir);
+  } catch (err) {
+    // No Trash (another volume…): moved aside instead, beside where it was.
+    try {
+      fs.renameSync(dir, `${dir} (reset ${new Date().toISOString().replace(/[:.]/g, '-')})`);
+    } catch {
+      console.error('Super Face: its data could not be moved away:', err.message);
+    }
+  }
+  app.relaunch();
+  app.exit(0);
+}
 
 /** Which way the page it's working on probably is, as the user sees it: towards the middle of the screen from the character (-1 left, 1 right, 0 straight on). */
 function pageSide() {

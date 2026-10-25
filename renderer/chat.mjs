@@ -688,6 +688,11 @@ $('newChat').onclick = () => {
   act('newChat');
   tab('chat');
 };
+$('factoryReset').onclick = async () => {
+  if (!confirm('Factory reset Super Face?\n\nIts settings, the chat, everything scheduled, the logs and the downloaded voice and ears go to the Trash, and it starts again as it was installed (the voice and ears download again).\n\nWhat it has learned is kept in Tool Mac Tool Run: its own Factory Reset clears that.')) return;
+  const r = await act('factoryReset');
+  if (r && !r.relaunching) location.reload();
+};
 $('clearChat').onclick = () => {
   if (!confirm('Clear the chat? What was said goes for good; what I have learned stays.')) return;
   act('clearChat');

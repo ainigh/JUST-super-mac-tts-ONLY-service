@@ -1,26 +1,26 @@
 // Tool Mac Tool Run (http://127.0.0.1:8768): everything the model does on the Mac and the web
-// beyond its schedule. Tool Mac Tool Run says what its tools are (GET /api/tools: each one's
-// name, what it's for, its arguments, whether it waits for Run on the Mac, and a guide and
-// examples for the model's instructions) and runs them (POST /api/tools/{name}). This only hands
-// the list to the model and passes its calls through: it knows no tool, route or op of its own,
-// so what Tool Mac Tool Run adds or changes is there the day it ships. A tool that runs something
-// is streamed, so it can be cancelled at any point: while its card waits (hanging up takes the
-// card away) or while it runs (it's stopped).
+// beyond its schedule. The model talks to it as Peter, in plain words: POST /api/say takes what it
+// wants and answers in words, with the result or with the templates that would do it (GET
+// /api/say/forms gives the ones that fit a request ahead of time). A run it asks for (a script or
+// a flow, waiting for Run on the Mac) is followed by Tool Mac Tool Run, which calls this app back
+// when it's over (reply_to: POST /api/peter here); GET /api/say/log says where each stands, and
+// POST /api/say/stop calls one off. This app also reads the tools list (for the chat), the mind's
+// context, and its own notes, for itself.
 
 export const DEFAULT_URL = 'http://127.0.0.1:8768';
 export const CLIENT = 'Super Face';
-const MAX_OUTPUT = 12_000;
-const MAX_EVENTS = 400; // stream events noted for one request (the Calls tab)
 
 export class ToolRun {
   /**
    * @param {object} o
    * @param {() => string} o.url - read fresh for every call
+   * @param {() => string|null} [o.replyTo] - where Tool Mac Tool Run tells this app a run is over
    * @param {typeof fetch} [o.fetch]
    * @param {import('./trace.mjs').Trace} [o.trace] - where each request and its answer are noted
    */
-  constructor({ url, fetch: f = globalThis.fetch, trace = null }) {
+  constructor({ url, replyTo = () => null, fetch: f = globalThis.fetch, trace = null }) {
     this.urlOf = url;
+    this.replyTo = replyTo;
     this.fetch = f;
     this.trace = trace;
     /** What Tool Mac Tool Run has, as last fetched: its tools, and the scripts and flows they run. */
@@ -140,28 +140,6 @@ export class ToolRun {
   }
 
   /**
-   * Runs one of the model's calls: { text, failed, cancelled }, the text for the model.
-   * `onStatus(s)` hears how a run is going: { state: 'sending' | 'waiting' | 'running' | 'done', request, run, output }.
-   */
-  async run(name, args = {}, { signal, onStatus = () => {}, log } = {}) {
-    const tool = findTool(name, this.catalog);
-    const why = str(args?.why) || 'You asked for it';
-    // A tool that runs something (or a name Tool Mac Tool Run may take for a script) is followed live.
-    const live = tool ? tool.stream : true;
-    const path = `/api/tools/${encodeURIComponent(String(name).trim())}`;
-    try {
-      if (live) return await this.stream(path, { arguments: args, why }, { signal, onStatus, log, label: labelOf(name, args) });
-      onStatus({ state: 'sending', label: labelOf(name, args) });
-      const [status, json] = await this.call('POST', path, { arguments: args, why }, { signal, log, timeout: tool?.asks ? 150_000 : 30_000 });
-      onStatus({ state: 'done', label: labelOf(name, args) });
-      return answer(status, json);
-    } catch (err) {
-      if (signal?.aborted) return { text: 'Cancelled by the user.', failed: true, cancelled: true };
-      return { text: err.message || String(err), failed: true };
-    }
-  }
-
-  /**
    * What the mind has on some text (the things named in it, one step out): lines for the model's
    * prompt, or [] when there's no mind, nothing in it, or it doesn't answer in time.
    */
@@ -181,161 +159,80 @@ export class ToolRun {
   }
 
   /**
-   * What fits some text best (the request at hand): the tools, scripts and flows Tool Mac Tool
-   * Run's search gives, a line each as it writes them, or [] when nothing fits or it doesn't
-   * answer in time.
+   * Says something to Tool Mac Tool Run in words (POST /api/say): { text, failed, cancelled }, its
+   * answer for the model. It's told where to say how a run went (reply_to).
    */
-  async matches(text, { signal, limit = 6 } = {}) {
-    const q = String(text ?? '').trim().slice(-300);
-    if (!this.catalog.tools.length || !q) return [];
-    const log = this.trace?.open({ kind: 'context', name: 'What fits the request', state: 'working' });
+  async say(text, { signal, log, timeout = 60_000 } = {}) {
     const started = Date.now();
-    let lines = [];
+    const url = `${this.url}/api/say`;
+    const replyTo = this.replyTo();
+    const headers = { 'Content-Type': 'text/plain; charset=utf-8', 'X-Client': CLIENT, ...(replyTo ? { 'X-Reply-To': replyTo } : {}) };
+    const n = this.note(log, { method: 'POST', url, body: String(text), headers, state: 'sending' });
+    let res;
     try {
-      const p = new URLSearchParams({ q, in: 'tools,scripts,flows', limit: String(limit), next: 'false' });
-      const [status, json] = await this.call('GET', `/api/search?${p}`, null, { signal, log, timeout: 1500 });
-      if (status >= 200 && status < 300 && Array.isArray(json.lines)) lines = json.lines.map(String).slice(0, limit);
+      res = await this.fetch(url, { method: 'POST', headers, body: String(text), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout) });
+    } catch (err) {
+      n.set({ state: signal?.aborted ? 'cancelled' : 'failed', error: err.message, ms: Date.now() - started }, true);
+      if (signal?.aborted) return { text: 'Cancelled by the user before Peter answered.', failed: true, cancelled: true };
+      return { text: `Peter isn't answering: Tool Mac Tool Run isn't reachable at ${this.url}. Tell the user it needs to be open, with its API on.`, failed: true };
+    }
+    const answer = (await res.text().catch(() => '')).trim();
+    n.set({ state: 'done', status: res.status, response: answer, ms: Date.now() - started }, true);
+    if (res.status === 404) return { text: "Peter can't be talked to in words: this Tool Mac Tool Run is too old (it has no /api/say). Tell the user to update it (run its install line again).", failed: true };
+    if (res.status === 403) return { text: `Peter isn't allowed to answer: ${errorOf(answer) || 'Tool Mac Tool Run turned this app away'}. Tell the user to check Tool Mac Tool Run's API settings.`, failed: true };
+    if (!res.ok) return { text: `Peter couldn't answer (${res.status}): ${errorOf(answer) || answer || 'no reason given'}`, failed: true };
+    return { text: answer || '(Peter said nothing.)', failed: troubled(answer) };
+  }
+
+  /**
+   * Peter's templates that fit some text (the request at hand), the best first, as he writes
+   * them; [] when none fit or he doesn't answer in time.
+   */
+  async forms(text, { signal, limit = 3 } = {}) {
+    const q = String(text ?? '').trim().slice(-300);
+    if (!q || !this.catalog.reachable) return [];
+    const log = this.trace?.open({ kind: 'context', name: "Peter's templates that fit the request", state: 'working' });
+    const started = Date.now();
+    let forms = [];
+    try {
+      const p = new URLSearchParams({ q, format: 'json' });
+      const [status, json] = await this.call('GET', `/api/say/forms?${p}`, null, { signal, log, timeout: 1500 });
+      if (status >= 200 && status < 300 && Array.isArray(json.forms)) forms = json.forms.map((f) => String(f.template ?? '')).filter(Boolean).slice(0, limit);
     } catch {
       /* not this time */
     }
-    this.trace?.change(log, { state: 'done', result: lines.length ? lines.join('\n') : '(nothing)', ms: Date.now() - started }, { final: true });
-    return lines;
+    this.trace?.change(log, { state: 'done', result: forms.length ? forms.join('\n\n') : '(nothing)', ms: Date.now() - started }, { final: true });
+    return forms;
   }
 
-  /** A call that runs something, streamed (see the API's "Streaming"), cancellable all the way through. */
-  async stream(path, body, { signal, onStatus, log, label }) {
-    if (signal?.aborted) return { text: 'Cancelled by the user before it was sent.', failed: true, cancelled: true };
-    const started = Date.now();
-    const sent = { client: CLIENT, ...body, stream: true };
-    const n = this.note(log, { method: 'POST', url: this.url + path, body: sent, state: 'sending', events: [] });
-    const events = n.rec.events || [];
-    const noteEvent = (ev) => {
-      if (events.length < MAX_EVENTS) events.push(ev);
-      else if (ev.type !== 'output') events.push(ev);
-      n.set({});
-    };
+  /** What this app asked Peter for, and how each stands (GET /api/say/log): its entries, newest first, or [] when he doesn't answer. */
+  async sayLog({ signal } = {}) {
     try {
-      return await this.streamed(path, sent, { signal, onStatus, log, label, noteEvent, n });
-    } finally {
-      n.set({ state: n.rec.state === 'sending' || n.rec.state === 'streaming' ? 'done' : n.rec.state, ms: Date.now() - started }, true);
+      const [status, json] = await this.call('GET', '/api/say/log', null, { signal, timeout: 3000 });
+      return status >= 200 && status < 300 && Array.isArray(json.entries) ? json.entries : [];
+    } catch {
+      return [];
     }
   }
 
-  async streamed(path, sent, { signal, onStatus, log, label, noteEvent, n }) {
-    const ctrl = new AbortController();
-    let request = null;
-    let runId = null;
-    let output = '';
-    let cancelled = false;
-    const onAbort = () => {
-      cancelled = true;
-      // Running: it's stopped on the Mac. Waiting: hanging up takes the card away.
-      if (runId) this.call('POST', `/api/runs/${encodeURIComponent(runId)}/stop`, { why: 'The user cancelled it' }, { log }).catch(() => {});
-      ctrl.abort();
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-    onStatus({ state: 'sending', label });
+  /**
+   * Calls off something asked of Peter (by its number in his log): taken off the Mac while it
+   * waits for Run, stopped while it runs. An older Tool Mac Tool Run without /api/say/stop has the
+   * request taken back by its id. The answer, in words.
+   */
+  async stopSay(number, { request, log } = {}) {
     try {
-      let res;
-      try {
-        res = await this.fetch(this.url + path, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Client': CLIENT },
-          body: JSON.stringify(sent),
-          signal: ctrl.signal,
-        });
-      } catch (err) {
-        n.set({ state: cancelled ? 'cancelled' : 'failed', error: err.message });
-        if (cancelled) return { text: 'Cancelled by the user before it was sent.', failed: true, cancelled: true };
-        throw new Error(`Tool Mac Tool Run isn't answering at ${this.url}. Is it running, with its API on?`);
-      }
-      request = res.headers.get('x-request-id');
-      const type = res.headers.get('content-type') || '';
-      n.set({ status: res.status, request: request || undefined, state: 'streaming' });
-      if (!type.includes('ndjson')) {
-        // An answer at once: a tool that runs nothing, or an error before anything was asked (no
-        // such script, a Flow mistake…).
-        let json = {};
-        try {
-          json = await res.json();
-        } catch {
-          /* empty */
-        }
-        n.set({ response: json, request: request || json.request || undefined });
-        onStatus({ state: 'done', request, ok: res.ok && json.ok !== false });
-        return answer(res.status, json);
-      }
-      let buf = '';
-      const decoder = new TextDecoder();
-      try {
-        for await (const chunk of res.body) {
-          buf += decoder.decode(chunk, { stream: true });
-          let nl;
-          while ((nl = buf.indexOf('\n')) !== -1) {
-            const line = buf.slice(0, nl).trim();
-            buf = buf.slice(nl + 1);
-            if (!line) continue;
-            let ev;
-            try {
-              ev = JSON.parse(line);
-            } catch {
-              continue;
-            }
-            request = ev.request || request;
-            noteEvent(ev);
-            switch (ev.type) {
-              case 'waiting':
-                onStatus({ state: 'waiting', request, label });
-                break;
-              case 'started':
-                runId = ev.id || runId;
-                onStatus({ state: 'running', request, run: runId, label });
-                break;
-              case 'output':
-                output += ev.text || '';
-                if (output.length > 2 * MAX_OUTPUT) output = output.slice(-MAX_OUTPUT);
-                onStatus({ state: 'running', request, run: runId, output: output.slice(-2000), label });
-                break;
-              case 'denied':
-                onStatus({ state: 'done', request, ok: false, label });
-                return { text: trouble(403, ev), failed: true };
-              case 'done':
-                onStatus({ state: 'done', request, ok: ev.ok === true, label });
-                return { text: outcome(ev), failed: ev.ok !== true };
-              case 'error':
-                onStatus({ state: 'done', request, ok: false, label });
-                return { text: `It didn't work: ${ev.message || 'Tool Mac Tool Run reported an error'}.`, failed: true };
-            }
-          }
-        }
-      } catch (err) {
-        if (!cancelled) throw err;
-      }
-      if (cancelled) {
-        n.set({ state: 'cancelled' });
-        onStatus({ state: 'done', request, ok: false, cancelled: true, label });
-        const text = runId
-          ? `Cancelled by the user while it was running: it was stopped.${output.trim() ? ` What it printed before:\n${tail(output)}` : ''}`
-          : 'Cancelled by the user before it ran: the card on the Mac was taken away, and nothing ran.';
-        return { text, failed: true, cancelled: true };
-      }
-      onStatus({ state: 'done', request, ok: false, label });
-      return { text: 'The connection to Tool Mac Tool Run ended before the run did.' + (runId ? ` Its run id is ${runId}: the runs tool (op read) tells how it went.` : ''), failed: true };
-    } finally {
-      signal?.removeEventListener('abort', onAbort);
+      const [status, json] = await this.call('POST', '/api/say/stop', { number }, { log });
+      if (status !== 404 || !request) return json.message || json.error || (status < 300 ? 'Stopped.' : `It couldn't be stopped (${status}).`);
+      const [s2, j2] = await this.call('DELETE', `/api/requests/${encodeURIComponent(request)}`, null, { log });
+      return s2 < 300 ? 'Taken back.' : j2.error || `It couldn't be stopped (${s2}).`;
+    } catch (err) {
+      return err.message;
     }
   }
 }
-
 
 const EMPTY = { reachable: false, folder: null, tools: [], guide: [], examples: [], scripts: [], flows: [], upcoming: [], fetched: 0, error: null };
-
-/** A tool there is, by its name or another it's known by; null when it isn't one listed. */
-export function findTool(name, catalog) {
-  const n = String(name ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-  const tools = catalog?.tools || [];
-  return tools.find((t) => t.name === n) || tools.find((t) => t.aliases.includes(n)) || null;
-}
 
 /** Whether Tool Mac Tool Run has a tool of that name now (and it's on). */
 export function hasTool(catalog, name) {
@@ -354,39 +251,6 @@ function toolJSON(t) {
   };
 }
 
-/** What a tool's card shows while it works: the script, the address, the words. */
-function labelOf(name, args = {}) {
-  const what = [args.script, args.flow, args.url, args.q, args.name, args.op].find((v) => typeof v === 'string' && v.trim());
-  return what ? `${name}: ${what}`.slice(0, 80) : String(name);
-}
-
-/** A tool's answer, for the model: a run's outcome, or its JSON without what's only for programs. */
-function answer(status, json) {
-  if (status < 200 || status >= 300) return { text: trouble(status, json), failed: true };
-  if (json.state && ('output' in json || 'code' in json)) return { text: outcome(json), failed: json.ok === false };
-  const { request: _, client: __, next: ___, tool: ____, ...rest } = json;
-  return { text: clip(JSON.stringify(brief(rest))), failed: false };
-}
-
-/**
- * An answer that says itself in `lines` (a search, recall, the mind's, Chrome's find) is given as
- * those lines and its small fields: its nested objects say the same at many times the length.
- */
-function brief(json) {
-  if (!Array.isArray(json.lines)) return json;
-  const out = {};
-  for (const [k, v] of Object.entries(json)) {
-    if (k === 'lines') out[k] = v.slice(0, 80);
-    else if (typeof v === 'number' || typeof v === 'boolean' || (typeof v === 'string' && v.length <= 2000)) out[k] = v;
-    else if (Array.isArray(v) && v.length <= 20 && v.every((x) => typeof x === 'string')) out[k] = v;
-  }
-  if (json.lines.length > 80) out.more = `${json.lines.length - 80} more lines`;
-  return out;
-}
-
-/** Long JSON cut to what the model can read. */
-const clip = (s) => (s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}… (cut short: ${s.length} characters in all; ask for less, e.g. find with words, a max or a limit)` : s);
-
 function scriptJSON(s) {
   return {
     name: s.name,
@@ -398,51 +262,17 @@ function scriptJSON(s) {
   };
 }
 
-/** How a run went, for the model: its state, exit code, time, and what it printed. */
-export function outcome(r) {
-  const name = r.name || 'the run';
-  const state = r.state || 'unknown';
-  let head = `${name}: ${state}`;
-  if (Number.isFinite(r.code)) head += ` (exit code ${r.code})`;
-  if (Number.isFinite(r.seconds)) head += `, ${Math.round(r.seconds * 100) / 100} seconds`;
-  if (r.id) head += `, run id ${r.id}`;
-  const lines = [head + '.'];
-  if (r.problem) lines.push(`Problem: ${r.problem}`);
-  if (Array.isArray(r.steps) && r.steps.length) lines.push(`Steps: ${r.steps.map((s) => `${s.name || '?'} ${s.state || '?'}`).join('; ')}.`);
-  const out = String(r.output ?? '').trim();
-  if (out) lines.push(`It printed:\n${tail(out)}`);
-  else if (state !== 'running') lines.push('It printed nothing.');
-  return lines.join('\n');
-}
-
-const tail = (s) => (s.length > MAX_OUTPUT ? '…' + s.slice(-MAX_OUTPUT) : s.trim());
-
-function mistake(json) {
-  let s = 'The Flow code has a mistake';
-  if (json.line) s += ` on line ${json.line}`;
-  s += `: ${json.message || json.error || 'unknown'}.`;
-  if (json.fix) s += ` Fix: ${json.fix}`;
-  return s;
-}
-
-/** What the model is told when a call didn't go through: what Tool Mac Tool Run said, its fix, and what to call instead. */
-export function trouble(status, json = {}) {
-  if (status >= 200 && status < 300) return null;
-  const error = json.error || `status ${status}`;
-  switch (json.code) {
-    case 'denied':
-      return "It didn't run: the user clicked Don't Run on their Mac. Don't send it again unless they ask.";
-    case 'not_answered':
-      return "It didn't run: no one clicked Run on the Mac within two minutes. Ask the user before sending it again.";
-    case 'flow_mistake':
-      return mistake(json);
-    case 'straw_mistake':
-      return mistake(json).replace('Flow', 'Straw');
+/** What Tool Mac Tool Run said was wrong, from its JSON. */
+function errorOf(text) {
+  try {
+    const j = JSON.parse(text);
+    return [j.error, j.fix].filter(Boolean).join(' ');
+  } catch {
+    return '';
   }
-  const lines = [`Tool Mac Tool Run said ${status}${json.code ? ` (${json.code})` : ''}: ${error}${json.fix ? ` Fix: ${json.fix}` : ''}`];
-  if (json.takes) lines.push(`${json.tool || 'The tool'} takes: ${json.takes}`);
-  if (Array.isArray(json.tools) && json.tools.length) lines.push('What fits instead:', ...json.tools.map((t) => `- ${t}`));
-  return lines.join('\n');
 }
 
-const str = (v) => (typeof v === 'string' ? (v.trim() ? v : null) : typeof v === 'number' ? String(v) : null);
+/** Peter's answer says it didn't go: for the critic, and for learning afterwards. */
+export function troubled(answer) {
+  return /\b(didn't work|couldn't (start|be)|isn't one of them|has no line called|I don't know how to do that|I can't tell which|There's no (script|tool|note)|Nothing came up)\b/i.test(String(answer ?? ''));
+}

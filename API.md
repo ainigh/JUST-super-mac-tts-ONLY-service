@@ -23,7 +23,7 @@ anything, talk to its assistant, or use its voice alone.
   the character. While the assistant works, the character gets down to it (kneeling, sitting or
   bent over, turned away; to the page, at the browser), and stands and faces you when you talk or
   it answers.
-- **The assistant**: [below](#the-assistant). One model, hand-rolled tool calls, a schedule, memory.
+- **The assistant**: [below](#the-assistant). One model that asks Peter (Tool Mac Tool Run) in words, a schedule, memory.
 
 This document is the contract for client apps. New fields may be added to responses, but nothing
 listed here changes meaning.
@@ -85,10 +85,11 @@ curl -s localhost:8769/api/echo -d '{"text": "nice to meet you"}'
 | `POST /api/chat/new` | a fresh conversation (the chat keeps what was said, behind a line) |
 | `POST /api/chat/clear` | clears the chat: the conversation and every entry of it (memory stays) |
 | `GET  /api/trace/model` | the latest requests to the model (`?limit=20`): the messages sent, word for word, and what came back |
-| `GET  /api/trace/calls` | the latest tool calls (`?limit=20`): each with its arguments, every request it made (address, body, status, request id, the stream's events, the answer) and what went back to the model |
-| `POST /api/cancel` | cancels what the assistant is doing: its answer, a run waiting for its click or running |
+| `GET  /api/trace/calls` | the latest messages to Peter and the Clock (`?limit=20`): each with what was said, every request it made (address, body, status, the answer) and what went back to the model |
+| `POST /api/cancel` | cancels what the assistant is doing: its answer, and the runs Peter is following for it |
+| `POST /api/peter` | Tool Mac Tool Run calling back: a run asked of Peter is over (see [below](#post-apipeter)) |
 | `POST /api/heard` | a phrase heard by other ears, handled as if the character's own had heard it |
-| `GET  /api/tools`, `POST /api/tools` | every tool it has (built in, and Tool Mac Tool Run's scripts and flows); POST asks again |
+| `GET  /api/tools`, `POST /api/tools` | who it asks (Peter and the Clock), and what Tool Mac Tool Run has (its tools, scripts and flows); POST asks again |
 | `GET  /api/schedules`, `POST /api/schedules` | what it has set itself to do later; set one |
 | `POST /api/schedules/cancel` | cancels one (`{"id": "s3"}`) or all (`{"id": "all"}`) |
 | `GET  /api/memory`, `POST /api/memory` | what it has learned, as kept in Tool Mac Tool Run: its playbook and the user's standing instructions (library notes), what MEMORY has on the user; `POST {"instructions"}` writes the instructions, `{"forget": "<a playbook line>"}` takes one out |
@@ -343,59 +344,52 @@ The character is an assistant on standby: as soon as it's showing it listens, an
 it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) are the same.
 
 - **One model**: Ollama's (`http://127.0.0.1:11434`), the one in `model`, else the best Ollama has
-  (Qwen 3, Qwen 2.5, Gemma 3, Llama 3.x… in that order). It talks, uses the tools, and writes the
+  (Qwen 3, Qwen 2.5, Gemma 3, Llama 3.x… in that order). It talks, asks Peter, and writes the
   emojis and `[tags]` its face shows, in one answer, streamed: each sentence is said as soon as
   it's written.
-- **Tools, hand-rolled**: the model ends an answer with one line of JSON, `{"tool": "name",
-  "arguments": {…}}`; the app runs it and hands the result back as the next message, until the
-  model answers in words (ten tools for one request at most). Not Ollama's tool calling, so any
-  model can do it.
-- **Tool Mac Tool Run's tools, as it lists them**: every tool but the schedule is Tool Mac Tool
-  Run's (`http://127.0.0.1:8768`). Its `GET /api/tools` says what they are (each one's name, what
-  it's for, its arguments, whether it waits for Run on the Mac) with its own advice on using them
-  and examples of them at work, and all of it goes into the model's instructions as given; each
-  call is passed to `POST /api/tools/{name}` as the model made it, and its answer comes back to the
-  model (without what's only for programs, such as request ids). This app knows no tool, route or
-  op of Tool Mac Tool Run's, so what it adds or changes is there the day it ships. Today that's
-  `find`, `run_script`, `run_flow`, `run_flow_code`, `check_flow`, `runs`, `web_search`,
-  `web_fetch` (the web, read from the Mac, at once), `browser` (the user's Chrome: open a page,
-  read it, find and ring things), `straw` (click and type in Chrome), `library`, `remember`,
-  `recall`, `memory`, `mind`, `show`, `copy`, `docs` and `call_api`. The list, the scripts and the
-  flows are fetched as the app opens, every five minutes, and on `POST /api/tools`.
-- **Runs, and cancelling**: a tool that waits for Run on the Mac is streamed, so it can be
-  **cancelled** at any point: while the card waits (the card is taken away and nothing runs) or
-  while it runs (it's stopped).
-- **A call that misses** is never left to guesswork: Tool Mac Tool Run takes the names a model
-  reaches for (another name for a tool or an argument, a script's own name), and when there's
-  still no such tool, or an argument is missing, its answer says what the tool takes and what fits
-  instead, and that goes back to the model with the critic's note.
-- **With every request**: what fits it, from Tool Mac Tool Run's search (`GET /api/search`: tools,
-  scripts and flows, each a line), and what the mind already has on what's being said
-  (`POST /api/mind/context`), go in with the model's instructions; the next week's dates (the
-  `memory` tool's `upcoming`) are fetched with the tools.
-- **An older Tool Mac Tool Run**, without `/api/tools`, is said plainly (update it): the model then
-  has the schedule alone.
-- **Its own tools**: only the schedule: `schedule` (`in_minutes`, or `at`: a local date and time
-  such as `"2026-10-24 17:30"`, `"17:30"`, `"tomorrow 9:00"`, `"friday 8:00"`), `list_schedules`,
-  `cancel_schedule` (an id, or `"all"`).
-- **What it learns is kept in Tool Mac Tool Run**, written and read with its own tools: its
-  playbook (which tools, sites and arguments work for what, how the user likes things done, its mistakes) is the library note `Super Face playbook`,
-  added to with `library` (`append`; `write` to drop a line); the user's standing instructions are
-  the note `Super Face instructions`; what it learns about the user themselves goes to MEMORY with
-  `remember` (`PEOPLE`, about `the user`, `notes: ["pref …"]`). All three are read for its prompt
-  at the start of every request. An older version's `memory.json` is moved there once.
+- **Peter, asked in words**: the model has no tools to learn. When something needs doing on the
+  Mac or the web, it ends its answer with a line that starts `@peter` and says what it wants, in
+  plain words, as it would ask a colleague in a chat. That goes as it is to Tool Mac Tool Run's
+  `POST /api/say` (`http://127.0.0.1:8768`), and what it says back is handed to the model as the
+  next message, until the model answers the user in words (ten messages for one request at most).
+  Peter answers with the result, or with a few templates that would do it (blanks `{…}` to fill,
+  choices `[a | b]`), which the model fills in and says back. Nothing after `@peter` is said
+  aloud, and the user hears what matters from the model, not Peter's words. How it goes, with an
+  example, is in [PETER.md](PETER.md).
+- **His templates that fit come with every request** (`GET /api/say/forms?q=…`), so the model can
+  usually fill one in at once; with them, what the mind already has on what's being said
+  (`POST /api/mind/context`); the next week's dates (MEMORY's upcoming) are fetched with the
+  tools list.
+- **Runs don't hold the conversation up**: a script or flow Peter takes on ("Asked for the nightly
+  backup") ends the turn. Its card follows it (waiting for Run on the Mac, running; it's told
+  out loud if the card waits unclicked for a while), and when it's over Tool Mac Tool Run calls
+  back at `POST /api/peter` (the app gives it that address with every message, `X-Reply-To`):
+  the card is brought up to date and the model is told, as a message of its own. If the app
+  wasn't running then, the news comes first in Peter's next answer.
+- **Cancelling**: the Stop button, a card's Cancel, or saying "cancel" calls off the message
+  being answered, and any run Peter is following for it (taken off the Mac while it waits for
+  Run, stopped while it runs; `POST /api/say/stop` there).
+- **An older Tool Mac Tool Run**, without `/api/say`, is said plainly (update it).
+- **The Clock**: the schedule, the one thing kept in this app, asked the same way: `@clock`, then
+  `- in minutes: 20` (or `- at: friday 8:00`, a local date and time such as `2026-10-24 17:30`,
+  `17:30`, `tomorrow 9:00`) and `- task: …`; or `what's scheduled`; or `cancel s3` (or `all`).
+- **What it learns is kept in Tool Mac Tool Run**, written by asking Peter: its playbook (which
+  ways, sites and wording work for what, how the user likes things done, its mistakes) is the
+  library note `Super Face playbook` (a line added; written whole to drop one); the user's
+  standing instructions ("from now on, when I say…") are the note `Super Face instructions`; what
+  it learns about the user themselves goes to MEMORY (`PEOPLE`, about `the user`). The app reads
+  all three for its prompt at the start of every request. An older version's `memory.json` is
+  moved there once.
 - **Later**: when something scheduled comes due, the character shows itself (if it wasn't showing)
   and the model is given the task to do now. Kept across restarts; one due while the app was
   closed is done as it opens, saying it's late.
 - **Its habits** (one model playing what Super Voice gave three): understand what's wanted and own
-  it until it's delivered; do it with a tool, never claiming what no tool did; check what came
-  back with suspicion before answering. The app steps in at the moments it matters: an answer
-  that promises work with no call is sent back; a tool call that can't be read is asked for again;
-  a run that failed brings a note to work out why before retrying; after a request that took work,
-  a quiet moment (nothing said) to save what it taught.
-- **Memory**: up to 60 short notes in three sections (`user`, `playbook`, `mistakes`), read every
-  turn, written by the model, shown in the chat window (where the user can delete them), plus the
-  user's standing instructions.
+  it until it's delivered; have Peter do it, never claiming what he didn't; check what came back
+  with suspicion before answering. The app steps in at the moments it matters: an answer that
+  promises work with no message is sent back; a tool call written as JSON out of habit is sent
+  back (ask Peter instead); something that didn't work brings a note to work out why before
+  trying again; after a request that took work, a quiet moment (nothing said) to save what it
+  taught.
 - **Heard**: what the ears write down is first compared with what the character just said
   (`/api/echo`'s comparison), so its own voice coming back is dropped; said over it, it cuts in.
   "Stop" stops it talking, "cancel" (or "never mind") calls off whatever it's doing, "new chat"
@@ -406,15 +400,25 @@ it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) a
 
 ```bash
 curl -s localhost:8769/api/chat -d '{"text": "what is on my list for later?", "wait": true}'
-# {"ok":true,"id":"e12","reply":"You've one thing: stretch at 17:30.","tools":[{"name":"list_schedules","state":"done","result":"s1: today at 17:30 …"}]}
+# {"ok":true,"id":"e12","reply":"You've one thing: stretch at 17:30.","tools":[{"name":"Clock","state":"done","result":"s1: today at 17:30 …"}]}
 ```
 
 `text` is required; `wait: true` answers once the request is over (with `reply`, what was said;
-`tools`, each tool used and how it went; `error` if the model couldn't be reached), else at once
-with `202` and the entry's `id`. `show: false` keeps the character hidden. The reply is said out
-loud either way. `GET /api/chat?limit=50` gives the conversation's entries (`user`, `assistant`,
-`tool` with `name`, `args`, `state` (`working`, `sending`, `waiting` for the click, `running`,
-`done`, `failed`, `cancelled`), `output`, `result`; `schedule`, `note`, `error`, `divider`).
+`tools`, each message to Peter or the Clock and how it went; `error` if the model couldn't be
+reached), else at once with `202` and the entry's `id`. `show: false` keeps the character hidden.
+The reply is said out loud either way. `GET /api/chat?limit=50` gives the conversation's entries
+(`user`, `assistant`, `tool` with `name` (`Peter` or `Clock`), `said` (the message), `state`
+(`working`, `waiting` for the click, `running`, `done`, `failed`, `cancelled`), `result` (what he
+said), and for a run he follows, `number` (in his log), `request` and `output`; `news` (Peter's,
+come in by itself), `schedule`, `note`, `error`, `divider`).
+
+### `POST /api/peter`
+
+Tool Mac Tool Run calling back: a run the app asked Peter for is over. `{"text": "Meanwhile: The
+nightly backup finished (it worked).", "entries": [{"number": 1, "state": "worked", "result":
+"…"}]}` (or the text alone, as `text/plain`). The cards it's about are brought up to date, the
+character shows itself, and the model is told, as a message of its own (`202`). Only this machine
+may call, as for every route.
 
 ### `POST /api/heard`
 

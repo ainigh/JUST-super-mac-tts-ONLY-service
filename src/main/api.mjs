@@ -49,6 +49,7 @@ const ROUTES = {
   '/api/trace/model': 'GET',
   '/api/trace/calls': 'GET',
   '/api/cancel': 'POST',
+  '/api/peter': 'POST',
   '/api/heard': 'POST',
   '/api/tools': 'GET POST',
   '/api/schedules': 'GET POST',
@@ -279,6 +280,14 @@ export function createApi({ speech, face, settings, version, updater = null, doc
       }
       case '/api/cancel':
         return [200, needCore().actions.cancel()];
+      case '/api/peter': {
+        // Tool Mac Tool Run, calling back: a run asked of Peter is over (text, or JSON with its entries).
+        const b = await body(req);
+        const text = typeof b.text === 'string' ? b.text : '';
+        if (!text.trim()) throw new HTTPError(400, 'missing_text', 'missing text: what Peter says');
+        if (text.length > MAX_TEXT) throw new HTTPError(413, 'too_large', `text is over ${MAX_TEXT} characters`);
+        return [202, needCore().actions.peterNews({ text, entries: b.entries })];
+      }
       case '/api/heard': {
         const c = needCore();
         const b = await body(req);

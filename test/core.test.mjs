@@ -1,35 +1,39 @@
-// The pieces under the assistant: tool calls read out of an answer, the schedule and its times,
-// memory, the prompt, the model client.
+// The pieces under the assistant: messages to Peter and the Clock read out of an answer, the
+// schedule (the Clock) and its times, memory, the prompt, the model client.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { calls, isSilent, looksBroken, maySayNothing, sayable, withoutAsides, words } from '../src/main/calls.mjs';
+import { isSilent, looksLikeCall, maySayNothing, messages, sayable, withoutAsides, words } from '../src/main/calls.mjs';
 import { Ollama, pick, stripThinking } from '../src/main/model.mjs';
-import { canonical, catalogPrompt, claimsInability, promisesWork, stamp, systemPrompt } from '../src/main/prompt.mjs';
-import { Scheduler, dueFrom, fromNow, longTime, parseAt, runTool } from '../src/main/scheduler.mjs';
+import { claimsInability, promisesWork, stamp, systemPrompt } from '../src/main/prompt.mjs';
+import { Scheduler, clockSay, dueFrom, fromNow, longTime, parseAt } from '../src/main/scheduler.mjs';
 import { CHARACTERS, nextSize } from '../src/shared/characters.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'sf-'));
 
-test('tool calls: bare, fenced, among words, arguments beside the name', () => {
-  assert.deepEqual(calls('{"tool": "list_runs", "arguments": {"limit": 3}}').map((c) => [c.name, c.arguments]), [['list_runs', { limit: 3 }]]);
-  const fenced = 'Checking.\n```json\n{"tool": "run_script", "arguments": {"script": "a.sh", "why": "x {y}"}}\n```';
-  assert.equal(calls(fenced)[0].arguments.why, 'x {y}');
-  assert.equal(words(fenced), 'Checking.');
-  assert.deepEqual(calls('{"tool": "list_runs", "limit": 5}')[0].arguments, { limit: 5 });
-  assert.deepEqual(calls('{"name": "schedule", "arguments": "{\\"in_minutes\\": 5}"}')[0].arguments, { in_minutes: 5 });
-  assert.equal(calls('{"name": "Sam", "age": 3}').length, 0, 'a name in some data is not a call');
-  assert.equal(calls('First {"tool":"a"} then {"tool":"b"}').length, 2);
+test('messages: to Peter or the Clock, after words or alone, fenced, a template of lines, one after another', () => {
+  const at = (t) => messages(t).map((m) => [m.to, m.text]);
+  assert.deepEqual(at('Let me check. @peter search the web for Walmart hours'), [['peter', 'search the web for Walmart hours']]);
+  assert.equal(words('Let me check. @peter search the web for Walmart hours'), 'Let me check.');
+  const labeled = 'Got it.\n```\n@peter\nAdd to a note\n- name: Super Face instructions\n- text: - say yes or no\n```';
+  assert.deepEqual(at(labeled), [['peter', 'Add to a note\n- name: Super Face instructions\n- text: - say yes or no']]);
+  assert.equal(words(labeled), 'Got it.', 'the fence goes with the message');
+  assert.deepEqual(at('@peter read the page at https://x.y\n@clock\n- in minutes: 5\n- task: check'), [['peter', 'read the page at https://x.y'], ['clock', '- in minutes: 5\n- task: check']]);
+  assert.deepEqual(at('Sure! @Peter_the_worker: open https://a.b in Chrome'), [['peter', 'open https://a.b in Chrome']], 'his name as a model writes it');
+  assert.equal(messages('Mail it to sam@peter.com.').length, 0, 'an address is not a message');
+  assert.deepEqual(at('Ask @peter later about it'), [['peter', 'later about it']], 'the first one starts a message anywhere');
+  assert.deepEqual(at('@peter search for "Ask @peter" quotes'), [['peter', 'search for "Ask @peter" quotes']], 'another starts one only at the start of a line');
+  assert.ok(looksLikeCall('{"tool": "web_search", "arguments": {"q": "x"}}') && !looksLikeCall('All good.') && !looksLikeCall('@peter {"tool": 1}'));
 });
 
 test('what can be said of an answer while it is being written', () => {
-  assert.equal(sayable('Let me look. {"tool": "run_scr'), 'Let me look. ');
-  assert.equal(sayable('Here:\n```json\n{'), 'Here:\n');
+  assert.equal(sayable('Let me look. @pe'), 'Let me look.', 'what may be the start of a message waits');
+  assert.equal(sayable('Let me look. @peter search the web for x'), 'Let me look.');
+  assert.equal(sayable('Here:\n```\n@pet'), 'Here:\n');
   assert.equal(sayable('Plain words.'), 'Plain words.');
-  assert.ok(looksBroken('{"tool": "run_script", "arguments": {"script": "a.sh"'));
-  assert.ok(!looksBroken('All good.'));
+  assert.equal(sayable('Let me look. {"tool": "web_search"'), 'Let me look. ', 'JSON out of habit is never said');
   assert.ok(isSilent('(nothing)') && isSilent('[silence].') && isSilent('nothing') && isSilent('Nothing.') && !isSilent('Nothing came back.'));
   assert.ok(isSilent('(looking puzzled) (nothing)') && isSilent('(shrugs)'), 'only asides: nothing to say');
   assert.ok(maySayNothing('') && maySayNothing('Noth') && !maySayNothing('No, it') && !maySayNothing('Sure'));
@@ -46,7 +50,7 @@ test('asides in brackets are never said: stage directions go, cues for the face,
   assert.equal(sayable('Sure. (smi'), 'Sure. ');
   assert.equal(sayable('Sure. (smiles) It is'), 'Sure.  It is');
   assert.equal(sayable('Sure. (it is', { final: true }), 'Sure. (it is', 'at the end, a bracket never closed is just a bracket');
-  assert.equal(sayable('Let me look. (checks) {"tool": "x"}'), 'Let me look.  ');
+  assert.equal(sayable('Let me look. (checks) @peter read x'), 'Let me look. ');
 });
 
 test('the harness knows promises and "I can\'t"', () => {
@@ -90,11 +94,12 @@ test('the schedule: several at once, cancelled, kept, and done when due', async 
   const b = s.add({ task: 'Check the build.', due: now + 60_000 });
   s.add({ task: 'Water the plants.', due: now + 120_000 });
   assert.deepEqual([a.id, b.id], ['s1', 's2']);
-  assert.match(runTool(s, 'list_schedules', {}, now), /s1: today at .*stretch/);
-  assert.match(runTool(s, 'cancel_schedule', { id: 's2' }, now), /Cancelled s2/);
-  assert.match(runTool(s, 'cancel_schedule', { id: 's9' }, now), /Nothing scheduled has the id s9/);
-  assert.match(runTool(s, 'schedule', { at: 'whenever', task: 'x' }, now), /couldn't read when/);
-  assert.match(runTool(s, 'schedule', { in_minutes: 5 }, now), /what to do/);
+  assert.match(clockSay(s, "what's scheduled", now), /s1: today at .*stretch/);
+  assert.match(clockSay(s, 'cancel s2', now), /Cancelled s2/);
+  assert.match(clockSay(s, 'cancel s9', now), /Nothing scheduled has the id s9/);
+  assert.match(clockSay(s, '- at: whenever\n- task: x', now), /couldn't read when/);
+  assert.match(clockSay(s, '- in minutes: 5', now), /Say what to do then/);
+  assert.match(clockSay(s, 'hello there', now), /didn't understand that\. The Clock takes:\n\nSet something for later\n- in minutes:/);
   await new Promise((r) => setTimeout(r, 120));
   assert.deepEqual(fired, [['s1', false]]);
   assert.deepEqual(s.list().map((t) => t.id), ['s3']);
@@ -108,52 +113,46 @@ test('the schedule: several at once, cancelled, kept, and done when due', async 
   await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(again, [['s3', true]]);
   assert.equal(s2.add({ task: 'Next.', due: now + 1e6 }).id, 's4', 'ids carry on');
-  assert.equal(runTool(s2, 'cancel_schedule', { id: 'all' }, now), 'Cancelled s4 (Next.).');
+  assert.equal(clockSay(s2, 'cancel all', now), 'Cancelled s4 (Next.).');
   s2.stop();
 });
 
-test('the prompt: the character, Tool Mac Tool Run\'s tools as it gives them, the scripts by name, what it has learned, the day', () => {
+test('the Clock is asked in words: lines, or a line; in minutes or at a time', () => {
+  const now = new Date(2026, 9, 25, 21, 40).getTime();
+  const s = new Scheduler({ onFire: () => {}, now: () => now });
+  assert.equal(clockSay(s, '- in minutes: 20\n- task: Remind the user to call Sam.', now), 'Scheduled s1 for today at 22:00 (in 20 minutes): Remind the user to call Sam.');
+  assert.match(clockSay(s, 'Set something for later\n- at: friday 8:00\n- task: Check the build.', now), /^Scheduled s2 for Friday 30 October at 08:00/);
+  assert.match(clockSay(s, '- In Minutes: 2 hours\n- Task: Water the plants.', now), /^Scheduled s3 for today at 23:40/);
+  assert.match(clockSay(s, 'in 5 minutes: stretch', now), /^Scheduled s4 for today at 21:45 \(in 5 minutes\): stretch$/);
+  assert.match(clockSay(s, 'at 17:30: call the bank', now), /^Scheduled s5 for tomorrow at 17:30/);
+  assert.equal(clockSay(s, 'list', now).split('\n').length, 5);
+  assert.equal(clockSay(s, 'cancel s1 and s3', now), 'Cancelled s1 (Remind the user to call Sam.), s3 (Water the plants.).');
+  s.stop();
+});
+
+test('the prompt: the character, how to ask Peter and the Clock, his templates that fit, what it has learned, the day', () => {
   const m = { prompt: () => "Your playbook:\n- Prefers Celsius\n\nThe user's standing instructions (follow them):\nCall me Sam." };
   const catalog = {
     reachable: true,
     error: null,
-    tools: [
-      { name: 'web_fetch', description: 'Reads any web address.', args: [{ name: 'url', type: 'string', required: true, about: 'the address' }, { name: 'find', type: 'string', required: false, about: 'words' }], asks: false, stream: false, aliases: ['fetch'] },
-      { name: 'run_script', description: 'Runs a script.', args: [{ name: 'script', type: 'string', required: true, about: 'its name' }], asks: true, stream: true, aliases: [] },
-      { name: 'teleport', description: 'A tool this app has never heard of.', args: [], asks: false, stream: false, aliases: [] },
-    ],
-    guide: ['Search the web before you say you can\'t.'],
-    examples: [{ user: 'When does the Louvre open?', steps: [{ call: { tool: 'web_fetch', arguments: { url: 'https://louvre.fr' } }, result: '9 to 6' }], answer: 'From 9 to 6.' }],
-    scripts: [{ name: 'utilities/weather.py', summary: 'The weather', inputs: [], dangers: [] }, { name: 'hello.sh', summary: 'Hi', inputs: [], dangers: [] }],
-    flows: [{ name: 'morning.flow', summary: 'The day' }],
+    tools: [{ name: 'library' }, { name: 'remember' }, { name: 'recall' }, { name: 'web_fetch', description: 'Reads any web address.', args: [{ name: 'url' }] }],
+    scripts: [{ name: 'utilities/weather.py', summary: 'The weather', inputs: [], dangers: [] }],
+    flows: [],
   };
-  const p = systemPrompt({ character: CHARACTERS[2], catalog, notes: m, now: new Date(2026, 9, 24).getTime() });
+  const forms = ['search the web for {what to look for}', 'Find words on a web page\n- address: {a web address}\n- words: {what to look for on it}'];
+  const p = systemPrompt({ character: CHARACTERS[2], catalog, notes: m, forms, now: new Date(2026, 9, 24).getTime() });
   assert.match(p, /You are Sofia/);
   assert.doesNotMatch(p, /3D|character|avatar|gesture|your (?:face|hands|body)|\[tags?\]|dark suit/i, 'the model knows nothing of the character it is shown as: how it moves comes from its words, afterwards');
-  assert.match(p, /^- web_fetch: Reads any web address\. Arguments: url \(string\): the address; find \(string, optional\): words\.$/m);
-  assert.match(p, /^- run_script: Runs a script\. Arguments: script \(string\): its name\. \[waits for the user to click Run on the Mac\]$/m);
-  assert.match(p, /^- teleport: A tool this app has never heard of\.$/m, 'what Tool Mac Tool Run adds is there the day it ships');
-  assert.match(p, /^- schedule: /m);
-  assert.match(p, /^Using Tool Mac Tool Run's tools \(its own advice\):\n- Search the web before you say you can't\.$/m);
-  assert.match(p, /^The user says: When does the Louvre open\?\nYou answer: \{"tool": "web_fetch", "arguments": \{"url":"https:\/\/louvre\.fr"\}\}\nThe tool result: 9 to 6\nYou answer: From 9 to 6\.$/m);
-  assert.match(p, /^utilities\/: weather$/m);
-  assert.match(p, /^hello$/m);
-  assert.match(p, /^Their flows, for run_flow: morning$/m);
+  assert.match(p, /To ask him, end your answer with a line that starts with @peter, then what you want, in plain words\./);
+  assert.match(p, /end your answer with @clock and one of these:\n  Set something for later\n  - in minutes:/);
+  assert.doesNotMatch(p, /web_fetch|run_script|"tool"|Arguments:|JSON/, 'no tool names, arguments or JSON: only words');
+  assert.match(p, /Peter's templates that fit what was just said \(fill one in, or ask him in your own words\):\nsearch the web for \{what to look for\}\n\nFind words on a web page\n- address: \{a web address\}/);
+  assert.match(p, /ask Peter to add it to the note "Super Face instructions"/, 'standing instructions: where they go');
   assert.match(p, /- Prefers Celsius/);
   assert.match(p, /Call me Sam\./);
   assert.match(p, /Today is Saturday 24 October 2026\.$/);
-  assert.match(catalogPrompt({ reachable: false, error: 'not running' }), /isn't available right now \(not running\)/);
-  assert.match(systemPrompt({ character: CHARACTERS[0], catalog: { reachable: false, error: 'not running', tools: [], scripts: [], flows: [] } }), /no tools but the schedule/);
+  assert.match(systemPrompt({ character: CHARACTERS[0], catalog: { reachable: false, error: 'not running', tools: [], scripts: [], flows: [] } }), /Peter isn't available right now \(not running\)/);
   assert.match(stamp(new Date(2026, 9, 24, 9, 5, 7).getTime()), /Saturday 24 October 2026, 09:05:07 \(UTC[+-]\d\d:\d\d\)/);
-});
-
-test('a call goes where its tool is: the schedule here, everything else to Tool Mac Tool Run as called', () => {
-  const catalog = { tools: [{ name: 'web_search', aliases: ['google'], args: [] }, { name: 'runs', aliases: ['cancel_run'], args: [] }] };
-  assert.deepEqual(canonical({ name: 'remind_me', arguments: { in_minutes: 5 } }, catalog), { name: 'schedule', arguments: { in_minutes: 5 }, where: 'local' });
-  assert.deepEqual(canonical({ name: 'Google', arguments: { q: 'x' } }, catalog), { name: 'web_search', arguments: { q: 'x' }, where: 'mac' });
-  // A name it doesn't know (a script's, a tool added later) goes as it was called: Tool Mac Tool Run says what it is.
-  assert.deepEqual(canonical({ name: 'weather', arguments: { args: ['Paris'] } }, catalog), { name: 'weather', arguments: { args: ['Paris'] }, where: 'mac' });
-  assert.equal(canonical({ name: 'cancel_schedule', arguments: {} }, catalog).where, 'local');
 });
 
 test('sizes go round', () => {

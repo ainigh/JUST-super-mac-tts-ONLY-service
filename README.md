@@ -21,18 +21,19 @@ Run script), and no wake word.
   what it just said (and dropped when it's only that), and you can turn off listening while it
   talks. Talk over it and it stops to listen. A small light at its feet says when it hears you.
 - **One model**: [Ollama](https://ollama.com)'s, on this Mac (the best one you have, or the one you
-  pick). It answers, calls the tools, and writes the emojis and `[tags]` its face plays, all in one
+  pick). It answers, asks Peter, and writes the emojis and `[tags]` its face plays, all in one
   answer, said sentence by sentence as it's written.
-- **Tools, from Tool Mac Tool Run**: the model writes a line of JSON, `{"tool": …, "arguments": …}`,
-  and the result comes back to it as the next message (not Ollama's tool calling, so any model
-  can). Its tools are Tool Mac Tool Run's, as Tool Mac Tool Run lists them (`GET /api/tools`), with
-  its own advice and examples: the web (search it and read any page or API, at once), your Chrome
-  (open a page, read it, show you where things are), your scripts and flows (each asking you on the
-  Mac first), notes, MEMORY and the mind, showing and copying. This app wraps none of them: it
-  passes each call through, so what Tool Mac Tool Run adds is there the day it ships. Its own is
-  the schedule. With each request it's also given what fits it (Tool Mac Tool Run's search).
-  **Cancel** any of it: the Stop button, a Cancel on a tool's card, or say "cancel": a run waiting
-  for your click is taken off the Mac, a running one is stopped.
+- **Peter, for everything on the Mac and the web**: the model has no tools to learn. It asks
+  **Peter** ([Tool Mac Tool Run](https://github.com/ainigh/tool-mac-tool-run)'s `/api/say`) the way
+  you'd ask a colleague in a chat: a line starting `@peter`, then what it wants in plain words.
+  Peter answers in words, with the result or with a few templates to fill in, and the templates
+  that fit each request come with it. He reaches the web (search it, read any page), your Chrome
+  (open a page, read it, show you where things are), your scripts and flows (each asking you on
+  the Mac first), notes, MEMORY and the mind, showing and copying: whatever Tool Mac Tool Run
+  adds is there the day it ships. A run doesn't hold the conversation up: Tool Mac Tool Run calls
+  back when it's over, and the character tells you how it went. **Cancel** any of it: the Stop
+  button, a Cancel on a card, or say "cancel": a run waiting for your click is taken off the Mac,
+  a running one is stopped. How it goes, with an example, is in [PETER.md](PETER.md).
 - **Its character**: it sees things through, listens to your exact words, offers the next step it can see
   coming, and checks its work before it calls it done, while allowing that it may have missed something.
 - **Later**: "remind me in 20 minutes…", "at 5 check the build…", "on Friday at 8…". It
@@ -49,10 +50,10 @@ Run script), and no wake word.
   **Super Face playbook**; what it learns about you is MEMORY's, as notes on **the user**; your standing
   instructions are the note **Super Face instructions**. It reads all three before every request; you
   can read and change them in Tool Mac Tool Run, or in the chat's **Mind** tab.
-- **The chat**: click the character. What you both said, each tool at work (waiting for your click,
-  running, what it printed, Cancel), every tool there is (fetched from Tool Mac Tool Run as it
+- **The chat**: click the character. What you both said, each message to Peter and what he said
+  (a run: waiting for your click, running, what it printed, Cancel), every tool there is (fetched from Tool Mac Tool Run as it
   opens), what's scheduled, its memory and model, the **Model** log (every request to the model,
-  word for word, and what came back), the **Calls** log (every tool call: its arguments, each
+  word for word, and what came back), the **Calls** log (every message to Peter: what was said, each
   request's address, body and answer, and what went back to the model), the **Prompts** it's given
   as they stand now (each with Copy), and the **Errors** (with **Copy report**, to paste wherever
   you report a problem, and **Try the voice again**); the character picker and the size buttons
@@ -88,8 +89,8 @@ What it works with, on the same Mac:
 
 1. **Ollama** with a model: `brew install ollama`, then `ollama pull qwen3:8b` (or any model; it
    picks the best you have). Without it, it says it can't reach its model.
-2. **Tool Mac Tool Run** with its API on (its [install](https://github.com/ainigh/tool-mac-tool-run)):
-   its scripts are the character's tools. Its examples include `utilities/library.py`, your notes
+2. **Tool Mac Tool Run** with its API on (its [install](https://github.com/ainigh/tool-mac-tool-run)),
+   a version with `/api/say`: it's Peter, and its scripts are what he runs for the character. Its examples include `utilities/library.py`, your notes
    (the character's library: this app keeps none of its own). A scripts folder set up before that
    script existed doesn't get it by itself; this puts it there (`~/Scripts` is the usual folder):
 
@@ -117,7 +118,7 @@ voice again without restarting the app.
 | Show or hide the character | Click the menu bar icon, or **⌘⇧A** anywhere |
 | Change character (and voice), size | The chat's top row (S, M, L, H); or right-click the icon or the character |
 | See what went to the model, and what came back | The chat's **Model** tab |
-| See every tool call: its address, what it sent, what came back | The chat's **Calls** tab |
+| See every message to Peter: what it said, what came back | The chat's **Calls** tab |
 | Model, thinking, listening while it talks, memory | The chat's **Mind** tab |
 | Move it | Drag it |
 
@@ -131,10 +132,11 @@ Its settings, chat, schedule and memory are kept in `~/Library/Application Suppo
  chat window ── typed ──────────────────────────────────▶ assistant ◀── schedule (due tasks)
                                                           │   ▲
                                          one model (Ollama, streamed)   memory notes
-                                                          │   │ tool result
+                                                          │   │ his answer
                                                           ▼   │
-                      a tool call? ── schedule / remember ┤   │
-                                   └─ Tool Mac Tool Run (streamed run: card, click, output; cancellable)
+                       @clock …? ── the schedule, here ───┤   │
+                       @peter …? ── Tool Mac Tool Run's /api/say (in words) ┘
+                                    a run: card, click, output ─▶ POST /api/peter when it's over
                                                           │
                      its words, sentence by sentence ─────▶ the character's page: HeadTTS (Kokoro) +
                                                             TalkingHead (lips, mood, gestures)
@@ -144,7 +146,7 @@ Its settings, chat, schedule and memory are kept in `~/Library/Application Suppo
 
 ```bash
 npm install          # also downloads the four characters into renderer/avatars
-npm test             # the assistant, its tools, the schedule, memory, the API, the text, the director, the echo check
+npm test             # the assistant, Peter and the Clock, memory, the API, the text, the director, the echo check
 npm start            # the app
 npm run dev          # without Electron: http://127.0.0.1:8769/renderer/index.html and /renderer/chat.html in Chrome
 npm run dist         # on a Mac: dist/SuperFace.zip (checks every file the pages load is in it)
@@ -155,9 +157,9 @@ scripts/smoke-mac.sh # on a Mac, after dist: opens the app, waits for it, makes 
 |---|---|
 | `main.mjs` | the Electron main process: the menu bar, the character's window and the chat beside it, the API server |
 | `src/main/core.mjs` | the assistant and what it works with, what's heard, the actions the chat and the API share |
-| `src/main/assistant.mjs` | the conversation: the model, tool calls, cancelling, the harness's notes, learning |
-| `src/main/prompt.mjs` | what the model is told (one model, the three habits), and the notes it gets when it slips |
-| `src/main/model.mjs`, `toolrun.mjs`, `scheduler.mjs`, `notes.mjs`, `calls.mjs` | Ollama, Tool Mac Tool Run, the schedule, what it has learned (read from Tool Mac Tool Run), reading tool calls |
+| `src/main/assistant.mjs` | the conversation: the model, messages to Peter and the Clock, runs followed, cancelling, the harness's notes, learning |
+| `src/main/prompt.mjs` | what the model is told (one model, the three habits, asking Peter), and the notes it gets when it slips |
+| `src/main/model.mjs`, `toolrun.mjs`, `scheduler.mjs`, `notes.mjs`, `calls.mjs` | Ollama, Tool Mac Tool Run (Peter), the schedule (the Clock), what it has learned (read from Tool Mac Tool Run), reading messages out of an answer |
 | `src/main/api.mjs`, `speech.mjs` | the API; the record of what's said |
 | `src/shared/` | the characters, the catalog of what it can show, voices, text into sentences and cues, the director, the echo check |
 | `renderer/` | the character's page (TalkingHead, HeadTTS, the ears) and the chat; `voice-glue.mjs` runs inside HeadTTS's worker to say what went wrong there, `ort-local.mjs` gives transformers.js ONNX Runtime from the app rather than a CDN |

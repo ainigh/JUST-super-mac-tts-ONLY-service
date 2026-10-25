@@ -1,21 +1,28 @@
-// The assistant: one model, one conversation, tools. What the user says (heard or typed) and what
-// comes due on the schedule become messages; the model answers, its words are said as they're
-// written, and a tool call in its answer is run (here, or over Tool Mac Tool Run) and the result
-// handed back, until it answers in words. Everything can be cancelled: the model mid-answer, a
-// run waiting for its click or running. No Electron in here, so it's tested on its own.
+// The assistant: one model, one conversation, and two to ask: Peter (Tool Mac Tool Run, in words)
+// and the Clock (the schedule). What the user says (heard or typed), what comes due on the
+// schedule and Peter's news (a run it asked for is over) become messages; the model answers, its
+// words are said as they're written, and a message to Peter or the Clock at the end of its answer
+// is sent and the answer handed back, until it answers in words. A run Peter takes on doesn't
+// hold the conversation up: it's followed on its card, and its news comes in when it's over.
+// Everything can be cancelled: the model mid-answer, a run waiting for its click or running. No
+// Electron in here, so it's tested on its own.
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { calls, isSilent, looksBroken, maySayNothing, sayable, withoutAsides, words } from './calls.mjs';
+import { isSilent, looksLikeCall, maySayNothing, messages, sayable, withoutAsides, words } from './calls.mjs';
 import { PLAYBOOK, THE_USER } from './notes.mjs';
-import { NOTE, LOCAL_TOOLS, canonical, claimsInability, promisesWork, systemPrompt, toolResult, userMessage } from './prompt.mjs';
-import * as scheduleTools from './scheduler.mjs';
+import { HELPERS, NOTE, claimsInability, newsMessage, promisesWork, reply, systemPrompt, userMessage } from './prompt.mjs';
+import { clockSay } from './scheduler.mjs';
+import { troubled } from './toolrun.mjs';
 
-const MAX_ROUNDS = 10; // tool calls for one request
+const MAX_ROUNDS = 10; // messages to Peter and the Clock for one request
 const KEEP_LOG = 300; // chat entries kept
 const KEEP_MESSAGES = 40; // messages the model sees, at most
 const KEEP_CHARS = 32_000; // and their length, at most (the system prompt comes on top)
 const WAITING_REMINDER = 20_000; // a card unclicked this long: said once
+const KEEP_REPLY = 600; // a reply of Peter's from an earlier request, at most (offers are folded to a line)
+/** Peter's log states, as a card shows them. */
+const CARD_STATE = { waiting: 'waiting', running: 'running', worked: 'done', answered: 'done', done: 'done', failed: 'failed', denied: 'failed', not_answered: 'failed', could_not_start: 'failed', withdrawn: 'cancelled', stopped: 'cancelled' };
 
 export class Assistant {
   /**
@@ -52,15 +59,16 @@ export class Assistant {
    * Said while it's thinking, it's asked together with what came before (a second thought); while
    * a tool runs, it waits its turn.
    * @param {string} text
-   * @param {{how?: 'said'|'typed'|'scheduled'|'api', at?: number}} [o]
+   * @param {{how?: 'said'|'typed'|'scheduled'|'api'|'peter', at?: number}} [o]
    */
   say(text, { how = 'typed', at = this.now() } = {}) {
     const t = String(text ?? '').trim();
     if (!t) return null;
-    const entry = this.add({ kind: how === 'scheduled' ? 'schedule' : 'user', text: t, how, queued: !!this.turn });
+    const kind = how === 'scheduled' ? 'schedule' : how === 'peter' ? 'news' : 'user';
+    const entry = this.add({ kind, text: t, how, queued: !!this.turn });
     this.inbox.push({ text: t, how, at, entry });
     this.reflecting?.abort();
-    if (this.turn && !this.turn.toolRunning && how !== 'scheduled') {
+    if (this.turn && !this.turn.toolRunning && kind === 'user') {
       // Mid-answer: what was being said gives way to what's just been said.
       this.turn.interrupted = true;
       this.turn.ctrl.abort();
@@ -70,9 +78,22 @@ export class Assistant {
     return entry;
   }
 
-  /** Stops everything: the model, any tool (its card taken away, or its run stopped), the voice, what's waiting. */
+  /**
+   * Peter's news (Tool Mac Tool Run calls back when a run it was asked for is over): the cards
+   * it's about are brought up to date, and the model is told, as a message of its own.
+   * @param {string} text - what Peter says ("Meanwhile: the nightly backup finished…")
+   * @param {Array<{number: number, state: string, result?: string}>} [entries] - the requests it's about, as his log has them
+   */
+  news(text, entries = []) {
+    this.followed(entries);
+    return this.say(text, { how: 'peter' });
+  }
+
+  /** Stops everything: the model, Peter's runs (their cards taken away, or stopped), the voice, what's waiting. */
   cancel() {
-    const had = !!this.turn || this.inbox.length > 0;
+    const open = this.log.filter((e) => e.kind === 'tool' && e.number && ['waiting', 'running'].includes(e.state));
+    for (const e of open) this.stopRun(e);
+    const had = !!this.turn || this.inbox.length > 0 || open.length > 0;
     for (const item of this.inbox) this.update(item.entry, { queued: false, dropped: true });
     this.inbox = [];
     this.reflecting?.abort();
@@ -125,9 +146,10 @@ export class Assistant {
     this.pumping = true;
     try {
       while (this.inbox.length) {
-        // A scheduled task is a request of its own; what the user said, all together.
+        // A scheduled task, or Peter's news, is a request of its own; what the user said, all together.
+        const own = (x) => x.how === 'scheduled' || x.how === 'peter';
         const first = this.inbox[0];
-        const batch = first.how === 'scheduled' ? this.inbox.splice(0, 1) : this.inbox.splice(0, this.inbox.findIndex((x) => x.how === 'scheduled') >>> 0);
+        const batch = own(first) ? this.inbox.splice(0, 1) : this.inbox.splice(0, this.inbox.findIndex(own) >>> 0);
         for (const item of batch) this.update(item.entry, { queued: false });
         await this.work(batch);
       }
@@ -137,11 +159,12 @@ export class Assistant {
     }
   }
 
-  /** One request, to its answer: model, tools, model… */
+  /** One request, to its answer: model, Peter, model… */
   async work(batch) {
     const turn = { ctrl: new AbortController(), batch, calls: 0, failures: 0, spoke: false, nudged: new Set(), toolRunning: false, toolEntry: null };
     this.turn = turn;
-    const content = batch.length === 1 ? userMessage(batch[0].text, batch[0]) : batch.map((b) => userMessage(b.text, b)).join('\n');
+    const content = batch.map((b) => (b.how === 'peter' ? newsMessage(b.text, b.at) : userMessage(b.text, b))).join('\n');
+    this.fold();
     const mark = this.history.length;
     this.history.push({ role: 'user', content });
     this.emitState();
@@ -149,7 +172,7 @@ export class Assistant {
     try {
       for (;;) {
         const answer = await this.answer(turn);
-        const found = calls(answer.text);
+        const found = messages(answer.text);
         const said = words(answer.text);
         this.history.push({ role: 'assistant', content: answer.text });
         if (!found.length) {
@@ -163,14 +186,14 @@ export class Assistant {
           break;
         }
         this.finishWords(answer, said);
-        const call = canonical(found[0], this.toolrun.catalog);
-        let { text, failed, cancelled } = await this.execute(turn, call);
+        const m = found[0];
+        let { text, failed, cancelled } = await this.ask(turn, m);
         if (turn.cleared) break;
-        if (found.length > 1) text += `\n\n${NOTE.onlyFirst(call.name, found.slice(1).map((c) => c.name))}`;
+        if (found.length > 1) text += `\n\n${NOTE.onlyFirst(m.to)}`;
         rounds++;
         if (failed && !cancelled && turn.failures <= 2) text += `\n\n${NOTE.review}`;
         if (rounds >= MAX_ROUNDS) text += `\n\n${NOTE.outOfRounds(MAX_ROUNDS)}`;
-        this.history.push({ role: 'user', content: toolResult(call.name, text) });
+        this.history.push({ role: 'user', content: reply(m.to, text) });
         if (cancelled) {
           this.add({ kind: 'note', text: 'Cancelled.' });
           break;
@@ -209,15 +232,15 @@ export class Assistant {
 
   /** The model's answer, streamed: its words are said sentence by sentence as they come. */
   async answer(turn) {
-    // Once a request, both at once: what the mind has on what's being said, and the scripts and
-    // routes that fit it (the rest are only named), given to the model with its instructions.
+    // Once a request, at once: what the mind has on what's being said, and Peter's templates that
+    // fit it, given to the model with its instructions.
     if (!turn.context) {
       const asked = turn.batch.map((b) => b.text).join('\n');
       const signal = turn.ctrl.signal;
       // Its playbook, the standing instructions and what MEMORY has on the user, read fresh too.
-      [turn.context, turn.matches] = await Promise.all([this.toolrun.context(this.recent(), { signal }), this.toolrun.matches(asked, { signal }), this.notes?.refresh({ signal })]);
+      [turn.context, turn.forms] = await Promise.all([this.toolrun.context(this.recent(), { signal }), this.toolrun.forms(asked, { signal }), this.notes?.refresh({ signal })]);
     }
-    const system = systemPrompt({ character: this.character(), catalog: this.toolrun.catalog, notes: this.notes, context: turn.context, matches: turn.matches, now: this.now() });
+    const system = systemPrompt({ character: this.character(), catalog: this.toolrun.catalog, notes: this.notes, context: turn.context, forms: turn.forms, now: this.now() });
     const messages = [{ role: 'system', content: system }, ...this.history];
     const out = { text: '', spokenTo: 0, entry: null, spokenAny: false };
     const flush = (final) => {
@@ -267,68 +290,55 @@ export class Assistant {
     if (answer.entry) this.update(answer.entry, { hidden: true, streaming: false });
   }
 
-  /** The latest of the conversation, as said (no tool results, no notes from the Mac): what the mind is asked about. */
+  /** The latest of the conversation, as said (no answers of Peter's, no notes from the Mac): what the mind is asked about. */
   recent() {
     return this.history
       .slice(-6)
-      .filter((m) => !/^(Tool result for|Note from the Mac)/.test(m.content))
+      .filter((m) => !/^((Peter|Clock) \(to you|Note from the Mac)/.test(m.content))
       .map((m) => (m.role === 'assistant' ? words(m.content) : m.content.replace(/^\[[^\]]*\]\s*/, '')))
       .filter(Boolean)
       .join('\n');
   }
 
-  /** What the harness tells the model when its answer has words and no call where one was due. */
+  /** What the harness tells the model when its answer has words and no message where one was due. */
   nudgeFor(turn, text, said) {
     const once = (key, note) => (turn.nudged.has(key) ? null : (turn.nudged.add(key), note));
-    if (looksBroken(text)) return once('broken', NOTE.broken);
+    if (looksLikeCall(text)) return once('json', NOTE.json);
     if (!turn.calls && !isSilent(said) && promisesWork(said) && !/\?\s*$/.test(said)) return once('promised', NOTE.promised);
     if (!turn.calls && this.toolrun.catalog.reachable && claimsInability(said)) return once('cannot', NOTE.cannot);
     return null;
   }
 
-  // ---------------------------------------------------------------- tools
+  // ---------------------------------------------------------------- Peter and the Clock
 
-  async execute(turn, call) {
+  /** Sends one message (to Peter, or the Clock): { text, failed, cancelled }, the answer for the model. */
+  async ask(turn, m) {
     turn.calls++;
-    const args = call.arguments && typeof call.arguments === 'object' ? call.arguments : {};
-    const entry = this.add({ kind: 'tool', name: call.name, args, state: 'working', startedAt: this.now(), output: '' });
-    const log = this.trace?.open({ kind: 'tool', name: call.name, args, state: 'working', where: call.where });
+    const name = m.to === 'clock' ? 'Clock' : 'Peter';
+    const entry = this.add({ kind: 'tool', name, said: m.text, state: 'working', startedAt: this.now() });
+    const log = this.trace?.open({ kind: 'tool', name: `@${m.to}`, args: { said: m.text }, state: 'working', where: m.to === 'clock' ? 'local' : 'mac' });
     turn.toolEntry = entry;
     this.emitState();
     let text;
     let failed = false;
     try {
-      if (call.where === 'local') {
-        text = scheduleTools.runTool(this.scheduler, call.name, args, this.now());
-        failed = /^(I couldn't|Say |That time|There are already|Nothing scheduled has)/.test(text);
-      } else if (!this.toolrun.catalog.tools.length) {
-        text = `${NOTE.unknownTool(call.name, this.toolrun.catalog)} (Tool Mac Tool Run isn't available: ${this.toolrun.catalog.error || 'not reached'}.)`;
+      if (!m.text) {
+        text = NOTE.empty(m.to);
         failed = true;
+      } else if (m.to === 'clock') {
+        text = clockSay(this.scheduler, m.text, this.now());
+        failed = /^(I didn't understand|I couldn't|Say |That time|There are already|Nothing scheduled has)/.test(text);
       } else {
         turn.toolRunning = true;
         this.emitState();
-        // A card left unclicked is said once; a long run needs no words (the busy tone says it's working).
-        let reminder = null;
+        const started = this.now();
         try {
-          ({ text, failed } = await this.toolrun.run(call.name, args, {
-            signal: turn.ctrl.signal,
-            log,
-            onStatus: (s) => {
-              const patch = { state: s.state === 'done' ? 'done' : s.state, label: s.label || entry.label };
-              if (s.request) patch.request = s.request;
-              if (s.run) patch.run = s.run;
-              if (s.output !== undefined) patch.output = s.output;
-              if (s.state === 'waiting' && !reminder) {
-                reminder = setTimeout(() => entry.state === 'waiting' && this.speak("It's waiting for you to click Run on your Mac."), WAITING_REMINDER);
-              }
-              this.update(entry, patch);
-              this.emitState();
-            },
-          }));
+          ({ text, failed } = await this.toolrun.say(m.text, { signal: turn.ctrl.signal, log }));
         } finally {
-          clearTimeout(reminder);
           turn.toolRunning = false;
         }
+        // A run asked for: its card follows it on the Mac (waiting for Run, running, over).
+        if (!failed && /\bAsked for\b/.test(text)) await this.follow(entry, started);
       }
     } catch (err) {
       text = `It didn't work: ${err.message || err}`;
@@ -336,18 +346,61 @@ export class Assistant {
     }
     const cancelled = turn.ctrl.signal.aborted;
     if (failed && !cancelled) turn.failures++;
-    this.update(entry, { state: cancelled ? 'cancelled' : failed ? 'failed' : 'done', result: text, endedAt: this.now() });
+    if (!entry.number || cancelled) this.update(entry, { state: cancelled ? 'cancelled' : failed ? 'failed' : 'done', result: text, endedAt: this.now() });
+    else this.update(entry, { result: text });
     this.trace?.change(log, { state: cancelled ? 'cancelled' : failed ? 'failed' : 'done', result: text, ms: this.now() - entry.startedAt }, { final: true });
     turn.toolEntry = null;
     this.emitState();
     return { text, failed, cancelled };
   }
 
-  /** Cancels one tool (from its card in the chat): the request carries on with "cancelled" as its result. */
+  /**
+   * A run Peter took on: the card is tied to it in his log (asked since `since`), shown waiting or
+   * running, and if it's still waiting for its click a while later, the user is told once.
+   */
+  async follow(entry, since) {
+    const entries = await this.toolrun.sayLog();
+    const mine = entries.find((x) => x.waits_for_the_mac && ['waiting', 'running'].includes(x.state) && Date.parse(x.asked) >= since - 2000 && !this.log.some((e) => e.number === x.number));
+    if (!mine) return;
+    this.update(entry, { number: mine.number, request: mine.request, state: CARD_STATE[mine.state] });
+    if (mine.state !== 'waiting') return;
+    const timer = setTimeout(async () => {
+      if (entry.state !== 'waiting') return;
+      const now = (await this.toolrun.sayLog()).find((x) => x.number === entry.number);
+      this.followed(now ? [now] : []);
+      if (now?.state === 'waiting') this.speak("It's waiting for you to click Run on your Mac.");
+    }, WAITING_REMINDER);
+    timer.unref?.();
+  }
+
+  /** Cards brought up to date from Peter's log: [{ number, state, result }]. */
+  followed(entries = []) {
+    for (const x of entries) {
+      const e = this.log.find((y) => y.kind === 'tool' && y.number === x.number);
+      const state = CARD_STATE[x.state];
+      if (!e || !state) continue;
+      this.update(e, { state, ...(x.result ? { output: String(x.result).slice(-4000) } : {}), ...(x.news ? { news: x.news } : {}), ...(['waiting', 'running'].includes(state) ? {} : { endedAt: this.now() }) });
+    }
+    this.emitState();
+  }
+
+  /** A run Peter followed, called off: taken off the Mac while it waits, stopped while it runs. */
+  async stopRun(e) {
+    const said = await this.toolrun.stopSay(e.number, { request: e.request });
+    this.update(e, { state: 'cancelled', result: `${e.result ? `${e.result}\n\n` : ''}Cancelled: ${said}`, endedAt: this.now() });
+    return said;
+  }
+
+  /** Cancels one card (its Cancel in the chat): the message being answered, or a run Peter followed. */
   cancelTool(id) {
     const t = this.turn;
-    if (!t || !t.toolEntry || (id && t.toolEntry.id !== id)) return false;
-    this.cancel();
+    if (t?.toolEntry && (!id || t.toolEntry.id === id)) {
+      this.cancel();
+      return true;
+    }
+    const e = this.log.find((x) => x.id === id && x.kind === 'tool' && x.number && ['waiting', 'running'].includes(x.state));
+    if (!e) return false;
+    this.stopRun(e);
     return true;
   }
 
@@ -362,12 +415,11 @@ export class Assistant {
       const system = systemPrompt({ character: this.character(), catalog: this.toolrun.catalog, notes: this.notes, now: this.now() });
       const text = await this.model.chat([{ role: 'system', content: system }, ...this.history, { role: 'user', content: NOTE.reflect }], { signal: ctrl.signal, purpose: 'learning' });
       let learned = false;
-      for (const c of calls(text).slice(0, 3)) {
-        const call = canonical(c, this.toolrun.catalog);
-        const what = learning(call);
+      for (const m of messages(text).slice(0, 2)) {
+        const what = learning(m);
         if (!what) continue; // only its playbook, and notes on the user, are written here
-        const result = await this.toolrun.run(call.name, call.arguments, { signal: ctrl.signal });
-        if (!result.failed) {
+        const result = await this.toolrun.say(m.text, { signal: ctrl.signal });
+        if (!result.failed && !/^(These can do that|Did you mean|Fill in the blanks|That needs)/m.test(result.text)) {
           learned = true;
           this.add({ kind: 'note', text: what });
         }
@@ -420,7 +472,27 @@ export class Assistant {
     this.emit({ type: 'assistant', state: this.state() });
   }
 
-  /** What the model sees is kept short enough for its context: the latest messages, old tool results cut. */
+  /**
+   * Peter's side of earlier requests, folded: a list of templates he offered is a line of their
+   * titles, a long answer is cut short. What the model reads later is what was asked and what came
+   * of it, not the back and forth. (The request at hand is left as it is.)
+   */
+  fold() {
+    this.history = this.history.map((m) => {
+      const head = m.content.match(/^(Peter|Clock) \(to you; the user doesn't see this\):\n/);
+      if (m.role !== 'user' || !head) return m;
+      const body = m.content.slice(head[0].length);
+      if (/^(These can do that|More that can do that|Fill in the blanks|The Clock takes|I didn't understand)/m.test(body)) {
+        const titles = [...body.matchAll(/^\s*\d+\. ([^\n]+)$/gm)].map((x) => x[1].trim());
+        const folded = titles.length ? `${head[1]} offered: ${titles.join(', ')}.` : `${head[1]} said what he takes.`;
+        return { ...m, content: head[0] + folded };
+      }
+      if (body.length > KEEP_REPLY) return { ...m, content: `${head[0]}${body.slice(0, KEEP_REPLY)}… (cut short)` };
+      return m;
+    });
+  }
+
+  /** What the model sees is kept short enough for its context: the latest messages, old answers of Peter's cut. */
   trim() {
     let h = this.history.slice(-KEEP_MESSAGES);
     const total = () => h.reduce((n, m) => n + m.content.length, 0);
@@ -464,11 +536,11 @@ export class Assistant {
     this.saveTimer.unref?.();
   }
 
-  /** The tools there are, for the chat's list: built in, Tool Mac Tool Run's, and the user's scripts and flows. */
+  /** Who it asks, and what they can do, for the chat's list: Peter and the Clock, Tool Mac Tool Run's tools, and the user's scripts and flows. */
   tools() {
     const c = this.toolrun.catalog;
     return {
-      builtin: LOCAL_TOOLS.map((t) => ({ name: t.name, description: t.description, args: (t.args || []).map(([n, d]) => ({ name: n, about: d })) })),
+      builtin: HELPERS.map((h) => ({ name: h.handle, description: h.description, args: [] })),
       mac: c.tools.map((t) => ({ name: t.name, description: t.description, asks: t.asks, args: t.args.map((a) => ({ name: a.name, about: a.about })) })),
       scripts: c.scripts,
       flows: c.flows,
@@ -489,17 +561,24 @@ export function display(text) {
     .trim();
 }
 
-/** What a call made while it reflects saves, said for the chat; null when it isn't one it may make then. */
-function learning(call) {
-  const a = call.arguments || {};
-  if (call.name === 'library' && String(a.name ?? '').trim().toLowerCase() === PLAYBOOK.toLowerCase()) {
-    const op = String(a.op ?? '').toLowerCase();
-    if (op === 'append') return `Learned: ${String(a.text ?? '').replace(/^-\s*/, '').trim()}`;
-    if (op === 'write') return 'Rewrote its playbook.';
+/**
+ * What a message sent while it reflects saves, said for the chat; null when it isn't one it may
+ * send then (only to Peter, and only about its playbook or about the user).
+ */
+export function learning(m) {
+  if (m.to !== 'peter') return null;
+  const lines = Object.fromEntries(
+    String(m.text)
+      .split('\n')
+      .map((l) => l.match(/^\s*[-*]?\s*([A-Za-z][A-Za-z ]{0,20}?)\s*:\s*(.*)$/))
+      .filter(Boolean)
+      .map((x) => [x[1].trim().toLowerCase(), x[2].trim()]),
+  );
+  const title = String(m.text).split('\n')[0].trim().toLowerCase();
+  if (String(lines.name ?? '').toLowerCase() === PLAYBOOK.toLowerCase()) {
+    if (/^write/.test(title)) return 'Rewrote its playbook.';
+    if (lines.text) return `Learned: ${lines.text.replace(/^-\s*/, '').trim()}`;
   }
-  if (call.name === 'remember' && String(a.about ?? '').trim().toLowerCase() === THE_USER) {
-    const notes = (Array.isArray(a.notes) ? a.notes : [a.notes ?? a.text]).filter(Boolean).map((n) => String(n).replace(/^pref\s+/, ''));
-    return `Learned about you: ${notes.join('; ')}`;
-  }
+  if (String(lines.about ?? '').toLowerCase() === THE_USER && lines.fact) return `Learned about you: ${lines.fact}`;
   return null;
 }

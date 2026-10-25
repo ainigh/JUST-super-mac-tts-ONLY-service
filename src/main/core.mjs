@@ -52,7 +52,8 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
   // What went to the model and came back, and every tool call with its requests: the Model and Calls tabs.
   const traces = { model: new Trace({ name: 'model', keep: 40, emit, now }), calls: new Trace({ name: 'calls', keep: 80, emit, now }) };
   const model = new Ollama({ current: () => ({ url: settings.get().ollamaUrl, model: settings.get().model, think: settings.get().think }), fetch: f, trace: traces.model });
-  const toolrun = new ToolRun({ url: () => settings.get().toolRunUrl, fetch: f, trace: traces.calls });
+  // Peter is Tool Mac Tool Run, talked to in words; it says how a run went at POST /api/peter here.
+  const toolrun = new ToolRun({ url: () => settings.get().toolRunUrl, replyTo: () => (settings.get().port ? `http://127.0.0.1:${settings.get().port}/api/peter` : null), fetch: f, trace: traces.calls });
   // What it learns is kept in Tool Mac Tool Run (its playbook and the standing instructions in the
   // library, what it knows of the user in MEMORY); memory.json, from before, is moved there once.
   const notes = new Notes({ toolrun, oldFile: file('memory.json'), onChange: (m) => emit({ type: 'memory', memory: m }) });
@@ -210,17 +211,17 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       {
         id: 'system',
         title: 'The assistant (system prompt)',
-        when: 'Sent with every message, built fresh each time: the character, the three habits, Tool Mac Tool Run’s tools with its advice and examples (as it lists them now), the scripts it has, the playbook, what MEMORY has on you and your standing instructions (all three kept in Tool Mac Tool Run), and the day.',
+        when: 'Sent with every message, built fresh each time: the character, the three habits, how to ask Peter (Tool Mac Tool Run, in words) and the Clock, the playbook, what MEMORY has on you and your standing instructions (all three kept in Tool Mac Tool Run), Peter’s templates that fit the request, and the day.',
         text: systemPrompt({ character: character(), catalog: toolrun.catalog, notes, now: now() }),
       },
-      { id: 'promised', title: 'Words that promise work, with no tool call', when: 'Sent back once when an answer says it will do something but calls no tool.', text: NOTE.promised },
-      { id: 'broken', title: 'A tool call that can’t be read', when: 'Sent back once when an answer looks like a tool call but isn’t valid JSON.', text: NOTE.broken },
-      { id: 'cannot', title: '“I can’t”, with tools that could', when: 'Sent back once when an answer says it can’t, or has no access, while Tool Mac Tool Run is there.', text: NOTE.cannot },
-      { id: 'review', title: 'The critic: after a tool fails', when: 'Added to a failed tool’s result (twice per request at most).', text: NOTE.review },
-      { id: 'reflect', title: 'Learning: after a request that took work', when: 'Asked quietly (nothing is said) after a request with a failure or two tool calls or more: its answer may add a line to its playbook (in Tool Mac Tool Run’s library) or a note on you (in MEMORY).', text: NOTE.reflect },
-      { id: 'onlyFirst', title: 'More than one tool call in an answer', when: 'Added to the result when an answer has several calls: only the first is made.', text: NOTE.onlyFirst('run_script', ['schedule']) },
-      { id: 'outOfRounds', title: 'Ten tool calls for one request', when: 'Added to the tenth tool result of one request.', text: NOTE.outOfRounds(10) },
-      { id: 'unknownTool', title: 'A tool that doesn’t exist', when: 'The result of a call to a tool there isn’t.', text: NOTE.unknownTool('fly_to_mars', toolrun.catalog) },
+      { id: 'promised', title: 'Words that promise work, with no message to Peter', when: 'Sent back once when an answer says it will do something but asks no one.', text: NOTE.promised },
+      { id: 'json', title: 'A tool call written as JSON', when: 'Sent back once when an answer writes a JSON tool call (there are none) instead of asking Peter.', text: NOTE.json },
+      { id: 'cannot', title: '“I can’t”, when Peter could', when: 'Sent back once when an answer says it can’t, or has no access, while Tool Mac Tool Run is there.', text: NOTE.cannot },
+      { id: 'review', title: 'The critic: after something didn’t work', when: 'Added to Peter’s (or the Clock’s) answer when it didn’t work (twice per request at most).', text: NOTE.review },
+      { id: 'reflect', title: 'Learning: after a request that took work', when: 'Asked quietly (nothing is said) after a request with a failure or two messages or more: its answer may ask Peter to add a line to its playbook (in Tool Mac Tool Run’s library) or to remember something about you (in MEMORY).', text: NOTE.reflect },
+      { id: 'onlyFirst', title: 'More than one message in an answer', when: 'Added to the answer when the model wrote several messages: only the first is sent.', text: NOTE.onlyFirst('peter') },
+      { id: 'outOfRounds', title: 'Ten messages for one request', when: 'Added to the tenth answer of one request.', text: NOTE.outOfRounds(10) },
+      { id: 'empty', title: 'An empty message', when: 'The answer to "@peter" with nothing after it.', text: NOTE.empty('peter') },
     ];
   }
 
@@ -274,6 +275,13 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     },
     cancel: () => ({ ok: assistant.cancel() }),
     cancelTool: ({ id }) => ({ ok: assistant.cancelTool(id) }),
+    /** Peter's news: Tool Mac Tool Run says a run this app asked for is over. */
+    peterNews: ({ text, entries }) => {
+      if (!String(text ?? '').trim()) throw new Error('missing text: what Peter says');
+      host.show?.();
+      const e = assistant.news(String(text), Array.isArray(entries) ? entries : []);
+      return { ok: !!e, id: e?.id };
+    },
     hush: () => {
       speech.stop();
       return { ok: true };

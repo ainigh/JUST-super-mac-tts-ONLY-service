@@ -202,7 +202,7 @@ test('what it has learned, and the tool list, over the API: without Tool Mac Too
   assert.match(m.error, /isn't reachable/);
   assert.deepEqual(m.names, { playbook: 'Super Face playbook', instructions: 'Super Face instructions', user: 'the user' });
   const [, tools] = await get('/api/tools');
-  assert.deepEqual(tools.builtin.map((t) => t.name), ['schedule', 'list_schedules', 'cancel_schedule'], 'the schedule alone is its own');
+  assert.deepEqual(tools.builtin.map((t) => t.name), ['@peter', '@clock'], 'who it asks: Peter, and the Clock (the schedule, its own)');
   assert.equal(tools.reachable, false);
   const [, h] = await get('/api/health');
   assert.equal(h.character, 'Ivy');
@@ -241,6 +241,25 @@ test('the prompts as they stand: the system prompt built now, and every note the
   assert.equal(list[0].id, 'system');
   assert.match(list[0].text, /^You are Ivy/);
   assert.match(list[0].text, /Today is \w+day/);
-  assert.deepEqual(list.map((p) => p.id), ['system', 'promised', 'broken', 'cannot', 'review', 'reflect', 'onlyFirst', 'outOfRounds', 'unknownTool']);
+  assert.deepEqual(list.map((p) => p.id), ['system', 'promised', 'json', 'cannot', 'review', 'reflect', 'onlyFirst', 'outOfRounds', 'empty']);
   for (const p of list) assert.ok(p.title && p.when && p.text, p.id);
+});
+
+test("Peter's news over the API (Tool Mac Tool Run calling back): the character shows, and the model is told", async () => {
+  replies = ["Your backup's done, and it worked."];
+  const before = shown;
+  const sent = asked.length;
+  const r = await fetch(`${base}/api/peter`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client: 'Super Face', text: 'Meanwhile: The nightly backup finished (it worked).', entries: [{ number: 1, state: 'worked' }] }) });
+  assert.equal(r.status, 202);
+  await idle();
+  assert.ok(shown > before, 'it shows itself to say so');
+  assert.match(asked[sent].messages.at(-1).content, /, from Peter, not the user\] Meanwhile: The nightly backup finished \(it worked\)\.$/);
+  assert.equal(spoken.at(-1).text, "Your backup's done, and it worked.");
+  // Plain text is taken too; nothing to say is refused.
+  replies = ['Noted.'];
+  const t = await fetch(`${base}/api/peter`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: 'Meanwhile: the tidy-up was stopped before it ended.' });
+  assert.equal(t.status, 202);
+  await idle();
+  const [status] = await post('/api/peter', { text: ' ' });
+  assert.equal(status, 400);
 });

@@ -1,8 +1,8 @@
-// Things to do later: the one tool that lives in this app rather than over Tool Mac Tool Run. The
-// model sets a task for in so many minutes, or for a date and time; when it's due, the character
-// shows itself and the model is given the task, as written then, to do now. As many as wanted,
-// each cancellable, kept on disk so they survive a restart (one that came due while the app was
-// closed is done as it opens, saying it's late).
+// Things to do later: the one thing kept in this app rather than in Tool Mac Tool Run, asked of the
+// Clock ("@clock") the way Peter is asked. The model sets a task for in so many minutes, or for a
+// date and time; when it's due, the character shows itself and the model is given the task, as
+// written then, to do now. As many as wanted, each cancellable, kept on disk so they survive a
+// restart (one that came due while the app was closed is done as it opens, saying it's late).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -250,50 +250,87 @@ export function fromNow(ms, now = Date.now()) {
   return `in ${d} days`;
 }
 
-/** The local tools over the schedule, as the model is told them. */
-export const TOOLS = [
-  {
-    name: 'schedule',
-    description:
-      "Sets something for you to do later: a reminder, a check, a follow-up. When it's due you're woken with the task (and only the task: you won't remember this chat), the user sees you, and you do it then. Set as many as needed.",
-    args: [
-      ['task', 'string: what to do then, as an instruction to yourself with every detail needed, e.g. "Remind the user to call Sam about the lease."'],
-      ['in_minutes', 'number: how many minutes from now (or give at instead)'],
-      ['at', 'string: a local date and time, e.g. "2026-10-24 17:30", "17:30" (today, or tomorrow once passed), "tomorrow 9:00", "friday 8:00"'],
-    ],
-  },
-  { name: 'list_schedules', description: "Lists what's scheduled: each one's id, when it's due and its task." },
-  { name: 'cancel_schedule', description: 'Cancels something scheduled.', args: [['id', 'string: its id from list_schedules (like s3), or "all"']] },
-];
+// ---------------------------------------------------------------- the Clock: the schedule, asked in words
 
-/** Runs a schedule tool: the answer for the model; null when it isn't one. */
-export function runTool(scheduler, name, args = {}, now = Date.now()) {
-  switch (name) {
-    case 'schedule': {
-      const due = dueFrom(args, now);
-      if (!Number.isFinite(due)) {
-        return `I couldn't read when${args.at ? ` ("${args.at}")` : ''}. Give in_minutes (a number), or at as a local date and time like "2026-10-24 17:30" or "17:30".`;
-      }
-      try {
-        const t = scheduler.add({ task: args.task ?? args.what ?? args.text ?? args.reminder, due });
-        return `Scheduled ${t.id} for ${longTime(t.due, now)} (${fromNow(t.due, now)}): ${t.task}`;
-      } catch (err) {
-        return err.message;
-      }
-    }
-    case 'list_schedules': {
-      const all = scheduler.list();
-      if (!all.length) return 'Nothing is scheduled.';
-      return all.map((t) => `${t.id}: ${longTime(t.due, now)} (${fromNow(t.due, now)}): ${t.task}`).join('\n');
-    }
-    case 'cancel_schedule': {
-      const id = args.id ?? args.ids ?? args.task_id;
-      if (id === undefined || id === null || id === '') return 'Say which: its id from list_schedules, or "all".';
-      const ids = Array.isArray(id) ? id : [id];
-      const gone = ids.flatMap((x) => scheduler.cancel(x));
-      if (!gone.length) return `Nothing scheduled has the id ${ids.join(', ')}. list_schedules shows what there is.`;
-      return `Cancelled ${gone.map((t) => `${t.id} (${t.task})`).join(', ')}.`;
-    }
+/** What the Clock takes, as the model is shown it (and is answered with when it isn't understood). */
+export const CLOCK_FORMS = `Set something for later
+- in minutes: {how many minutes from now}
+- task: {what to do then, as an instruction to yourself with every detail}
+(instead of "in minutes": - at: {a local date and time, like 2026-10-24 17:30, 17:30, tomorrow 9:00, friday 8:00})
+
+what's scheduled
+
+cancel {its id, like s3, or all}`;
+
+const LABELS = {
+  in_minutes: ['inminutes', 'minutes', 'in', 'inmins', 'mins', 'fromnow', 'after'],
+  at: ['at', 'when', 'time', 'date', 'on', 'due'],
+  task: ['task', 'what', 'todo', 'reminder', 'text', 'do', 'then'],
+};
+
+/** The labeled lines of a message ("- in minutes: 20"), by what each is for: { in_minutes, at, task }. */
+function labeled(text) {
+  const out = {};
+  for (const line of String(text).split('\n')) {
+    const m = line.match(/^\s*[-*]?\s*([A-Za-z][A-Za-z _-]{0,20}?)\s*:\s*(.*)$/);
+    if (!m) continue;
+    const key = m[1].toLowerCase().replace(/[^a-z]/g, '');
+    const field = Object.keys(LABELS).find((k) => LABELS[k].includes(key));
+    if (field && m[2].trim()) out[field] = m[2].trim();
   }
-  return null;
+  return out;
+}
+
+/** When, from what was written after "in minutes" ("20", "20 minutes", "2 hours") or "at". */
+function dueOf({ in_minutes, at }, now) {
+  if (in_minutes !== undefined) {
+    const v = String(in_minutes).trim().toLowerCase();
+    if (/^\d+(\.\d+)?$/.test(v)) return now + Number(v) * 60_000;
+    return parseAt(v.startsWith('in ') ? v : `in ${v}`, now);
+  }
+  return parseAt(at, now);
+}
+
+/**
+ * What the Clock says to a message from the model: something set for later, what's scheduled, or
+ * something cancelled; or, when it can't tell, what it takes.
+ */
+export function clockSay(scheduler, text, now = Date.now()) {
+  const t = String(text ?? '').trim();
+  const plain = t.toLowerCase().replace(/[.!?]+$/, '').trim();
+  const takes = `The Clock takes:\n\n${CLOCK_FORMS}`;
+  if (/^(what'?s|what is|what are|list( the)?|show( me)?)?\s*(scheduled|schedules?|reminders?|coming up|on the clock)$/.test(plain) || plain === 'list') {
+    const all = scheduler.list();
+    if (!all.length) return 'Nothing is scheduled.';
+    return all.map((x) => `${x.id}: ${longTime(x.due, now)} (${fromNow(x.due, now)}): ${x.task}`).join('\n');
+  }
+  const cancel = plain.match(/^(?:cancel|unschedule|remove|delete|drop)\s+(.+)$/);
+  if (cancel) {
+    const ids = cancel[1].match(/\ball\b/) ? ['all'] : cancel[1].match(/\bs?\d+\b/g) || [];
+    if (!ids.length) return `Say which: its id (like s3), or all. "what's scheduled" lists them.`;
+    const gone = ids.flatMap((x) => scheduler.cancel(x));
+    if (!gone.length) return `Nothing scheduled has the id ${ids.join(', ')}. "what's scheduled" lists what there is.`;
+    return `Cancelled ${gone.map((x) => `${x.id} (${x.task})`).join(', ')}.`;
+  }
+  let want = labeled(t);
+  if (!want.task) {
+    // In a line: "in 20 minutes: remind the user…", "at friday 8:00: check the build".
+    const rel = t.match(/^in\s+(\d+(?:\.\d+)?\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?))[:,]?\s+([\s\S]+)$/i);
+    const abs = t.match(/^(?:at|on)\s+(.+?)(?:,|:\s|\s+-\s+)\s*([\s\S]+)$/i);
+    if (rel) want = { in_minutes: rel[1], task: rel[2] };
+    else if (abs) want = { at: abs[1], task: abs[2] };
+  }
+  if (!want.task && want.in_minutes === undefined && want.at === undefined) return `I didn't understand that. ${takes}`;
+  if (!want.task) return `Say what to do then (task). ${takes}`;
+  if (want.in_minutes === undefined && want.at === undefined) return `Say when: in minutes, or at. ${takes}`;
+  const due = dueOf(want, now);
+  if (!Number.isFinite(due)) {
+    return `I couldn't read when ("${want.in_minutes ?? want.at}"). Give in minutes (a number), or at, as a local date and time like 2026-10-24 17:30, or 17:30.`;
+  }
+  try {
+    const x = scheduler.add({ task: want.task, due });
+    return `Scheduled ${x.id} for ${longTime(x.due, now)} (${fromNow(x.due, now)}): ${x.task}`;
+  } catch (err) {
+    return err.message;
+  }
 }

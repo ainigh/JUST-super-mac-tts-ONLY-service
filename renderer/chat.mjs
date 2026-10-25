@@ -59,7 +59,7 @@ function renderStatus() {
   const busy = status.assistant.busy;
   $('stop').hidden = !busy && !status.speaking;
   $('stop').title = busy ? "Stop: cancels what I'm doing (a run waiting for your click, or running, too)" : 'Stop talking';
-  $('toolCount').textContent = status.tools.reachable ? String(status.tools.scripts + status.tools.flows + 3) : '3';
+  $('toolCount').textContent = status.tools.reachable ? String(status.tools.scripts + status.tools.flows + 2) : '2';
   $('laterCount').textContent = status.schedules ? String(status.schedules) : '';
   $('listenWhileSpeaking').checked = status.listenWhileSpeaking;
   $('busyTone').checked = status.busyTone !== false;
@@ -126,6 +126,11 @@ const STATES = { working: 'Working', sending: 'Sending', waiting: 'Click Run on 
 
 function toolLabel(e) {
   const a = e.args || {};
+  // Asked in words: to Peter (Tool Mac Tool Run) or the Clock, its first line.
+  if (typeof e.said === 'string') {
+    const first = e.said.split('\n')[0].trim();
+    return `To ${e.name}: ${first.length > 70 ? `${first.slice(0, 69)}…` : first}`;
+  }
   switch (e.name) {
     case 'run_script':
       return a.script || e.label || 'a script';
@@ -159,6 +164,7 @@ function toolLabel(e) {
 }
 
 function toolArgs(e) {
+  if (typeof e.said === 'string') return e.said.includes('\n') ? e.said.split('\n').slice(1).join('\n').trim() : '';
   const a = { ...(e.args || {}) };
   delete a.script;
   delete a.flow;
@@ -185,13 +191,13 @@ function render(e) {
   }
   if (e.kind === 'tool') renderTool(li, e);
   else {
-    li.className = `${['user', 'assistant', 'schedule'].includes(e.kind) ? 'msg ' : ''}${e.kind}${e.streaming ? ' streaming' : ''}${e.queued ? ' queued' : ''}${e.dropped ? ' dropped' : ''}`;
+    li.className = `${['user', 'assistant', 'schedule', 'news'].includes(e.kind) ? 'msg ' : ''}${e.kind === 'news' ? 'schedule news' : e.kind}${e.streaming ? ' streaming' : ''}${e.queued ? ' queued' : ''}${e.dropped ? ' dropped' : ''}`;
     li.textContent = '';
     if (e.kind === 'user' && e.how === 'said') li.title = 'Heard';
-    if (e.kind === 'schedule') {
+    if (e.kind === 'schedule' || e.kind === 'news') {
       const how = document.createElement('span');
       how.className = 'how';
-      how.textContent = 'Scheduled, due now';
+      how.textContent = e.kind === 'news' ? 'From Peter' : 'Scheduled, due now';
       li.append(how);
     }
     li.append(e.kind === 'schedule' ? e.text.replace(/^Scheduled task s\d+, set .*? at \d\d:\d\d: /, '') : e.text);
@@ -202,7 +208,7 @@ function render(e) {
 function renderTool(li, e) {
   li.className = 'tool';
   li.dataset.state = e.state;
-  const open = li.querySelector('details')?.open;
+  const open = li.querySelector('details') ? [...li.querySelectorAll('details')].map((d) => d.open) : null;
   li.replaceChildren();
   const head = document.createElement('div');
   head.className = 'head';
@@ -230,17 +236,19 @@ function renderTool(li, e) {
     p.textContent = args;
     li.append(p);
   }
-  const body = e.result || e.output;
-  if (body) {
+  // Asked in words: what Peter (or the Clock) said, and, for a run he followed, what it printed.
+  const parts = typeof e.said === 'string' ? [[`What ${e.name} said`, e.result], ['What it printed', e.output]] : [[e.result ? 'What came back' : 'What it has printed', e.result || e.output]];
+  parts.forEach(([title, body], i) => {
+    if (!body) return;
     const d = document.createElement('details');
-    d.open = open ?? (e.state === 'running' && !!e.output);
+    d.open = open?.[i] ?? (e.state === 'running' && !!e.output && title !== 'What came back');
     const s = document.createElement('summary');
-    s.textContent = e.result ? 'What came back' : 'What it has printed';
+    s.textContent = title;
     const pre = document.createElement('pre');
     pre.textContent = body;
     d.append(s, pre);
     li.append(d);
-  }
+  });
 }
 
 function scrollDown() {
@@ -295,8 +303,8 @@ function renderTools() {
     return b;
   };
   section(
-    'Built in',
-    tools.builtin.filter((t) => match(t.name, t.description)).map((t) => item(t.name, t.description.split('. ')[0].replace(/\.$/, '') + '.', '', '', t.name === 'schedule' ? 'Remind me in 10 minutes to ' : `Use ${t.name} to `)),
+    'Who it asks',
+    tools.builtin.filter((t) => match(t.name, t.description)).map((t) => item(t.name, t.description.split('. ')[0].replace(/\.$/, '') + '.', '', '', t.name === '@clock' ? 'Remind me in 10 minutes to ' : '')),
   );
   section(
     'Through Tool Mac Tool Run',

@@ -36,13 +36,13 @@ said="$(curl -s http://127.0.0.1:8769/api/said?seconds=300)"
 grep -q 'The release works' <<<"$said" || fail "what it said isn't logged: $said"
 echo "✓ logged what it said"
 
-# The assistant is there, with its own tools (Ollama and Tool Mac Tool Run aren't on the build machine).
+# The assistant is there, with who it asks (Ollama and Tool Mac Tool Run aren't on the build machine).
 a="$(curl -s http://127.0.0.1:8769/api/assistant)"
 grep -q '"name":"Ivy"' <<<"$a" || fail "the assistant isn't answering: $a"
 t="$(curl -s http://127.0.0.1:8769/api/tools)"
-grep -q '"name":"schedule"' <<<"$t" || fail "its tools aren't listed: $t"
+grep -q '"name":"@peter"' <<<"$t" && grep -q '"name":"@clock"' <<<"$t" || fail "who it asks isn't listed: $t"
 s1="$(curl -s http://127.0.0.1:8769/api/schedules -d '{"in_minutes": 60, "task": "Check the release."}')"
 grep -q '"id":"s1"' <<<"$s1" || fail "it can't schedule: $s1"
 c="$(curl -s http://127.0.0.1:8769/api/schedules/cancel -d '{"id": "s1"}')"
 grep -q '"cancelled":\["s1"\]' <<<"$c" || fail "it can't cancel a schedule: $c"
-echo "✓ the assistant answers, lists its tools, schedules and cancels"
+echo "✓ the assistant answers, lists who it asks (Peter and the Clock), schedules and cancels"

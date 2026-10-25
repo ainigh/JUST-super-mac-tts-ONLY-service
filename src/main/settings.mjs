@@ -18,8 +18,8 @@ export const DEFAULTS = {
   model: '',
   /** Thinking before answering: better answers on hard questions, slower on every one. */
   think: false,
-  /** Where the tools are: Tool Mac Tool Run's API. */
-  toolRunUrl: 'http://127.0.0.1:8768',
+  /** Where Peter is (Tool Mac Agent): everything on the Mac and the web goes through him. */
+  peterUrl: 'http://127.0.0.1:8770',
   /** Listening for what's said while the character is shown. */
   listening: true,
   /** Listening while it talks too, so it can be cut in on (its own voice is told apart by its words). */
@@ -46,6 +46,8 @@ export class Settings {
     if (this.value.expressions === 'model') this.value.expressions = 'rules';
     // The framing was a setting once: it's always head to toes now.
     delete this.value.view;
+    // Tool Mac Tool Run was talked to directly once: Peter is, now.
+    delete this.value.toolRunUrl;
     this.listeners = new Set();
   }
 

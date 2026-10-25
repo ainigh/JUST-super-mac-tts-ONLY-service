@@ -333,6 +333,82 @@ main {
   border-bottom-left-radius: 4px;
 }
 
+/* A message to Peter, and Peter's own: the chat of three, never read aloud (a tone each way). */
+.msg.to-peter {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  border-bottom-left-radius: 4px;
+}
+
+.msg.peter {
+  align-self: flex-start;
+  background: rgba(125, 95, 255, 0.14);
+  border-bottom-left-radius: 4px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.msg.peter.failed {
+  background: rgba(255, 69, 58, 0.12);
+}
+
+.msg .at {
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.msg .run {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10.5px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(255, 179, 64, 0.25);
+  color: var(--warn);
+}
+
+.msg .run.done {
+  background: rgba(48, 209, 88, 0.18);
+  color: var(--ok);
+}
+
+.msg .run.failed,
+.msg .run.cancelled {
+  background: rgba(255, 69, 58, 0.15);
+  color: var(--bad);
+}
+
+.msg .cancel {
+  margin-left: 6px;
+  padding: 0 7px;
+  font-size: 11px;
+  background: rgba(255, 69, 58, 0.15);
+  color: var(--bad);
+}
+
+#mind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 8px 12px;
+  font-size: 12px;
+}
+
+#mind select {
+  max-width: 55%;
+}
+
+#mind .hint {
+  margin: 0;
+  flex: 1;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .msg.streaming::after {
   content: ' ▍';
   opacity: 0.5;

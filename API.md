@@ -1,9 +1,9 @@
 # Super Face API
 
 Super Face is a menu bar app for the Mac: a 3D character, head to toes, with no window or
-background around it, that you talk to. It hears you, thinks with one local model (Ollama's), does
-things with your scripts and flows through [Tool Mac Tool Run](https://github.com/ainigh/tool-mac-tool-run),
-sets itself reminders, learns, and answers out loud with feeling. Other apps can make it say
+background around it, that you talk to. It hears you, thinks with one local model (Ollama's), has
+[Peter](https://github.com/ainigh/tool-mac-tool-run-agent) (Tool Mac Agent) do anything on the Mac
+and the web, and keep its reminders, learns, and answers out loud with feeling. Other apps can make it say
 anything, talk to its assistant, or use its voice alone.
 
 - **The voice**: Kokoro-82M through [HeadTTS](https://github.com/met4citizen/HeadTTS), in the app
@@ -28,7 +28,7 @@ anything, talk to its assistant, or use its voice alone.
   Mac aren't over (waiting for Run, or running) it **stands with its hands together** in front
   (clasped, held, rubbed); and when it reports back it **stands and talks with its hands and head**.
   When you talk, it looks up at you and faces you, as it is.
-- **The assistant**: [below](#the-assistant). One model that asks Peter (Tool Mac Tool Run) in words, a schedule, memory.
+- **The assistant**: [below](#the-assistant). One model, in a chat of three with you and Peter (Tool Mac Agent), who does things.
 
 This document is the contract for client apps. New fields may be added to responses, but nothing
 listed here changes meaning.
@@ -85,19 +85,15 @@ curl -s localhost:8769/api/echo -d '{"text": "nice to meet you"}'
 | `POST /api/tts` | text → audio (WAV, PCM, or JSON with word and viseme timing), not said |
 | `GET  /api/settings`, `POST /api/settings` | the avatar, voice, speed, resting mood, … |
 | `GET  /api/update`, `POST /api/update` | whether there's a newer version; `{"install": true}` installs it |
-| `GET  /api/assistant` | the assistant: the character, what it's doing, the ears, the model, the tools |
+| `GET  /api/assistant` | the assistant: the character, what it's doing, the ears, the model, whether Peter answers |
 | `POST /api/chat`, `GET /api/chat` | a message to the assistant (`"wait": true` answers with its reply); the conversation |
 | `POST /api/chat/new` | a fresh conversation (the chat keeps what was said, behind a line) |
 | `POST /api/chat/clear` | clears the chat: the conversation and every entry of it (memory stays) |
 | `GET  /api/trace/model` | the latest requests to the model (`?limit=20`): the messages sent, word for word, and what came back |
-| `GET  /api/trace/calls` | the latest messages to Peter and the Clock (`?limit=20`): each with what was said, every request it made (address, body, status, the answer) and what went back to the model |
 | `POST /api/cancel` | cancels what the assistant is doing: its answer, and the runs Peter is following for it |
-| `POST /api/peter` | Tool Mac Tool Run calling back: a run asked of Peter is over (see [below](#post-apipeter)) |
+| `POST /api/peter` | Peter calling back: a run asked of him is over, or something scheduled is due (see [below](#post-apipeter)) |
 | `POST /api/heard` | a phrase heard by other ears, handled as if the character's own had heard it |
-| `GET  /api/tools`, `POST /api/tools` | who it asks (Peter and the Clock), and what Tool Mac Tool Run has (its tools, scripts and flows); POST asks again |
-| `GET  /api/schedules`, `POST /api/schedules` | what it has set itself to do later; set one |
-| `POST /api/schedules/cancel` | cancels one (`{"id": "s3"}`) or all (`{"id": "all"}`) |
-| `GET  /api/memory`, `POST /api/memory` | what it has learned, as kept in Tool Mac Tool Run: its playbook and the user's standing instructions (library notes), what MEMORY has on the user; `POST {"instructions"}` writes the instructions, `{"forget": "<a playbook line>"}` takes one out |
+| `GET  /api/memory` | what it has learned, as Peter keeps it: its playbook and the user's standing instructions (notes), what MEMORY has on the user (changed by asking Peter, in words) |
 | `GET  /api/errors` | what went wrong (the voice, the ears, the avatar, the model, the app), and `report`: all of it with versions and state, as text to paste |
 | `GET  /` | a status page, with a box to try it |
 | `GET  /api.md` | this document |
@@ -315,7 +311,7 @@ quiet on for a minute ends `failed`, so nobody waits on it for ever.
 `avaturn` Sofia, `avatarsdk` Leo; its voice comes with it), `voice`, `speed`, `mood` (the resting mood), `expressions` (`rules`: read from the words; `off`: only what's asked),
 `captions` (true/false), `hideAfter` (seconds after speaking before it hides; 0 stays), `model`
 (an Ollama model's name; empty: the best one Ollama has), `think` (true: it thinks before
-answering), `ollamaUrl`, `toolRunUrl`, `listening` (the ears on while it shows), and
+answering), `ollamaUrl`, `peterUrl` (where Peter is: `http://127.0.0.1:8770`), `listening` (the ears on while it shows), and
 `listenWhileSpeaking` (it can be cut in on), `busyTone` (true: a soft tone, now and then, while it works something out), and answers all of them. `GET /api/update` says `{"state": "idle" | "checking" |
 "upToDate" | "available" | "installing" | "failed", "version", "latest"}`; `POST /api/update` checks
 again, `{"install": true}` installs and restarts.
@@ -348,45 +344,40 @@ The character is an assistant on standby: as soon as it's showing it listens, an
 it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) are the same.
 
 - **One model**: Ollama's (`http://127.0.0.1:11434`), the one in `model`, else the best Ollama has
-  (Qwen 3, Qwen 2.5, Gemma 3, Llama 3.x… in that order). It talks, asks Peter, and writes the
-  emojis and `[tags]` its face shows, in one answer, streamed: each sentence is said as soon as
-  it's written.
-- **Peter, asked in words**: the model has no tools to learn. When something needs doing on the
-  Mac or the web, it ends its answer with a line that starts `@peter` and says what it wants, in
-  plain words, as it would ask a colleague in a chat. That goes as it is to Tool Mac Tool Run's
-  `POST /api/say` (`http://127.0.0.1:8768`), and what it says back is handed to the model as the
-  next message, until the model answers the user in words (ten messages for one request at most).
-  Peter answers with the result, or with a few templates that would do it (blanks `{…}` to fill,
-  choices `[a | b]`), which the model fills in and says back. Nothing after `@peter` is said
-  aloud, and the user hears what matters from the model, not Peter's words. How it goes, with an
-  example, is in [PETER.md](PETER.md).
-- **His templates that fit come with every request** (`GET /api/say/forms?q=…`), so the model can
-  usually fill one in at once; with them, what the mind already has on what's being said
-  (`POST /api/mind/context`); the next week's dates (MEMORY's upcoming) are fetched with the
-  tools list.
+  (Qwen 3, Qwen 2.5, Gemma 3, Llama 3.x… in that order). Pick it in the chat's top row.
+- **A chat of three**: you, the model (by its own name: `@qwen3` for `qwen3:8b`), and
+  [Peter](https://github.com/ainigh/tool-mac-tool-run-agent) (Tool Mac Agent, `http://127.0.0.1:8770`),
+  who carries out anything on the Mac and the web. What you say is to the model (`@qwen3 …`).
+  Every answer of the model's is addressed: `@user …` is said aloud to you, sentence by sentence
+  as it's written; `@peter …` goes to Peter's `POST /api/say`, in plain words, and is never said:
+  a tone plays instead (two quick rising notes). An answer may do both (`@user Let me check.`,
+  then `@peter search the web for …`). Words addressed to no one are taken as yours.
+- **Peter is a participant, not a tool**: the model has no tools to learn. Peter reads what it
+  says (with his own model when the words don't fit one of his templates), does it, and answers in
+  the same chat, `@qwen3 …` (two quick falling notes; never said). His answer goes to the model at
+  once, as if you had answered, until the model has nothing more for him (ten messages for one
+  request at most). He keeps no conversation: each message to him is whole in itself. How it goes,
+  with an example, is in [PETER.md](PETER.md).
 - **Runs don't hold the conversation up**: a script or flow Peter takes on ("Asked for the nightly
-  backup") ends the turn. Its card follows it (waiting for Run on the Mac, running; it's told
-  out loud if the card waits unclicked for a while), and when it's over Tool Mac Tool Run calls
-  back at `POST /api/peter` (the app gives it that address with every message, `X-Reply-To`):
-  the card is brought up to date and the model is told, as a message of its own. If the app
-  wasn't running then, the news comes first in Peter's next answer.
-- **Cancelling**: the Stop button, a card's Cancel, or saying "cancel" calls off the message
+  backup") ends the turn. The message follows it (waiting for Run on the Mac, running; it's told
+  out loud if it waits unclicked for a while), and when it's over Peter calls back at `POST
+  /api/peter` (the app gives him that address with every message, `X-Reply-To`): the model is told,
+  as a message from Peter. If the app wasn't running then, the news comes first in his next answer.
+- **Later is Peter's**: "remind me in 20 minutes…", "every weekday at 8, …": the model asks Peter,
+  who keeps the schedule. When it's due he calls back the same way, the character shows itself,
+  and the model does what it says.
+- **What Peter says comes first, even while you're talking**: his answers and news go to the model
+  as soon as it's free; what you say goes when you've finished (a phrase that sounds unfinished
+  waits a moment), and its answer to you is said at once.
+- **Cancelling**: the Stop button, a message's Cancel, or saying "cancel" calls off the message
   being answered, and any run Peter is following for it (taken off the Mac while it waits for
   Run, stopped while it runs; `POST /api/say/stop` there).
-- **An older Tool Mac Tool Run**, without `/api/say`, is said plainly (update it).
-- **The Clock**: the schedule, the one thing kept in this app, asked the same way: `@clock`, then
-  `- in minutes: 20` (or `- at: friday 8:00`, a local date and time such as `2026-10-24 17:30`,
-  `17:30`, `tomorrow 9:00`) and `- task: …`; or `what's scheduled`; or `cancel s3` (or `all`).
-- **What it learns is kept in Tool Mac Tool Run**, written by asking Peter: its playbook (which
-  ways, sites and wording work for what, how the user likes things done, its mistakes) is the
-  library note `Super Face playbook` (a line added; written whole to drop one); the user's
-  standing instructions ("from now on, when I say…") are the note `Super Face instructions`; what
-  it learns about the user themselves goes to MEMORY (`PEOPLE`, about `the user`). The app reads
-  all three for its prompt at the start of every request. An older version's `memory.json` is
-  moved there once.
-- **Later**: when something scheduled comes due, the character shows itself (if it wasn't showing)
-  and the model is given the task to do now. Kept across restarts; one due while the app was
-  closed is done as it opens, saying it's late.
+- **What it learns is kept by Peter**, written by asking him: its playbook (which ways, sites and
+  wording work for what, how the user likes things done, its mistakes) is the note `Super Face
+  playbook`; the user's standing instructions ("from now on, when I say…") are the note `Super Face
+  instructions`; what it learns about the user themselves goes to MEMORY (`PEOPLE`, about `the
+  user`). The app reads all three through Peter (`?exact=true`: his templates only, never his
+  model) at the start of every request.
 - **Its habits** (one model playing what Super Voice gave three): understand what's wanted and own
   it until it's delivered; have Peter do it, never claiming what he didn't; check what came back
   with suspicion before answering. The app steps in at the moments it matters: an answer that
@@ -404,24 +395,25 @@ it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) a
 
 ```bash
 curl -s localhost:8769/api/chat -d '{"text": "what is on my list for later?", "wait": true}'
-# {"ok":true,"id":"e12","reply":"You've one thing: stretch at 17:30.","tools":[{"name":"Clock","state":"done","result":"s1: today at 17:30 …"}]}
+# {"ok":true,"id":"e12","reply":"You've one thing: stretch at 17:30.","peter":[{"from":"qwen3","to":"peter","text":"what's scheduled","state":"done"},{"from":"Peter","to":"qwen3","text":"Scheduled, the soonest first: …"}]}
 ```
 
-`text` is required; `wait: true` answers once the request is over (with `reply`, what was said;
-`tools`, each message to Peter or the Clock and how it went; `error` if the model couldn't be
+`text` is required; `wait: true` answers once the request is over (with `reply`, what was said
+to the user; `peter`, each message to Peter and his answers; `error` if the model couldn't be
 reached), else at once with `202` and the entry's `id`. `show: false` keeps the character hidden.
-The reply is said out loud either way. `GET /api/chat?limit=50` gives the conversation's entries
-(`user`, `assistant`, `tool` with `name` (`Peter` or `Clock`), `said` (the message), `state`
-(`working`, `waiting` for the click, `running`, `done`, `failed`, `cancelled`), `result` (what he
-said), and for a run he follows, `number` (in his log), `request` and `output`; `news` (Peter's,
-come in by itself), `schedule`, `note`, `error`, `divider`).
+The reply is said out loud either way. `GET /api/chat?limit=50` gives the conversation's entries,
+each with `from` and `to`: `user` (from `You` to the model), `assistant` (from the model to
+`user`), `to-peter` (from the model to `peter`, with `state`: `working`, `waiting` for the click,
+`running`, `done`, `failed`, `cancelled`, and for a run he follows, `number` in his log), `peter`
+(from `Peter` to the model; `news` when he sent it by himself), `note`, `error`, `divider`.
 
 ### `POST /api/peter`
 
-Tool Mac Tool Run calling back: a run the app asked Peter for is over. `{"text": "Meanwhile: The
-nightly backup finished (it worked).", "entries": [{"number": 1, "state": "worked", "result":
-"…"}]}` (or the text alone, as `text/plain`). The cards it's about are brought up to date, the
-character shows itself, and the model is told, as a message of its own (`202`). Only this machine
+Peter calling back: a run the app asked him for is over, or something scheduled is due.
+`{"text": "Meanwhile: The nightly backup finished (it worked).", "entries": [{"number": 1, "state":
+"worked", "result": "…"}]}` (or the text alone, as `text/plain`). The messages it's about are
+brought up to date, its tone plays, the character shows itself, and the model is told, as a
+message from Peter (`202`). Only this machine
 may call, as for every route.
 
 ### `POST /api/heard`
@@ -444,8 +436,8 @@ GPU, then the CPU; twice round). The chat's **Errors** tab shows them, with **Co
 Besides the speech events, the stream carries `entry` (a conversation entry added or changed),
 `assistant` (what it's doing: `phase` is `idle`, `thinking`, `tool` or `learning`; `pending`, the
 runs on the Mac it asked for that aren't over), `ears` (`off`,
-`loading`, `listening`, `hearing`, `writing`, `paused`, `failed`), `heard`, `schedules`, `memory`,
-`tools`, `errors` and `status`.
+`loading`, `listening`, `hearing`, `writing`, `paused`, `failed`), `heard`, `tone` (`which`:
+`to-peter` or `from-peter`: a message to Peter, or one from him), `errors` and `status`.
 
 ## With Super Voice
 

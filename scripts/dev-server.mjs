@@ -61,6 +61,7 @@ core.subscribe(toUi);
 // What the assistant is doing goes to the character, as in the app (main.mjs), for its stance.
 let lastAttend = '';
 core.subscribe((ev) => {
+  if (ev.type === 'tone') return void send('tone', { which: ev.which });
   if (ev.type !== 'assistant') return;
   const { phase, tool, pending = 0 } = ev.state;
   const key = `${phase}/${tool?.name}/${pending}`;

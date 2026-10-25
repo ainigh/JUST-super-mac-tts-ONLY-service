@@ -5,7 +5,7 @@
 // (Moonshine); this process holds the assistant (the core: the model, the tools, the schedule,
 // memory), owns the windows, and answers the API.
 
-import { app, BrowserWindow, Menu, Tray, clipboard, globalShortcut, ipcMain, nativeImage, screen, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, Menu, Tray, clipboard, dialog, globalShortcut, ipcMain, nativeImage, screen, shell, systemPreferences } from 'electron';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -113,6 +113,19 @@ async function factoryReset() {
   app.exit(0);
 }
 
+/** Factory reset from the menu: asked first, then done as the chat's own button did it. */
+async function confirmFactoryReset() {
+  const { response } = await dialog.showMessageBox({
+    type: 'warning',
+    buttons: ['Factory Reset', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    message: 'Factory reset Super Face?',
+    detail: 'Its settings, the chat, the logs and the downloaded voice and ears go to the Trash, and it starts again as it was installed (the voice and ears download again). What it has learned, and what is scheduled, is kept by Peter.',
+  });
+  if (response === 0) core.actions.factoryReset();
+}
+
 /** Which way the page it's working on probably is, as the user sees it: towards the middle of the screen from the character (-1 left, 1 right, 0 straight on). */
 function pageSide() {
   if (!win) return 0;
@@ -125,6 +138,8 @@ function pageSide() {
 // What the core says goes to the chat (and the speaking state, so it can offer to stop).
 let lastAttend = '';
 core.subscribe((ev) => {
+  // A message to Peter, or from him: the character's page plays its tone (his words are never said).
+  if (ev.type === 'tone') return void send('tone', { which: ev.which });
   chat?.webContents.send('ui:event', ev);
   if (ev.type === 'assistant') {
     const phase = ev.state.phase;
@@ -538,7 +553,7 @@ function menu() {
         : ears.state === 'off'
           ? 'Listening while the character shows'
           : 'Listening';
-  const tools = core.toolrun.catalog;
+  const p = core.peter.health;
   return Menu.buildFromTemplate([
     { label: visible ? 'Hide the character' : 'Show the character', accelerator: 'CommandOrControl+Shift+A', click: toggle },
     { label: chat?.isVisible() ? 'Hide the chat' : 'Open the chat', click: toggleChat },
@@ -548,7 +563,7 @@ function menu() {
     { label: ttsLine, enabled: false },
     { label: earsLine, enabled: false },
     { label: a.error ? `Model: ${a.error}`.slice(0, 70) : `Model: ${a.model || 'the best Ollama has'}`, enabled: false },
-    { label: tools.reachable && !tools.error ? `Tools: ${tools.tools.length} tools, ${tools.scripts.length} scripts, ${tools.flows.length} flows` : tools.reachable ? `Tools: ${tools.error}`.slice(0, 70) : 'Tools: Tool Mac Tool Run isn’t running', enabled: false },
+    { label: p.reachable ? (p.error ? `Peter: ${p.error}`.slice(0, 70) : `Peter: ready${p.model ? ` (his model: ${p.model})` : ''}`) : 'Peter (Tool Mac Agent) isn’t running', enabled: false },
     { type: 'separator' },
     radio('Character (and voice)', AVATARS, s.avatar, (k) => settings.set({ avatar: k, voice: characterOf(k).voice })),
     radio('Speed', { 0.8: 'Slower', 0.9: 'A little slower', 1: 'Normal', 1.1: 'A little faster', 1.25: 'Faster' }, String(s.speed), (k) => settings.set({ speed: Number(k) })),
@@ -558,6 +573,9 @@ function menu() {
     radio('Hide after talking', { 0: 'Never', 10: 'After 10 seconds', 30: 'After 30 seconds', 120: 'After 2 minutes' }, String(s.hideAfter), (k) => settings.set({ hideAfter: Number(k) })),
     { label: 'Captions', type: 'checkbox', checked: s.captions, click: () => settings.set({ captions: !s.captions }) },
     { label: 'Keep on top', type: 'checkbox', checked: s.alwaysOnTop, click: () => settings.set({ alwaysOnTop: !s.alwaysOnTop }) },
+    { label: 'Keep listening while it talks', type: 'checkbox', checked: s.listenWhileSpeaking, click: () => settings.set({ listenWhileSpeaking: !s.listenWhileSpeaking }) },
+    { label: 'A soft tone while it works', type: 'checkbox', checked: s.busyTone !== false, click: () => settings.set({ busyTone: s.busyTone === false }) },
+    { label: 'Start a new chat', click: () => core.actions.newChat() },
     { type: 'separator' },
     { label: s.serving ? (apiState === 'running' ? `API on 127.0.0.1:${s.port}` : `API: ${apiState}`) : 'API stopped', enabled: false },
     { label: s.serving ? 'Stop the API' : 'Start the API', click: () => settings.set({ serving: !s.serving }) },
@@ -567,6 +585,7 @@ function menu() {
     { type: 'separator' },
     updateItem,
     { label: `Version ${VERSION}`, enabled: false },
+    { label: 'Factory reset…', click: confirmFactoryReset },
     { label: 'Open at login', type: 'checkbox', checked: app.getLoginItemSettings().openAtLogin, click: (i) => app.setLoginItemSettings({ openAtLogin: i.checked }) },
     { label: 'Reload the avatar', click: () => win?.reload() },
     { label: 'Developer tools', click: () => win?.webContents.openDevTools({ mode: 'detach' }) },

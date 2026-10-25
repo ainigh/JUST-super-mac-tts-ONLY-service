@@ -7,7 +7,7 @@
 // down and hands busy while it works, standing with its hands together while it waits on the Mac,
 // standing and talking with its hands and head when it reports back. Its hands are kept out of its
 // head (keep-clear.mjs). The ears (ears.mjs) listen here too. The main process sends commands
-// (speak, stop, express, tts, ears, attend, settings) and is told how it goes; a click on the
+// (speak, stop, express, tts, ears, attend, tone, settings) and is told how it goes; a click on the
 // character opens the chat.
 
 import { TalkingHead } from 'talkinghead';
@@ -596,6 +596,30 @@ function pip() {
   tone.stop(t + PIP_SECONDS + 0.02);
 }
 
+// A message to Peter, and one back from him: never said, a tone each instead. Two quick notes,
+// rising for one to him, falling for his answer: each shorter than the ears take for speech.
+const TONES = { 'to-peter': [587, 880], 'from-peter': [880, 587] };
+
+function tone(which) {
+  const notes = TONES[which];
+  const ctx = head?.audioCtx;
+  if (!notes || !ctx || ctx.state !== 'running') return;
+  const t0 = ctx.currentTime;
+  notes.forEach((hz, i) => {
+    const t = t0 + i * 0.11;
+    const osc = ctx.createOscillator();
+    const level = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.value = hz;
+    level.gain.setValueAtTime(0.0001, t);
+    level.gain.exponentialRampToValueAtTime(0.07, t + 0.012);
+    level.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+    osc.connect(level).connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.12);
+  });
+}
+
 /** A pip every so often while it works (when the tone is on: it's read each time). */
 function pips() {
   if (stance.now !== 'working') return;
@@ -840,6 +864,8 @@ const COMMANDS = {
     setBrowser(state === 'tool' && BROWSER.test(tool || ''), page);
     updateStance();
   },
+  /** A message to Peter, or from him: its tone. */
+  tone: ({ which }) => tone(which),
   settings: async (patch) => {
     const before = cfg;
     cfg = { ...cfg, ...patch };

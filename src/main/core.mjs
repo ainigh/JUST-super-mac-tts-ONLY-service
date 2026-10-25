@@ -1,15 +1,15 @@
-// Everything but the windows: the assistant and what it works with (the model, Tool Mac Tool Run,
-// the schedule, memory), what's heard and what's done with it, and the actions the chat window
-// and the API share. The Electron main process and the browser dev server both build one.
+// Everything but the windows: the assistant and what it works with (the model, and Peter, who does
+// everything on the Mac and the web and keeps the schedule), what's heard and what's done with
+// it, and the actions the chat window and the API share. The Electron main process and the
+// browser dev server both build one.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { Assistant } from './assistant.mjs';
 import { Notes } from './notes.mjs';
 import { Ollama } from './model.mjs';
+import { Peter } from './peter.mjs';
 import { NOTE, systemPrompt } from './prompt.mjs';
-import { Scheduler, fromNow, longTime } from './scheduler.mjs';
-import { ToolRun } from './toolrun.mjs';
 import { Trace } from './trace.mjs';
 import { CHARACTERS, SIZES, characterOf, resolveCharacter } from '../shared/characters.mjs';
 import { words } from '../shared/text.mjs';
@@ -50,25 +50,14 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
   const file = (name) => (dataDir ? path.join(dataDir, name) : null);
   const character = () => characterOf(settings.get().avatar);
 
-  // What went to the model and came back, and every tool call with its requests: the Model and Calls tabs.
-  const traces = { model: new Trace({ name: 'model', keep: 40, emit, now }), calls: new Trace({ name: 'calls', keep: 80, emit, now }) };
+  // What went to the model and came back: the Model tab.
+  const traces = { model: new Trace({ name: 'model', keep: 40, emit, now }) };
   const model = new Ollama({ current: () => ({ url: settings.get().ollamaUrl, model: settings.get().model, think: settings.get().think }), fetch: f, trace: traces.model });
-  // Peter is Tool Mac Tool Run, talked to in words; it says how a run went at POST /api/peter here.
-  const toolrun = new ToolRun({ url: () => settings.get().toolRunUrl, replyTo: () => (settings.get().port ? `http://127.0.0.1:${settings.get().port}/api/peter` : null), fetch: f, trace: traces.calls });
-  // What it learns is kept in Tool Mac Tool Run (its playbook and the standing instructions in the
-  // library, what it knows of the user in MEMORY); memory.json, from before, is moved there once.
-  const notes = new Notes({ toolrun, oldFile: file('memory.json'), onChange: (m) => emit({ type: 'memory', memory: m }) });
-  const scheduler = new Scheduler({
-    file: file('schedule.json'),
-    now,
-    onChange: () => emit({ type: 'schedules', schedules: schedules() }),
-    onFire: (t, late) => {
-      // It shows itself (if it wasn't showing) and does what it set itself to do.
-      host.show?.();
-      const set = longTime(t.created, now());
-      assistant.say(`Scheduled task ${t.id}, set ${set}: ${t.task}${late ? ` (It was due ${longTime(t.due, now())}, while the app wasn't running: say it's late.)` : ''}`, { how: 'scheduled' });
-    },
-  });
+  // Peter (Tool Mac Agent), talked to in words; he says how a run went, and what's due, at POST /api/peter here.
+  const peter = new Peter({ url: () => settings.get().peterUrl, replyTo: () => (settings.get().port ? `http://127.0.0.1:${settings.get().port}/api/peter` : null), fetch: f });
+  // What it learns is kept by Peter (its playbook and the standing instructions as notes, what it
+  // knows of the user in MEMORY), and read back through him.
+  const notes = new Notes({ peter });
 
   /** Says `text` in the character's voice; its face follows the words (and the cues in them). */
   function speakAs(text) {
@@ -80,15 +69,15 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
 
   const assistant = new Assistant({
     model,
-    toolrun,
-    scheduler,
+    peter,
     notes,
     character,
     speak: speakAs,
     stopSpeaking: () => speech.stop('assistant'),
+    // A message to Peter, or from him: a tone of its own each way (never his words).
+    tone: (which) => emit({ type: 'tone', which }),
     emit,
     file: file('chat.json'),
-    trace: traces.calls,
     now,
   });
 
@@ -184,7 +173,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     const face = host.face?.() || {};
     const s = settings.get();
     const a = assistant.state();
-    const c = toolrun.catalog;
+    const p = peter.health;
     const time = (ms) => new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
     const lines = [
       `Super Face ${about.version || '?'}, report made ${time(now())} UTC`,
@@ -194,7 +183,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       `Voice: ${face.tts?.state || '?'}${face.tts?.message ? `: ${face.tts.message}` : ''}${face.backend ? ` (on ${face.backend})` : ''}`,
       `Ears: ${s.listening ? ears.state : 'off (not listening)'}${ears.message ? `: ${ears.message}` : ''}${ears.device ? ` (on ${ears.device})` : ''}`,
       `Model: ${a.model || '(the best Ollama has)'} at ${s.ollamaUrl}${a.error ? `: ${a.error}` : ''}`,
-      `Tools: ${c.reachable && !c.error ? `${c.tools.length} tools (${c.tools.map((t) => t.name).join(', ')}), ${c.scripts.length} scripts, ${c.flows.length} flows` : `Tool Mac Tool Run not available (${c.error || 'not asked'})`} at ${s.toolRunUrl}`,
+      `Peter: ${p.reachable ? `${p.version || '?'}${p.toolMac ? `, Tool Mac Tool Run with ${p.scripts} scripts and ${p.flows} flows` : ''}${p.model ? `, his model ${p.model}` : ''}${p.error ? ` (${p.error})` : ''}` : `not available (${p.error || 'not asked'})`} at ${s.peterUrl}`,
       ...(face.userAgent ? [`Page: ${face.userAgent}`] : []),
       '',
       errors.length ? `Errors (${errors.length}, oldest first):` : 'No errors.',
@@ -212,26 +201,21 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       {
         id: 'system',
         title: 'The assistant (system prompt)',
-        when: 'Sent with every message, built fresh each time: the character, the three habits, how to ask Peter (Tool Mac Tool Run, in words) and the Clock, the playbook, what MEMORY has on you and your standing instructions (all three kept in Tool Mac Tool Run), Peter’s templates that fit the request, and the day.',
-        text: systemPrompt({ character: character(), catalog: toolrun.catalog, notes, now: now() }),
+        when: 'Sent with every message, built fresh each time: the character, the group chat (the user, the model, Peter), the three habits, how to ask Peter, the playbook, what MEMORY has on you and your standing instructions (all three kept by Peter), and the day.',
+        text: systemPrompt({ character: character(), model: model.current().model || model.picked || '', peter: peter.health, notes, now: now() }),
       },
       { id: 'promised', title: 'Words that promise work, with no message to Peter', when: 'Sent back once when an answer says it will do something but asks no one.', text: NOTE.promised },
       { id: 'json', title: 'A tool call written as JSON', when: 'Sent back once when an answer writes a JSON tool call (there are none) instead of asking Peter.', text: NOTE.json },
-      { id: 'cannot', title: '“I can’t”, when Peter could', when: 'Sent back once when an answer says it can’t, or has no access, while Tool Mac Tool Run is there.', text: NOTE.cannot },
-      { id: 'review', title: 'The critic: after something didn’t work', when: 'Added to Peter’s (or the Clock’s) answer when it didn’t work (twice per request at most).', text: NOTE.review },
-      { id: 'reflect', title: 'Learning: after a request that took work', when: 'Asked quietly (nothing is said) after a request with a failure or two messages or more: its answer may ask Peter to add a line to its playbook (in Tool Mac Tool Run’s library) or to remember something about you (in MEMORY).', text: NOTE.reflect },
-      { id: 'onlyFirst', title: 'More than one message in an answer', when: 'Added to the answer when the model wrote several messages: only the first is sent.', text: NOTE.onlyFirst('peter') },
-      { id: 'outOfRounds', title: 'Ten messages for one request', when: 'Added to the tenth answer of one request.', text: NOTE.outOfRounds(10) },
-      { id: 'empty', title: 'An empty message', when: 'The answer to "@peter" with nothing after it.', text: NOTE.empty('peter') },
+      { id: 'cannot', title: '“I can’t”, when Peter could', when: 'Sent back once when an answer says it can’t, or has no access, while Peter is there.', text: NOTE.cannot },
+      { id: 'review', title: 'The critic: after something didn’t work', when: 'Added to Peter’s answer when it didn’t work (twice per request at most).', text: NOTE.review },
+      { id: 'reflect', title: 'Learning: after a request that took work', when: 'Asked quietly (nothing is said) after a request with a failure or two messages to Peter or more: its answer may ask Peter to add a line to its playbook or to remember something about you.', text: NOTE.reflect },
+      { id: 'onlyFirst', title: 'More than one message to Peter in an answer', when: 'Added to Peter’s answer when the model wrote several: only the first is sent.', text: NOTE.onlyFirst() },
+      { id: 'outOfRounds', title: 'Ten messages for one request', when: 'Added to the tenth answer of Peter’s for one request.', text: NOTE.outOfRounds(10) },
+      { id: 'empty', title: 'An empty message', when: 'The answer to "@peter" with nothing after it.', text: NOTE.empty() },
     ];
   }
 
   // ---------------------------------------------------------------- what the chat and the API can do
-
-  function schedules() {
-    const n = now();
-    return scheduler.list().map((t) => ({ ...t, when: longTime(t.due, n), fromNow: fromNow(t.due, n) }));
-  }
 
   function status() {
     const s = settings.get();
@@ -249,20 +233,18 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       model: s.model,
       think: s.think,
       speaking: speech.speaking,
-      tools: { reachable: toolrun.catalog.reachable && !toolrun.catalog.error, tools: toolrun.catalog.tools.length, scripts: toolrun.catalog.scripts.length, flows: toolrun.catalog.flows.length, error: toolrun.catalog.error },
-      schedules: scheduler.list().length,
+      peter: { reachable: peter.health.reachable, error: peter.health.error, toolMac: !!peter.health.toolMac },
       face: (({ avatar, tts, backend, message } = {}) => ({ avatar, tts, backend, message }))(host.face?.()),
       errors: errors.length,
     };
   }
 
-  async function refreshTools() {
-    await toolrun.refresh();
-    await notes.moveOld();
-    await notes.refresh();
-    const t = assistant.tools();
-    emit({ type: 'tools', tools: t });
-    return t;
+  /** Whether Peter answers (asked now and then, and for the status). */
+  async function checkPeter() {
+    const before = peter.health.reachable;
+    await peter.check();
+    if (peter.health.reachable !== before) emit({ type: 'status', status: status() });
+    return peter.health;
   }
 
   /** The actions, by name: what the chat window calls (over IPC, or HTTP in the browser). */
@@ -276,7 +258,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     },
     cancel: () => ({ ok: assistant.cancel() }),
     cancelTool: ({ id }) => ({ ok: assistant.cancelTool(id) }),
-    /** Peter's news: Tool Mac Tool Run says a run this app asked for is over. */
+    /** Peter's news: a run this app asked him for is over, or something scheduled is due. */
     peterNews: ({ text, entries }) => {
       if (!String(text ?? '').trim()) throw new Error('missing text: what Peter says');
       host.show?.();
@@ -296,11 +278,11 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       return { ok: true };
     },
     trace: ({ log }) => {
-      if (!traces[log]) throw new Error(`no log called ${log}: model or calls`);
+      if (!traces[log]) throw new Error(`no log called ${log}: model`);
       return { items: traces[log].list() };
     },
     clearTrace: ({ log }) => {
-      if (!traces[log]) throw new Error(`no log called ${log}: model or calls`);
+      if (!traces[log]) throw new Error(`no log called ${log}: model`);
       traces[log].clear();
       return { ok: true };
     },
@@ -309,16 +291,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       host.resize ? host.resize(size) : settings.set({ size });
       return { size };
     },
-    tools: () => assistant.tools(),
-    refreshTools,
-    schedules,
-    cancelSchedule: ({ id }) => ({ ok: scheduler.cancel(id).length > 0 }),
-    memory: async () => (await notes.refresh()).json(),
-    forget: async ({ note }) => ({ result: await notes.forget(note) }),
-    instructions: async ({ text }) => {
-      const result = await notes.setInstructions(text);
-      return { ok: result === 'Saved.', result };
-    },
+    peter: checkPeter,
     models: async () => {
       try {
         return { models: await model.models(), current: settings.get().model || model.picked || '' };
@@ -346,19 +319,16 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     },
     copy: ({ text }) => ({ ok: true, copied: !!host.copy?.(String(text ?? '')) }),
     /**
-     * Back to how it was installed: everything stopped and forgotten (the chat, the schedule, the
-     * logs, the errors, the settings). In the app, its whole folder of data (the downloaded voice
+     * Back to how it was installed: everything stopped and forgotten (the chat, the logs, the
+     * errors, the settings). In the app, its whole folder of data (the downloaded voice
      * and ears too) goes to the Trash and it starts again; without the app (the browser dev
-     * server), its files go and it carries on from the defaults. What it learned is kept in Tool
-     * Mac Tool Run, whose own reset clears that.
+     * server), its files go and it carries on from the defaults. What it learned (and what's
+     * scheduled) is kept by Peter and Tool Mac Tool Run.
      */
     factoryReset: () => {
       assistant.cancel();
-      scheduler.cancel('all');
-      scheduler.stop();
       assistant.clear();
       traces.model.clear();
-      traces.calls.clear();
       errors.length = 0;
       emit({ type: 'errors', errors });
       if (host.factoryReset) {
@@ -403,8 +373,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
   return {
     assistant,
     model,
-    toolrun,
-    scheduler,
+    peter,
     notes,
     actions,
     heard,
@@ -414,24 +383,21 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
     errorReport,
     prompts,
     status,
-    refreshTools,
+    checkPeter,
     character,
     subscribe(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
     start() {
-      scheduler.start();
-      refreshTools();
-      // What there is to run is asked again now and then (scripts come and go).
-      const timer = setInterval(refreshTools, 5 * 60_000);
+      checkPeter();
+      // Whether Peter answers is asked again now and then (he may be opened, or quit).
+      const timer = setInterval(checkPeter, 60_000);
       timer.unref?.();
       settings.onChange((s, before) => {
         if (s.avatar !== before.avatar || s.size !== before.size || s.model !== before.model || s.listening !== before.listening || s.think !== before.think) emit({ type: 'status', status: status() });
       });
     },
-    stop() {
-      scheduler.stop();
-    },
+    stop() {},
   };
 }

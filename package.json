@@ -2,7 +2,7 @@
   "name": "super-face",
   "productName": "Super Face",
   "version": "0.1.0",
-  "description": "A character on the Mac desktop you talk to: it hears you (Moonshine), thinks with one local model (Ollama), uses your scripts and flows through Tool Mac Tool Run, sets itself reminders, learns, and answers out loud with lip-sync and expressions (Kokoro through HeadTTS, TalkingHead). Served over HTTP to any app.",
+  "description": "A character on the Mac desktop you talk to: it hears you (Moonshine), thinks with one local model (Ollama), has Peter (Tool Mac Agent) do anything on the Mac and the web, learns, and answers out loud with lip-sync and expressions (Kokoro through HeadTTS, TalkingHead). Served over HTTP to any app.",
   "main": "main.mjs",
   "private": true,
   "scripts": {

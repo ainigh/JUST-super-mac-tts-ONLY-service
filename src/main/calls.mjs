@@ -1,23 +1,26 @@
-// Messages to Peter (and the Clock), hand-rolled: the model ends its answer with a line that
-// starts "@peter" and says, in plain words, what it wants done; what Peter says back goes to it as
-// the next message. No tool names, arguments or JSON, so any model can do it, and a small one
-// most easily: it's how people ask each other for things in a chat. This reads the message out of
-// an answer, and the words before it (the only part that's said).
+// Who an answer is to, hand-rolled. The chat is a group chat of three: the user, the model, and
+// Peter, who does things. Every answer of the model's is addressed: "@user …" is said aloud to the
+// user, "@peter …" is a message to Peter (never said; a tone plays instead), and an answer may do
+// both ("@user Let me check." then "@peter search the web for …"). Words addressed to no one are
+// the user's. No tool names, arguments or JSON, so any model can do it, and a small one most
+// easily: it's how people ask each other for things in a chat. This reads the parts out of an
+// answer: what's to be said, and the message to Peter.
 
 import { tagCue } from '../shared/text.mjs';
 
-/** Who the model can ask: Peter (Tool Mac Tool Run, everything on the Mac and the web), and the Clock (the schedule). */
-export const HANDLES = ['peter', 'clock'];
+/** Who an answer can be to: Peter (who does things on the Mac and the web), and the user (said aloud). */
+export const HANDLES = ['peter', 'user'];
 
-// "@peter", "@Peter:", "@peter_the_worker,": not part of an address (sam@peter.com).
-const HANDLE = /(?<![\w@])@(peter|clock)\w*[:,]?/gi;
+// "@peter", "@Peter:", "@user,": not part of an address (sam@peter.com).
+const HANDLE = /(?<![\w@])@(peter|user)\b[:,]?/gi;
 
 /**
- * The messages in an answer, in order: [{ to, text, start }]. The first "@peter" (or "@clock")
- * anywhere starts one, and what follows it is the message; another starts only at the beginning
- * of a line. A code fence around a message is dropped.
+ * The addressed parts of an answer, in order: [{ to, text, start }]. The first "@peter" (or
+ * "@user") anywhere starts one, and what follows it is its text; another starts only at the
+ * beginning of a line. A code fence around a part is dropped. Words before the first part are
+ * the user's (to: 'user', unaddressed).
  */
-export function messages(text) {
+export function parts(text) {
   const s = String(text ?? '');
   const found = [];
   for (const m of s.matchAll(HANDLE)) {
@@ -26,16 +29,20 @@ export function messages(text) {
     if (found.length && !lineStart) continue;
     found.push({ to: m[1].toLowerCase(), start: fenceStart(s, m.index), from: m.index + m[0].length });
   }
-  return found.map((f, i) => ({ to: f.to, start: f.start, text: unfence(s.slice(f.from, i + 1 < found.length ? found[i + 1].start : s.length)) }));
+  const out = [];
+  const lead = found.length ? s.slice(0, found[0].start) : s;
+  if (lead.trim()) out.push({ to: 'user', start: 0, text: unfence(lead), unaddressed: true });
+  found.forEach((f, i) => out.push({ to: f.to, start: f.start, text: unfence(s.slice(f.from, i + 1 < found.length ? found[i + 1].start : s.length)) }));
+  return out;
 }
 
-/** Where a message starts: at its handle, or at the code fence just before it. */
+/** Where a part starts: at its handle, or at the code fence just before it. */
 function fenceStart(s, at) {
   const m = s.slice(0, at).match(/```[\w-]*[ \t]*\n?[ \t]*$/);
   return m ? at - m[0].length : at;
 }
 
-/** A message without the code fences around it (or around its lines), and without the blank lines at its ends. */
+/** A part without the code fences around it (or around its lines), and without the blank lines at its ends. */
 function unfence(t) {
   return String(t)
     .replace(/^[ \t]*```[\w-]*[ \t]*$/gm, '')
@@ -44,11 +51,17 @@ function unfence(t) {
     .replace(/^[ \t]+(?=\S)/, '');
 }
 
-/** The words of an answer: everything before its first message (the rest isn't said or shown as words). */
+/** The messages to Peter in an answer: [{ to: 'peter', text, start }]. */
+export function messages(text) {
+  return parts(text).filter((p) => p.to === 'peter');
+}
+
+/** The words of an answer that are the user's (said aloud): every part to the user, joined. */
 export function words(text) {
-  const s = String(text ?? '');
-  const first = messages(s)[0];
-  return (first ? s.slice(0, first.start) : s)
+  return parts(text)
+    .filter((p) => p.to === 'user')
+    .map((p) => p.text)
+    .join('\n')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -57,6 +70,11 @@ export function words(text) {
 /** It looks like a tool call written as JSON (out of habit): there are none to make. */
 export function looksLikeCall(text) {
   return !messages(text).length && /"(tool|function|tool_name)"\s*:/.test(String(text ?? '').replace(/'/g, '"'));
+}
+
+/** Whether the answer says who it's to (it should: "@user" or "@peter"). */
+export function addressed(text) {
+  return parts(text).some((p) => !p.unaddressed);
 }
 
 /**
@@ -92,9 +110,10 @@ function openAside(text) {
 }
 
 /**
- * The part of an answer that is to be said: everything before its first message, without its
- * asides. While it's still being written, it stops where a message or an aside may be beginning
- * (an "@", a "`", an open bracket), as there's no telling yet what it will be.
+ * The part of an answer that is to be said: its parts to the user, without their asides. While
+ * it's still being written, it stops where a handle or an aside may be beginning (an "@", a "`",
+ * an open bracket), as there's no telling yet what it will be. It only grows as the answer does
+ * (a part to Peter in between adds nothing), so what's been said stays said.
  */
 export function sayable(partial, { final = false } = {}) {
   let s = words(partial);
@@ -104,6 +123,7 @@ export function sayable(partial, { final = false } = {}) {
     const held = s.search(/(^|\s)@\w*$|`+$/);
     if (held !== -1) s = s.slice(0, held);
     if (/```/.test(s)) s = s.slice(0, s.indexOf('```'));
+    if (/(^|\n)[ \t]*@\w*$/.test(String(partial))) s = s.replace(/\s+$/, '');
   }
   const prose = withoutAsides(s);
   const open = final ? -1 : openAside(prose);

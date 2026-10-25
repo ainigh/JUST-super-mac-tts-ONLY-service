@@ -34,14 +34,15 @@
       <div id="characters" role="radiogroup" aria-label="Character (and its voice)"></div>
       <div id="size" role="radiogroup" aria-label="Character size"></div>
     </section>
+    <section id="mind">
+      <select id="modelPick" aria-label="The model (Ollama's)" title="The model it thinks with (Ollama's)"></select>
+      <label class="check" title="Thinking before answering: better answers on hard questions, slower on every one"><input type="checkbox" id="think" /> Think first</label>
+      <span id="peterState" class="hint"></span>
+    </section>
 
     <nav id="tabs" role="tablist">
       <button role="tab" data-tab="chat" aria-selected="true">Chat</button>
-      <button role="tab" data-tab="tools">Tools <span class="count" id="toolCount"></span></button>
-      <button role="tab" data-tab="later">Later <span class="count" id="laterCount"></span></button>
-      <button role="tab" data-tab="mind">Mind</button>
       <button role="tab" data-tab="model">Model <span class="count" id="modelCount"></span></button>
-      <button role="tab" data-tab="calls">Calls <span class="count" id="callCount"></span></button>
       <button role="tab" data-tab="prompts">Prompts</button>
       <button role="tab" data-tab="errors">Errors <span class="count bad" id="errorCount"></span></button>
     </nav>
@@ -49,51 +50,7 @@
     <main>
       <section id="chat" class="pane" role="tabpanel">
         <ol id="entries" aria-live="polite"></ol>
-        <p id="empty" class="hint">Say anything, or type below. I can run your scripts in Tool Mac Tool Run, set reminders, and remember what you tell me.</p>
-      </section>
-
-      <section id="tools" class="pane" role="tabpanel" hidden>
-        <div class="bar">
-          <input id="toolSearch" type="search" placeholder="Find a tool" />
-          <button id="refreshTools" class="icon" title="Ask Tool Mac Tool Run again">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35Z" /></svg>
-          </button>
-        </div>
-        <p id="toolStatus" class="hint"></p>
-        <div id="toolList"></div>
-      </section>
-
-      <section id="later" class="pane" role="tabpanel" hidden>
-        <p class="hint">What I've set myself to do later. Ask me ("remind me in 20 minutes to…", "at 5pm check…"), or cancel here.</p>
-        <ol id="laterList"></ol>
-        <button id="cancelAll" class="quiet" hidden>Cancel all</button>
-      </section>
-
-      <section id="mind" class="pane" role="tabpanel" hidden>
-        <h3>Model</h3>
-        <div class="row">
-          <select id="model" aria-label="Ollama model"></select>
-          <label class="check"><input type="checkbox" id="think" /> Think first</label>
-        </div>
-        <p id="modelHint" class="hint"></p>
-        <h3>Listening</h3>
-        <label class="check"><input type="checkbox" id="listenWhileSpeaking" /> Keep listening while I talk (so you can cut in)</label>
-        <label class="check"><input type="checkbox" id="busyTone" /> A soft tone while I work something out</label>
-        <h3>Its playbook <span class="count" id="memoryCount"></span></h3>
-        <p class="hint" id="playbookHint">What it has learned about getting things done for you, a line each. Kept in Tool Mac Tool Run's library, as the note <b>Super Face playbook</b> (edit it there too).</p>
-        <div id="memory"></div>
-        <h3>About you</h3>
-        <p class="hint">What it has learned about you, in Tool Mac Tool Run's MEMORY, as notes on <b>the user</b> (change them on its Memory board). Everything else it remembers about your world is there too.</p>
-        <ul class="notes" id="aboutUser"></ul>
-        <h3>Standing instructions</h3>
-        <p class="hint">Kept in Tool Mac Tool Run's library, as the note <b>Super Face instructions</b>.</p>
-        <textarea id="instructions" rows="3" placeholder="Anything I should always do or keep in mind, in your words."></textarea>
-        <div class="row end"><button id="saveInstructions">Save</button></div>
-        <h3>Conversation</h3>
-        <button id="newChat" class="quiet">Start a new chat</button>
-        <h3>Start from scratch</h3>
-        <p class="hint">Factory reset: puts Super Face back as it was installed. Its settings, the chat, what's scheduled, the logs and the downloaded voice and ears go to the Trash, and it starts again. What it has learned is kept in Tool Mac Tool Run: its own Factory Reset clears that.</p>
-        <button id="factoryReset" class="danger">Factory reset…</button>
+        <p id="empty" class="hint">Say anything, or type below. This is a chat of three: you, the model, and Peter, who does things on your Mac and the web. Messages to and from Peter aren't read aloud: you'll hear a tone each way.</p>
       </section>
 
       <section id="model" class="pane" role="tabpanel" hidden>
@@ -104,16 +61,8 @@
         <ol id="modelList" class="traces"></ol>
       </section>
 
-      <section id="calls" class="pane" role="tabpanel" hidden>
-        <div class="row">
-          <p class="hint grow">Every tool the model called, newest first: its arguments, each request it made (the address, what was sent, what came back) and what went back to the model. Kept while the app runs.</p>
-          <button id="clearCalls" class="quiet">Clear</button>
-        </div>
-        <ol id="callList" class="traces"></ol>
-      </section>
-
       <section id="prompts" class="pane" role="tabpanel" hidden>
-        <p class="hint">What the model is told, as it stands right now (built fresh for every message), and the notes the app adds at the moments they're due. Your own standing instructions are in Mind, and are part of the first one.</p>
+        <p class="hint">What the model is told, as it stands right now (built fresh for every message), and the notes the app adds at the moments they're due. Your standing instructions and its playbook are notes Peter keeps, and are part of the first one.</p>
         <div id="promptList"></div>
       </section>
 
@@ -124,7 +73,7 @@
           <span class="grow"></span>
           <button id="clearErrors" class="quiet">Clear</button>
         </div>
-        <p id="copied" class="hint">The report has what went wrong and how everything stands (versions, GPU, voice, ears, model, tools): paste it wherever you report a problem.</p>
+        <p id="copied" class="hint">The report has what went wrong and how everything stands (versions, GPU, voice, ears, model, Peter): paste it wherever you report a problem.</p>
         <ol id="errorList"></ol>
       </section>
     </main>
@@ -134,7 +83,7 @@
       <button id="send" class="primary" title="Send (Return)">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2Z" /></svg>
       </button>
-      <button id="stop" class="danger" title="Stop: cancels what I'm doing (a run waiting for your click, or running, too)" hidden>
+      <button id="stop" class="danger" title="Stop: cancels what I'm doing (what Peter is doing for me, too)" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
       </button>
     </footer>

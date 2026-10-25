@@ -47,14 +47,10 @@ const ROUTES = {
   '/api/chat/new': 'POST',
   '/api/chat/clear': 'POST',
   '/api/trace/model': 'GET',
-  '/api/trace/calls': 'GET',
   '/api/cancel': 'POST',
   '/api/peter': 'POST',
   '/api/heard': 'POST',
-  '/api/tools': 'GET POST',
-  '/api/schedules': 'GET POST',
-  '/api/schedules/cancel': 'POST',
-  '/api/memory': 'GET POST',
+  '/api/memory': 'GET',
   '/api/errors': 'GET',
 };
 
@@ -69,7 +65,7 @@ const SETTABLE = {
   captions: (v) => !!v,
   hideAfter: (v) => (Number.isFinite(+v) && +v >= 0 && +v <= 3600 ? +v : bad('hideAfter is seconds, 0 to 3600')),
   ollamaUrl: (v) => (/^https?:\/\/[^\s]+$/.test(String(v)) ? String(v).replace(/\/+$/, '') : bad('ollamaUrl is an http address')),
-  toolRunUrl: (v) => (/^https?:\/\/[^\s]+$/.test(String(v)) ? String(v).replace(/\/+$/, '') : bad('toolRunUrl is an http address')),
+  peterUrl: (v) => (/^https?:\/\/[^\s]+$/.test(String(v)) ? String(v).replace(/\/+$/, '') : bad('peterUrl is an http address')),
   model: (v) => String(v ?? '').trim(),
   think: (v) => !!v,
   listening: (v) => !!v,
@@ -117,7 +113,7 @@ export function allowedOrigin(origin, extra = []) {
  * @param {() => string} [o.docs] - API.md
  * @param {string[]} [o.avatars]
  * @param {number} [o.readyWait] - ms a speak waits for the avatar to finish starting
- * @param {ReturnType<import('./core.mjs').createCore>} [o.core] - the assistant and its tools
+ * @param {ReturnType<import('./core.mjs').createCore>} [o.core] - the assistant, and Peter
  */
 export function createApi({ speech, face, settings, version, updater = null, docs = () => '', avatars = [], readyWait = 15_000, core = null }) {
   const started = Date.now();
@@ -272,15 +268,14 @@ export function createApi({ speech, face, settings, version, updater = null, doc
       case '/api/chat/clear':
         needCore().actions.clearChat();
         return [200, { ok: true }];
-      case '/api/trace/model':
-      case '/api/trace/calls': {
+      case '/api/trace/model': {
         const limit = Math.min(80, Math.max(1, Number(url.searchParams.get('limit')) || 20));
         return [200, { items: needCore().actions.trace({ log: route.split('/').pop() }).items.slice(-limit) }];
       }
       case '/api/cancel':
         return [200, needCore().actions.cancel()];
       case '/api/peter': {
-        // Tool Mac Tool Run, calling back: a run asked of Peter is over (text, or JSON with its entries).
+        // Peter, calling back: a run asked of him is over, or something scheduled is due (text, or JSON with its entries).
         const b = await body(req);
         const text = typeof b.text === 'string' ? b.text : '';
         if (!text.trim()) throw new HTTPError(400, 'missing_text', 'missing text: what Peter says');
@@ -295,39 +290,10 @@ export function createApi({ speech, face, settings, version, updater = null, doc
         const at = b.at === undefined ? Date.now() : Number(b.at);
         return [200, { ok: true, ...c.heard({ text, at, seconds: Number(b.seconds) || 0 }) }];
       }
-      case '/api/tools':
-        return [200, method === 'POST' ? await needCore().refreshTools() : needCore().actions.tools()];
-      case '/api/schedules': {
-        const c = needCore();
-        if (method === 'GET') return [200, { schedules: c.actions.schedules() }];
-        const b = await body(req);
-        const { dueFrom } = await import('./scheduler.mjs');
-        const due = dueFrom(b);
-        if (!Number.isFinite(due)) bad('say when: in_minutes, or at (a local date and time, e.g. "2026-10-24 17:30")');
-        try {
-          const t = c.scheduler.add({ task: b.task, due });
-          return [201, { ok: true, ...t }];
-        } catch (err) {
-          bad(err.message);
-        }
-        break;
-      }
-      case '/api/schedules/cancel': {
-        const b = await body(req);
-        if (b.id === undefined) bad('send the id (or "all")');
-        const gone = needCore().scheduler.cancel(b.id);
-        return [200, { ok: gone.length > 0, cancelled: gone.map((t) => t.id) }];
-      }
       case '/api/memory': {
-        const c = needCore();
-        // What it has learned, as kept in Tool Mac Tool Run: its playbook and the standing
-        // instructions (the library), what MEMORY has on the user.
-        if (method === 'POST') {
-          const b = await body(req);
-          if (typeof b.instructions === 'string') await c.notes.setInstructions(b.instructions);
-          if (b.forget) await c.notes.forget(typeof b.forget === 'string' ? b.forget : b.forget.note);
-        }
-        return [200, (await c.notes.refresh()).json()];
+        // What it has learned, as Peter keeps it: its playbook and the standing instructions
+        // (notes), what MEMORY has on the user. Changed by asking Peter, in words.
+        return [200, (await needCore().notes.refresh()).json()];
       }
       case '/api/errors': {
         const c = needCore();
@@ -363,7 +329,7 @@ export function createApi({ speech, face, settings, version, updater = null, doc
     const said = after.filter((e) => e.kind === 'assistant' && !e.hidden && e.text).map((e) => e.text);
     return {
       reply: said.join(' '),
-      tools: after.filter((e) => e.kind === 'tool').map((e) => ({ name: e.name, state: e.state, result: e.result })),
+      peter: after.filter((e) => e.kind === 'to-peter' || e.kind === 'peter').map((e) => ({ to: e.to, from: e.from, text: e.text, ...(e.state ? { state: e.state } : {}) })),
       error: after.find((e) => e.kind === 'error')?.text,
     };
   }

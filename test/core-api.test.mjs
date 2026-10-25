@@ -1,5 +1,5 @@
 // The core as the app builds it, over the API: chat (and wait for the answer), what's heard (its
-// own voice dropped, "stop" and "cancel" done here, an unfinished phrase waited on), the schedule,
+// own voice dropped, "stop" and "cancel" done here, an unfinished phrase waited on), Peter's news,
 // memory, the character that is its voice.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -33,7 +33,7 @@ async function fakeFetch(url, init = {}) {
     if (!body.stream) return new Response(JSON.stringify({ message: { content: text } }));
     return new Response(new Blob([JSON.stringify({ message: { content: text } }) + '\n', JSON.stringify({ done: true }) + '\n']).stream());
   }
-  throw new TypeError('fetch failed'); // Tool Mac Tool Run isn't running
+  throw new TypeError('fetch failed'); // Peter isn't running
 }
 
 before(async () => {
@@ -90,8 +90,8 @@ test('chat over the API, waiting for the answer; the character speaks it in its 
   assert.deepEqual(log.entries.map((e) => e.kind), ['user', 'assistant']);
   const [, a] = await get('/api/assistant');
   assert.equal(a.character.name, 'Ivy');
-  assert.equal(a.tools.reachable, false);
-  assert.match(a.tools.error, /isn't answering/);
+  assert.equal(a.peter.reachable, false);
+  assert.match(a.peter.error, /isn't answering/);
 });
 
 test('what went to the model, over the API; a size by name', async () => {
@@ -99,8 +99,8 @@ test('what went to the model, over the API; a size by name', async () => {
   assert.equal(m.items.length, 1);
   assert.equal(m.items[0].purpose, 'answer');
   assert.match(m.items[0].messages.at(-1).content, /hi there$/);
-  const [, c] = await get('/api/trace/calls');
-  assert.ok(Array.isArray(c.items));
+  const [status] = await get('/api/trace/calls');
+  assert.equal(status, 404, 'the Calls tab is gone: Peter keeps his own');
   assert.deepEqual(core.actions.setSize({ size: 'Large' }), { size: 'Large' });
   assert.equal(settings.get().size, 'Large');
   assert.throws(() => core.actions.setSize({ size: 'Tiny' }), /no size called Tiny/);
@@ -133,7 +133,7 @@ test('what it hears of its own voice is dropped; what the user says over it cuts
   assert.equal(r.said, 'what time is it in Tokyo');
   assert.ok(!speech.speaking, 'cut in: it stopped talking');
   await idle();
-  assert.match(asked.at(-1).messages.at(-1).content, /said\] what time is it in Tokyo$/);
+  assert.match(asked.at(-1).messages.at(-1).content, /^\[the user, said aloud, [^\]]+\] @qwen3 what time is it in Tokyo$/);
 });
 
 test('"stop", "cancel", "new chat" and "clear the chat" are done at once, without the model', async () => {
@@ -169,41 +169,19 @@ test('a phrase that sounds unfinished waits for the rest', async () => {
   assert.equal(asked.length, before);
   core.heard({ text: 'eggs to my shopping list' });
   await idle();
-  assert.match(asked.at(-1).messages.at(-1).content, /said\] add milk and eggs to my shopping list$/);
+  assert.match(asked.at(-1).messages.at(-1).content, /\] @qwen3 add milk and eggs to my shopping list$/);
 });
 
-test('the schedule over the API: set, listed, cancelled; one due shows the character and asks the model', async () => {
-  let [status, t] = await post('/api/schedules', { in_minutes: 30, task: 'Check the oven.' });
-  assert.equal(status, 201);
-  assert.equal(t.id, 's1');
-  [status] = await post('/api/schedules', { at: 'not a time', task: 'x' });
-  assert.equal(status, 400);
-  let [, list] = await get('/api/schedules');
-  assert.equal(list.schedules[0].fromNow, 'in 30 minutes');
-  [, t] = await post('/api/schedules/cancel', { id: 's1' });
-  assert.deepEqual(t.cancelled, ['s1']);
-
-  replies = ['Time to stretch! 🙆'];
-  const shownBefore = shown;
-  core.scheduler.add({ task: 'Remind the user to stretch.', due: Date.now() + 30 });
-  for (let i = 0; i < 100 && !asked.at(-1)?.messages.at(-1).content.includes('Scheduled task'); i++) await wait(10);
-  await idle();
-  assert.match(asked.at(-1).messages.at(-1).content, /scheduled\] Scheduled task s2, set today at \d\d:\d\d: Remind the user to stretch\.$/);
-  assert.ok(shown > shownBefore);
-  [, list] = await get('/api/schedules');
-  assert.equal(list.schedules.length, 0);
-});
-
-test('what it has learned, and the tool list, over the API: without Tool Mac Tool Run there is nowhere to keep it', async () => {
-  const [, m] = await post('/api/memory', { instructions: 'Be brief.' });
-  assert.equal(m.library, false, "its playbook and instructions are Tool Mac Tool Run's library's");
+test('what it has learned, over the API: kept by Peter, and read through him; without him there is none', async () => {
+  const [, m] = await get('/api/memory');
   assert.deepEqual(m.playbook, []);
   assert.equal(m.instructions, '');
-  assert.match(m.error, /isn't reachable/);
+  assert.match(m.error, /Peter didn't answer/);
   assert.deepEqual(m.names, { playbook: 'Super Face playbook', instructions: 'Super Face instructions', user: 'the user' });
-  const [, tools] = await get('/api/tools');
-  assert.deepEqual(tools.builtin.map((t) => t.name), ['@peter', '@clock'], 'who it asks: Peter, and the Clock (the schedule, its own)');
-  assert.equal(tools.reachable, false);
+  for (const gone of ['/api/tools', '/api/schedules']) {
+    const [status] = await get(gone);
+    assert.equal(status, 404, `${gone}: Peter's now`);
+  }
   const [, h] = await get('/api/health');
   assert.equal(h.character, 'Ivy');
   assert.equal(h.assistant.busy, false);
@@ -245,7 +223,7 @@ test('the prompts as they stand: the system prompt built now, and every note the
   for (const p of list) assert.ok(p.title && p.when && p.text, p.id);
 });
 
-test("Peter's news over the API (Tool Mac Tool Run calling back): the character shows, and the model is told", async () => {
+test("Peter's news over the API (Peter calling back): the character shows, and the model is told, as if the user had spoken", async () => {
   replies = ["Your backup's done, and it worked."];
   const before = shown;
   const sent = asked.length;
@@ -253,7 +231,9 @@ test("Peter's news over the API (Tool Mac Tool Run calling back): the character 
   assert.equal(r.status, 202);
   await idle();
   assert.ok(shown > before, 'it shows itself to say so');
-  assert.match(asked[sent].messages.at(-1).content, /, from Peter, not the user\] Meanwhile: The nightly backup finished \(it worked\)\.$/);
+  assert.match(asked[sent].messages.at(-1).content, /^\[Peter, [^\]]+\] @qwen3 Meanwhile: The nightly backup finished \(it worked\)\.$/);
+  assert.equal(asked[sent].messages.at(-1).role, 'user');
+  assert.ok(core.assistant.log.some((e) => e.kind === 'peter' && e.from === 'Peter' && e.to === 'qwen3' && /nightly backup finished/.test(e.text)));
   assert.equal(spoken.at(-1).text, "Your backup's done, and it worked.");
   // Plain text is taken too; nothing to say is refused.
   replies = ['Noted.'];
@@ -271,12 +251,10 @@ test('factory reset: everything stopped and forgotten; in the app, its folder go
   let reset = 0;
   const c = createCore({ settings: s, speech, dataDir: dir, fetch: fakeFetch, host: { factoryReset: () => reset++ } });
   c.start();
-  c.scheduler.add({ task: 'Water the plants.', due: Date.now() + 3_600_000 });
   c.assistant.add({ kind: 'note', text: 'something said' });
   c.reportError({ source: 'app', message: 'something went wrong' });
   const r = c.actions.factoryReset();
   assert.deepEqual(r, { ok: true, relaunching: true });
-  assert.deepEqual(c.scheduler.list(), []);
   assert.deepEqual(c.assistant.log, []);
   assert.equal(c.actions.errors().errors.length, 0);
   await wait(350);
@@ -286,7 +264,6 @@ test('factory reset: everything stopped and forgotten; in the app, its folder go
   // Without the app around it (the browser dev server): its files go, the settings are the defaults.
   const s2 = new Settings(path.join(dir, 'settings.json'));
   const c2 = createCore({ settings: s2, speech, dataDir: dir, fetch: fakeFetch });
-  c2.scheduler.add({ task: 'Again.', due: Date.now() + 3_600_000 });
   assert.equal(c2.actions.factoryReset().relaunching, false);
   assert.equal(s2.get().size, 'Medium');
   assert.equal(s2.get().model, '');

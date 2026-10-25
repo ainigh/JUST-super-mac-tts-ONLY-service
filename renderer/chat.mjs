@@ -1,6 +1,6 @@
-// The chat beside the character: what was said both ways, the tools at work (each with a way to
-// call it off), every tool there is, what's scheduled, and what it has learned. Shown and hidden
-// by a click on the character. Talks to the main process through window.chat (preload-chat.cjs),
+// The chat beside the character: a chat of three. What you said (to the model, "@<its name>"),
+// what it said to you ("@user") and to Peter ("@peter"), and what Peter said back ("@<its name>"),
+// each with a way to call off a run Peter took on. Shown and hidden by a click on the character. Talks to the main process through window.chat (preload-chat.cjs),
 // or, in a plain browser (npm run dev), to the dev server over HTTP.
 
 const $ = (id) => document.getElementById(id);
@@ -25,9 +25,6 @@ function devBridge() {
 
 const COLORS = { brunette: ['#5e5ce6', '#bf5af2'], david: ['#ff9f0a', '#ff6b3d'], avaturn: ['#bf5af2', '#ff375f'], avatarsdk: ['#30b0c7', '#0a84ff'] };
 let status = null;
-let tools = null;
-let schedules = [];
-let memory = null;
 let errorList = [];
 const shown = new Map(); // entry id → its element
 
@@ -59,12 +56,11 @@ function renderStatus() {
   const busy = status.assistant.busy;
   $('stop').hidden = !busy && !status.speaking;
   $('stop').title = busy ? "Stop: cancels what I'm doing (a run waiting for your click, or running, too)" : 'Stop talking';
-  $('toolCount').textContent = status.tools.reachable ? String(status.tools.scripts + status.tools.flows + 2) : '2';
-  $('laterCount').textContent = status.schedules ? String(status.schedules) : '';
-  $('listenWhileSpeaking').checked = status.listenWhileSpeaking;
-  $('busyTone').checked = status.busyTone !== false;
   $('retryVoice').hidden = status.face?.tts?.state !== 'failed';
   $('think').checked = status.think;
+  const p = status.peter || {};
+  $('peterState').textContent = p.reachable ? (p.error ? `Peter: ${p.error}` : 'Peter is there') : "Peter (Tool Mac Agent) isn't answering";
+  $('peterState').title = p.error || (p.reachable ? 'Peter does everything on the Mac and the web for it' : 'Open Peter (Tool Mac Agent): he does everything on the Mac and the web for it');
 }
 
 /** S, M, L, H: the character's size, one click each. */
@@ -91,7 +87,7 @@ function doing() {
   const a = status.assistant;
   if (a.phase === 'tool' && a.tool) {
     if (a.tool.state === 'waiting') return `Waiting for you to click Run on the Mac`;
-    return `Running ${toolLabel({ name: a.tool.name, args: {} })}…`;
+    return 'Peter is on it…';
   }
   if (a.phase === 'thinking') return 'Thinking…';
   if (a.error) return a.error;
@@ -122,59 +118,8 @@ function doing() {
 
 // ---------------------------------------------------------------- the chat
 
-const STATES = { working: 'Working', sending: 'Sending', waiting: 'Click Run on your Mac', running: 'Running', done: 'Done', failed: "Didn't work", cancelled: 'Cancelled' };
-
-function toolLabel(e) {
-  const a = e.args || {};
-  // Asked in words: to Peter (Tool Mac Tool Run) or the Clock, its first line.
-  if (typeof e.said === 'string') {
-    const first = e.said.split('\n')[0].trim();
-    return `To ${e.name}: ${first.length > 70 ? `${first.slice(0, 69)}…` : first}`;
-  }
-  switch (e.name) {
-    case 'run_script':
-      return a.script || e.label || 'a script';
-    case 'run_flow':
-      return a.flow || e.label || 'a flow';
-    case 'run_flow_code':
-      return a.name || 'Flow code';
-    case 'schedule':
-      return 'Scheduling';
-    case 'cancel_schedule':
-      return 'Cancelling a schedule';
-    case 'list_schedules':
-      return "What's scheduled";
-    case 'remember':
-      return a.about ? `Remembering ${a.about}` : 'Remembering';
-    case 'recall':
-      return a.name ? `Recalling ${a.name}` : 'Recalling';
-    case 'memory':
-      return a.op === 'upcoming' ? "What's coming up" : `Memory: ${a.op || '…'}`;
-    case 'mind':
-      return `The mind: ${a.op || '…'}`;
-    case 'show':
-      return a.title ? `Showing “${a.title}”` : 'Showing it on the Mac';
-    case 'copy':
-      return 'Copying to the clipboard';
-    case 'chrome_page':
-      return a.op === 'highlight' ? `Pointing out “${a.text}” in Chrome` : `Chrome's page: ${a.op || '…'}`;
-    default:
-      return e.name.replace(/_/g, ' ');
-  }
-}
-
-function toolArgs(e) {
-  if (typeof e.said === 'string') return e.said.includes('\n') ? e.said.split('\n').slice(1).join('\n').trim() : '';
-  const a = { ...(e.args || {}) };
-  delete a.script;
-  delete a.flow;
-  const parts = [];
-  if (Array.isArray(a.args) && a.args.length) parts.push(a.args.join(' · '));
-  else if (typeof a.args === 'string') parts.push(a.args);
-  delete a.args;
-  for (const [k, v] of Object.entries(a)) if (v !== undefined && v !== null && v !== '') parts.push(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`);
-  return parts.join('  ·  ');
-}
+const RUN = { waiting: 'Click Run on your Mac', running: 'Running', done: 'Done', failed: "Didn't work", cancelled: 'Cancelled' };
+const MESSAGES = ['user', 'assistant', 'to-peter', 'peter'];
 
 function render(e) {
   if (e.hidden) {
@@ -189,66 +134,37 @@ function render(e) {
     shown.set(e.id, li);
     $('entries').append(li);
   }
-  if (e.kind === 'tool') renderTool(li, e);
-  else {
-    li.className = `${['user', 'assistant', 'schedule', 'news'].includes(e.kind) ? 'msg ' : ''}${e.kind === 'news' ? 'schedule news' : e.kind}${e.streaming ? ' streaming' : ''}${e.queued ? ' queued' : ''}${e.dropped ? ' dropped' : ''}`;
-    li.textContent = '';
-    if (e.kind === 'user' && e.how === 'said') li.title = 'Heard';
-    if (e.kind === 'schedule' || e.kind === 'news') {
-      const how = document.createElement('span');
-      how.className = 'how';
-      how.textContent = e.kind === 'news' ? 'From Peter' : 'Scheduled, due now';
-      li.append(how);
+  const msg = MESSAGES.includes(e.kind);
+  li.className = `${msg ? 'msg ' : ''}${e.kind}${e.failed ? ' failed' : ''}${e.streaming ? ' streaming' : ''}${e.queued ? ' queued' : ''}${e.dropped ? ' dropped' : ''}`;
+  li.replaceChildren();
+  if (!msg) {
+    li.textContent = e.text;
+  } else {
+    // Who it's from, and who it's to: "@qwen3 …" (to the model), "@user …", "@peter …".
+    const how = document.createElement('span');
+    how.className = 'how';
+    how.textContent = [e.from || '', e.kind === 'user' && e.how === 'said' ? 'said' : '', e.news ? 'by himself' : '', e.kind === 'to-peter' || e.kind === 'peter' ? 'not read aloud' : ''].filter(Boolean).join(' · ');
+    const at = document.createElement('span');
+    at.className = 'at';
+    at.textContent = `@${e.to || ''} `;
+    li.append(how, at, e.text);
+    // A run Peter took on: how it stands, and a way to call it off.
+    if (e.kind === 'to-peter' && e.number && RUN[e.state]) {
+      const run = document.createElement('span');
+      run.className = `run ${e.state}`;
+      run.textContent = RUN[e.state];
+      li.append(run);
+      if (['waiting', 'running'].includes(e.state)) {
+        const cancel = document.createElement('button');
+        cancel.className = 'cancel';
+        cancel.textContent = 'Cancel';
+        cancel.title = e.state === 'waiting' ? 'Take the card off the Mac: nothing runs' : 'Stop it';
+        cancel.onclick = () => act('cancelTool', { id: e.id });
+        li.append(cancel);
+      }
     }
-    li.append(e.kind === 'schedule' ? e.text.replace(/^Scheduled task s\d+, set .*? at \d\d:\d\d: /, '') : e.text);
   }
   if (fresh || e.streaming) scrollDown();
-}
-
-function renderTool(li, e) {
-  li.className = 'tool';
-  li.dataset.state = e.state;
-  const open = li.querySelector('details') ? [...li.querySelectorAll('details')].map((d) => d.open) : null;
-  li.replaceChildren();
-  const head = document.createElement('div');
-  head.className = 'head';
-  const what = document.createElement('span');
-  what.className = 'what';
-  what.textContent = toolLabel(e);
-  const state = document.createElement('span');
-  state.className = 'state';
-  state.textContent = STATES[e.state] || e.state;
-  if (e.state === 'running' && e.startedAt) state.dataset.since = e.startedAt;
-  head.append(what, state);
-  if (!['done', 'failed', 'cancelled'].includes(e.state)) {
-    const cancel = document.createElement('button');
-    cancel.className = 'cancel';
-    cancel.textContent = 'Cancel';
-    cancel.title = e.state === 'waiting' ? 'Take the card off the Mac: nothing runs' : 'Stop it';
-    cancel.onclick = () => act('cancelTool', { id: e.id });
-    head.append(cancel);
-  }
-  li.append(head);
-  const args = toolArgs(e);
-  if (args) {
-    const p = document.createElement('div');
-    p.className = 'args';
-    p.textContent = args;
-    li.append(p);
-  }
-  // Asked in words: what Peter (or the Clock) said, and, for a run he followed, what it printed.
-  const parts = typeof e.said === 'string' ? [[`What ${e.name} said`, e.result], ['What it printed', e.output]] : [[e.result ? 'What came back' : 'What it has printed', e.result || e.output]];
-  parts.forEach(([title, body], i) => {
-    if (!body) return;
-    const d = document.createElement('details');
-    d.open = open?.[i] ?? (e.state === 'running' && !!e.output && title !== 'What came back');
-    const s = document.createElement('summary');
-    s.textContent = title;
-    const pre = document.createElement('pre');
-    pre.textContent = body;
-    d.append(s, pre);
-    li.append(d);
-  });
 }
 
 function scrollDown() {
@@ -257,156 +173,16 @@ function scrollDown() {
   requestAnimationFrame(() => (m.scrollTop = m.scrollHeight));
 }
 
-// Running for… seconds, as it runs.
-setInterval(() => {
-  for (const el of document.querySelectorAll('.tool .state[data-since]')) {
-    el.textContent = `Running ${Math.round((Date.now() - Number(el.dataset.since)) / 1000)}s`;
-  }
-}, 1000);
-
-// ---------------------------------------------------------------- tools, later, mind
-
-function renderTools() {
-  if (!tools) return;
-  const q = $('toolSearch').value.trim().toLowerCase();
-  const match = (...xs) => !q || xs.some((x) => String(x || '').toLowerCase().includes(q));
-  const list = $('toolList');
-  list.replaceChildren();
-  $('toolStatus').textContent = tools.reachable
-    ? `From Tool Mac Tool Run${tools.folder ? ` (${tools.folder})` : ''}: ${tools.scripts.length} scripts, ${tools.flows.length} flows. Each run asks you on the Mac first.`
-    : `Tool Mac Tool Run: ${tools.error || 'not reached'}. Open it (with its API on) to give me your scripts.`;
-  const section = (title, items) => {
-    if (!items.length) return;
-    const h = document.createElement('h4');
-    h.textContent = title;
-    list.append(h, ...items);
-  };
-  const item = (name, about, extra = '', danger = '', ask = `Use ${name} to `) => {
-    const b = document.createElement('button');
-    b.className = 'toolItem';
-    const n = document.createElement('b');
-    n.textContent = name;
-    b.append(n);
-    for (const [text, cls] of [[about], [extra], [danger, 'danger']]) {
-      if (!text) continue;
-      const s = document.createElement('span');
-      s.textContent = text;
-      if (cls) s.className = cls;
-      b.append(s);
-    }
-    b.title = 'Ask for it in the chat';
-    b.onclick = () => {
-      tab('chat');
-      $('input').value = ask;
-      $('input').focus();
-    };
-    return b;
-  };
-  section(
-    'Who it asks',
-    tools.builtin.filter((t) => match(t.name, t.description)).map((t) => item(t.name, t.description.split('. ')[0].replace(/\.$/, '') + '.', '', '', t.name === '@clock' ? 'Remind me in 10 minutes to ' : '')),
-  );
-  section(
-    'Through Tool Mac Tool Run',
-    // As Tool Mac Tool Run lists them: what it adds later shows up here by itself.
-    (tools.mac || [])
-      .filter((t) => match(t.name, t.description))
-      .map((t) => item(t.name, t.description.split('. ')[0].replace(/\.$/, '') + '.', t.args?.length ? `Takes: ${t.args.map((a) => a.name).join(', ')}` : '', t.asks ? 'Asks on the Mac first' : '', `Use ${t.name} to `)),
-  );
-  const groups = {};
-  for (const s of tools.scripts) (groups[s.group] ||= []).push(s);
-  for (const [g, scripts] of Object.entries(groups)) {
-    section(
-      g === 'scripts' ? 'Scripts' : g[0].toUpperCase() + g.slice(1),
-      scripts
-        .filter((s) => match(s.name, s.summary))
-        .map((s) => item(s.name, s.summary, s.inputs.length ? `Takes: ${s.inputs.map((i) => i.prompt + (i.optional ? ' (optional)' : '')).join('; ')}` : '', s.dangers.length ? `Can't be undone: ${s.dangers.join(', ')}` : '', `Run ${s.name} `)),
-    );
-  }
-  section('Flows', tools.flows.filter((f) => match(f.name, f.summary)).map((f) => item(f.name, f.summary, '', '', `Run the flow ${f.name} `)));
-}
-
-function renderLater() {
-  const ol = $('laterList');
-  ol.replaceChildren(
-    ...schedules.map((t) => {
-      const li = document.createElement('li');
-      const div = document.createElement('div');
-      const when = document.createElement('span');
-      when.className = 'when';
-      when.textContent = `${t.when[0].toUpperCase()}${t.when.slice(1)}`;
-      const soon = document.createElement('span');
-      soon.className = 'soon';
-      soon.textContent = ` ${t.fromNow} · ${t.id}`;
-      div.append(when, soon, document.createElement('br'), t.task);
-      const x = document.createElement('button');
-      x.textContent = 'Cancel';
-      x.onclick = () => act('cancelSchedule', { id: t.id });
-      li.append(div, x);
-      return li;
-    }),
-  );
-  if (!schedules.length) {
-    const li = document.createElement('li');
-    li.className = 'hint';
-    li.textContent = 'Nothing scheduled.';
-    ol.append(li);
-  }
-  $('cancelAll').hidden = schedules.length < 2;
-  $('laterCount').textContent = schedules.length ? String(schedules.length) : '';
-}
-
-function renderMemory() {
-  if (!memory) return;
-  $('memoryCount').textContent = memory.playbook?.length ? `${memory.playbook.length} lines` : '';
-  const box = $('memory');
-  box.replaceChildren();
-  const ul = document.createElement('ul');
-  ul.className = 'notes';
-  const hint = (text) => {
-    const li = document.createElement('li');
-    li.className = 'hint';
-    li.textContent = text;
-    return li;
-  };
-  if (!memory.library) ul.append(hint(`Tool Mac Tool Run's library isn't on${memory.error ? ` (${memory.error})` : ''}: there's nowhere to keep it.`));
-  else if (!memory.playbook?.length) ul.append(hint('Nothing yet.'));
-  for (const line of memory.playbook || []) {
-    const li = document.createElement('li');
-    const span = document.createElement('span');
-    span.textContent = line.replace(/^-\s*/, '');
-    const x = document.createElement('button');
-    x.textContent = '×';
-    x.title = 'Take this line out of the playbook';
-    x.onclick = () => act('forget', { note: line });
-    li.append(span, x);
-    ul.append(li);
-  }
-  box.append(ul);
-  const about = $('aboutUser');
-  about.replaceChildren();
-  if (!memory.memory) about.append(hint("Tool Mac Tool Run's MEMORY isn't on."));
-  else if (!memory.aboutUser?.length) about.append(hint('Nothing yet.'));
-  for (const line of memory.aboutUser || []) {
-    const li = document.createElement('li');
-    li.textContent = line;
-    about.append(li);
-  }
-  $('instructions').disabled = !memory.library;
-  $('saveInstructions').disabled = !memory.library;
-  if (document.activeElement !== $('instructions')) $('instructions').value = memory.instructions || '';
-}
-
 async function loadModels() {
   const r = await act('models');
   if (!r) return;
-  const sel = $('model');
+  const sel = $('modelPick');
   const auto = document.createElement('option');
   auto.value = '';
   auto.textContent = r.models.length ? `Best available${r.current && !status?.model ? ` (${r.current})` : ''}` : 'No models found';
   sel.replaceChildren(auto, ...r.models.map((m) => Object.assign(document.createElement('option'), { value: m, textContent: m })));
   sel.value = status?.model || '';
-  $('modelHint').textContent = r.error ? `${r.error} Get Ollama at ollama.com, then: ollama pull qwen3:8b` : r.models.length ? 'One model does all of it: talking, tools, and the face.' : 'In Terminal: ollama pull qwen3:8b';
+  sel.title = r.error ? `${r.error} Get Ollama at ollama.com, then: ollama pull qwen3:8b` : r.models.length ? 'The model it thinks with (Ollama’s)' : 'In Terminal: ollama pull qwen3:8b';
 }
 
 async function renderPrompts() {
@@ -475,11 +251,11 @@ function renderErrors() {
   }
 }
 
-// ---------------------------------------------------------------- the model's log, and the calls
+// ---------------------------------------------------------------- the model's log
 
-const traceCards = { model: new Map(), calls: new Map() }; // item id → its card
-const LIST = { model: 'modelList', calls: 'callList' };
-const COUNT = { model: 'modelCount', calls: 'callCount' };
+const traceCards = { model: new Map() }; // item id → its card
+const LIST = { model: 'modelList' };
+const COUNT = { model: 'modelCount' };
 const PURPOSES = { answer: 'Answer', learning: 'Learning (after a request)' };
 
 async function loadTrace(log) {
@@ -507,7 +283,7 @@ function renderTrace(log, item) {
     $(COUNT[log]).textContent = String(traceCards[log].size);
   }
   li.dataset.state = item.state || '';
-  li.replaceChildren(...(log === 'model' ? modelCard(item) : callCard(item)));
+  li.replaceChildren(...modelCard(item));
   for (const d of li.querySelectorAll('details')) if (open.has(d.dataset.key)) d.open = true;
 }
 
@@ -558,39 +334,6 @@ function modelCard(m) {
   return out;
 }
 
-function callCard(c) {
-  const out = [];
-  if (c.kind === 'http') {
-    out.push(head('A request', [stateBit(c.state), new Date(c.at).toLocaleTimeString()], () => pretty(c)));
-    out.push(httpBlock(c, 'h'));
-    return out;
-  }
-  const where = c.kind === 'catalog' ? 'Tool Mac Tool Run' : c.where === 'mac' ? 'Tool Mac Tool Run' : c.where === 'local' ? 'in this app' : '';
-  out.push(head(c.name, [where, stateBit(c.state), took(c.ms), new Date(c.at).toLocaleTimeString()], () => pretty(c)));
-  if (c.args && Object.keys(c.args).length) out.push(fold('args', 'Arguments', pretty(c.args), true));
-  (c.http || []).forEach((h, i) => out.push(httpBlock(h, `h${i}`)));
-  if (c.kind === 'tool' && !(c.http || []).length && c.state !== 'working') out.push(el('p', 'url', c.where === 'local' ? 'Done in this app: no request.' : 'No request was made.'));
-  if (c.result !== undefined) out.push(fold('result', c.kind === 'catalog' ? 'What came of it' : 'What went back to the model', c.result, c.kind !== 'catalog'));
-  return out;
-}
-
-function httpBlock(h, key) {
-  const box = el('div', 'http');
-  const line = el('div', 'line');
-  line.append(el('b', '', h.method), el('span', 'addr', ` ${h.url}`));
-  const bits = [h.status !== undefined ? `→ ${h.status}` : '', h.request ? `request ${h.request}` : '', took(h.ms), h.state && h.state !== 'done' ? h.state : ''].filter(Boolean);
-  if (bits.length) line.append(el('span', 'meta', `  ${bits.join(' · ')}`));
-  box.append(line);
-  if (h.body !== undefined) box.append(fold(`${key}s`, 'Sent', pretty(h.body)));
-  if (h.events?.length) {
-    const outputs = h.events.filter((e) => e.type === 'output').length;
-    box.append(fold(`${key}e`, `Came back, as it happened: ${h.events.length} events${outputs ? ` (${outputs} of printing)` : ''}`, h.events.map((e) => JSON.stringify(e)).join('\n'), true));
-  }
-  if (h.response !== undefined) box.append(fold(`${key}r`, 'Came back', pretty(h.response), !h.events?.length));
-  if (h.error) box.append(el('p', 'bad', h.error));
-  return box;
-}
-
 /** Onto the clipboard: the app's when it can, else the page's. */
 async function copyText(text) {
   const r = await act('copy', { text });
@@ -617,9 +360,8 @@ function tab(name) {
   for (const b of document.querySelectorAll('#tabs button')) b.setAttribute('aria-selected', String(b.dataset.tab === name));
   for (const p of document.querySelectorAll('.pane')) p.hidden = p.id !== name;
   $('compose').hidden = name !== 'chat';
-  if (name === 'mind') loadModels();
   if (name === 'prompts') renderPrompts();
-  if (name === 'model' || name === 'calls') loadTrace(name);
+  if (name === 'model') loadTrace(name);
   if (name === 'chat') scrollDown();
 }
 
@@ -651,14 +393,6 @@ $('input').addEventListener('input', grow);
 $('mic').onclick = () => act('set', { listening: !status?.listening });
 $('close').onclick = () => bridge.close();
 $('clearModel').onclick = () => act('clearTrace', { log: 'model' });
-$('clearCalls').onclick = () => act('clearTrace', { log: 'calls' });
-$('toolSearch').addEventListener('input', renderTools);
-$('refreshTools').onclick = async () => {
-  $('toolStatus').textContent = 'Asking Tool Mac Tool Run…';
-  tools = await act('refreshTools');
-  renderTools();
-};
-$('cancelAll').onclick = () => act('cancelSchedule', { id: 'all' });
 $('copyReport').onclick = async () => {
   const r = await act('copyReport');
   if (r && !r.copied) await navigator.clipboard.writeText(r.text);
@@ -679,20 +413,8 @@ $('retryVoice').onclick = async () => {
 // What goes wrong in the chat itself goes in the list too.
 addEventListener('error', (e) => act('reportError', { source: 'chat', message: e.message, detail: e.error?.stack || '' }));
 addEventListener('unhandledrejection', (e) => act('reportError', { source: 'chat', message: String(e.reason?.message || e.reason), detail: e.reason?.stack || '' }));
-$('model').onchange = () => act('set', { model: $('model').value });
+$('modelPick').onchange = () => act('set', { model: $('modelPick').value });
 $('think').onchange = () => act('set', { think: $('think').checked });
-$('listenWhileSpeaking').onchange = () => act('set', { listenWhileSpeaking: $('listenWhileSpeaking').checked });
-$('busyTone').onchange = () => act('set', { busyTone: $('busyTone').checked });
-$('saveInstructions').onclick = () => act('instructions', { text: $('instructions').value });
-$('newChat').onclick = () => {
-  act('newChat');
-  tab('chat');
-};
-$('factoryReset').onclick = async () => {
-  if (!confirm('Factory reset Super Face?\n\nIts settings, the chat, everything scheduled, the logs and the downloaded voice and ears go to the Trash, and it starts again as it was installed (the voice and ears download again).\n\nWhat it has learned is kept in Tool Mac Tool Run: its own Factory Reset clears that.')) return;
-  const r = await act('factoryReset');
-  if (r && !r.relaunching) location.reload();
-};
 $('clearChat').onclick = () => {
   if (!confirm('Clear the chat? What was said goes for good; what I have learned stays.')) return;
   act('clearChat');
@@ -737,23 +459,6 @@ bridge.onEvent((ev) => {
         renderStatus();
       }
       break;
-    case 'tools':
-      tools = ev.tools;
-      renderTools();
-      if (status) {
-        status.tools = { reachable: tools.reachable, scripts: tools.scripts.length, flows: tools.flows.length, error: tools.error };
-        renderStatus();
-      }
-      break;
-    case 'schedules':
-      schedules = ev.schedules;
-      renderLater();
-      if (status) status.schedules = schedules.length;
-      break;
-    case 'memory':
-      memory = ev.memory;
-      renderMemory();
-      break;
     case 'errors':
       errorList = ev.errors;
       renderErrors();
@@ -768,21 +473,8 @@ bridge.onEvent((ev) => {
 status = await act('status');
 renderStatus();
 for (const e of (await act('log')) || []) render(e);
-tools = await act('tools');
-renderTools();
-schedules = (await act('schedules')) || [];
-renderLater();
-memory = await act('memory');
-renderMemory();
 errorList = (await act('errors'))?.errors || [];
 renderErrors();
+await loadModels();
 await loadTrace('model');
-await loadTrace('calls');
 $('input').focus();
-// The times ("in 12 minutes") move on.
-setInterval(async () => {
-  if (!$('later').hidden) {
-    schedules = (await act('schedules')) || schedules;
-    renderLater();
-  }
-}, 30_000);

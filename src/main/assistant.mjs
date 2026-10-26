@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { addressed, isSilent, looksLikeCall, maySayNothing, messages, sayable, withoutAsides, words } from './calls.mjs';
 import { NOTE, claimsInability, handleOf, peterMessage, promisesWork, systemPrompt, userMessage } from './prompt.mjs';
-import { troubled } from './peter.mjs';
+import { asksHow, troubled } from './peter.mjs';
 
 const MAX_ROUNDS = 10; // messages to Peter for one request
 const KEEP_LOG = 300; // chat entries kept
@@ -196,14 +196,15 @@ export class Assistant {
         }
         this.finishWords(answer, said);
         const m = found[0];
-        let { text, failed, cancelled } = await this.ask(turn, m);
+        const { text, failed, cancelled } = await this.ask(turn, m);
         if (turn.cleared) break;
-        if (found.length > 1) text += `\n\n${NOTE.onlyFirst()}`;
         rounds++;
-        if (failed && !cancelled && turn.failures <= 2) text += `\n\n${NOTE.review}`;
-        if (rounds >= MAX_ROUNDS) text += `\n\n${NOTE.outOfRounds(MAX_ROUNDS)}`;
-        // Peter's answer goes to the model as the user's do: a message in the chat.
+        // Peter's answer goes to the model as the user's do: a message in the chat. The app's notes
+        // follow it, each a message of its own (so folding his answer later never cuts one).
         this.history.push({ role: 'user', content: peterMessage(text, { at: this.now(), model }) });
+        if (found.length > 1) this.history.push({ role: 'user', content: NOTE.onlyFirst() });
+        if (failed && !cancelled && turn.failures <= 2) this.history.push({ role: 'user', content: NOTE.review });
+        if (rounds >= MAX_ROUNDS) this.history.push({ role: 'user', content: NOTE.outOfRounds(MAX_ROUNDS) });
         if (cancelled) {
           this.add({ kind: 'note', text: 'Cancelled.' });
           break;
@@ -318,6 +319,7 @@ export class Assistant {
     this.emitState();
     let text;
     let failed = false;
+    let outcome = '';
     try {
       if (!m.text) {
         text = NOTE.empty();
@@ -328,13 +330,16 @@ export class Assistant {
         this.emitState();
         const started = this.now();
         try {
-          ({ text, failed } = await this.peter.say(m.text, { signal: turn.ctrl.signal }));
+          ({ text, failed, outcome = '' } = await this.peter.say(m.text, { signal: turn.ctrl.signal }));
         } finally {
           turn.toolRunning = false;
         }
         if (!turn.ctrl.signal.aborted) this.tone('from-peter');
-        // A run asked for: its message follows it on the Mac (waiting for Run, running, over).
-        if (!failed && /\bAsked for\b/.test(text)) await this.follow(entry, started);
+        // "How would I ask you to …?": the way to ask was what was wanted, nothing done is right.
+        if (failed && outcome !== 'error' && asksHow(m.text)) failed = false;
+        // A run asked for: its message follows it on the Mac (waiting for Run, running, over). Peter
+        // says so in his outcome; one too old to say it, in his words.
+        if (!failed && (outcome === 'asked' || (!outcome && /\bAsked for\b/i.test(text)))) await this.follow(entry, started);
       }
     } catch (err) {
       text = `It didn't work: ${err.message || err}`;

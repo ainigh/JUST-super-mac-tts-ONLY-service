@@ -22,9 +22,12 @@ way: [Peter's DECISIONS.md](https://github.com/ainigh/tool-mac-tool-run-agent/bl
   Peter. Even while you're talking: what you say goes when you've finished, and its answer to you
   is said at once.
 - **Peter keeps no conversation**: each message to him is all he has, so it's the whole request,
-  with every detail (the place, the address, the time). When he needs something, or can't do it,
-  he says so, and how to ask, and ends with *I don't keep our conversation: send the whole request
-  again.* The model then asks him again, whole, or asks you, if only you know.
+  with every detail (the place, the address, the time). The model's system prompt says so (his
+  answers don't). When he needs something, or can't do it, he says so, and how to ask; the model
+  then asks him again, whole, or asks you, if only you know.
+- **How it went is Peter's outcome, not his words**: his answer comes with `X-Peter-Outcome`
+  (done, asked, nothing, error), from what his tools did. It's what decides whether the model is
+  told to look at what went wrong, and whether a run is followed on the Mac.
 - **"How would I ask you to …?"** finds out what he can do without his doing anything.
 - **A long job doesn't hold up the conversation.** A script or flow (which waits for someone to
   click Run on the Mac) is "asked for", and the turn ends. When it's over, Peter calls Super Face
@@ -94,7 +97,7 @@ Tuesday, 11:20 pm:
 
 > **qwen3**: `@peter` Open the recipe page in Chrome.
 >
-> **Peter**: `@qwen3 Which page? Ask again with its address: open https://… in Chrome. I don't keep our conversation: send the whole request again.`
+> **Peter**: `@qwen3 Which page? Ask again with its address: open https://… in Chrome.`
 
 The model has the address from earlier in the chat, so it asks again, whole:
 

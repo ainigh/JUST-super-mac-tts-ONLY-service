@@ -3,8 +3,10 @@
 // carries it out on the Mac (through Tool Mac Tool Run, which this app never calls itself) and
 // answers in plain words. A run he asks for (a script or a flow, waiting for Run on the Mac), and
 // anything scheduled through him, comes back by itself: he POSTs it to this app (reply_to: POST
-// /api/peter here) the moment it's over, or due. GET /api/say/log says where each request stands,
-// and POST /api/say/stop calls one off.
+// /api/peter here) the moment it's over, or due. How a request went is in his answer's
+// X-Peter-Outcome header (what his tools did, not his words): done, asked (a run waits for Run on
+// the Mac), nothing (he needs something, can't, or said how to ask) or error. GET /api/say/log says
+// where each request stands, and POST /api/say/stop calls one off.
 
 export const DEFAULT_URL = 'http://127.0.0.1:8770';
 export const CLIENT = 'Super Face';
@@ -57,7 +59,8 @@ export class Peter {
   }
 
   /**
-   * Says something to Peter (POST /api/say): { text, failed, cancelled }, his answer for the model.
+   * Says something to Peter (POST /api/say): { text, failed, cancelled, outcome }, his answer for
+   * the model, and how it went (X-Peter-Outcome; '' from a Peter too old to say).
    * He's told where to say how a run went (reply_to). His model works every request through, a
    * few turns of it, so it may take a while.
    */
@@ -76,7 +79,8 @@ export class Peter {
     const answer = (await res.text().catch(() => '')).trim();
     if (!this.health.reachable) this.health = { ...this.health, reachable: true, error: null };
     if (!res.ok) return { text: `Peter couldn't answer (${res.status}): ${errorOf(answer) || answer || 'no reason given'}`, failed: true };
-    return { text: answer || '(Peter said nothing.)', failed: troubled(answer) };
+    const outcome = (res.headers?.get?.('x-peter-outcome') || '').trim().toLowerCase();
+    return { text: answer || '(Peter said nothing.)', failed: notDone(answer, outcome), outcome };
   }
 
   /** What this app asked Peter for, and how each stands (GET /api/say/log): newest first, or [] when he doesn't answer. */
@@ -117,7 +121,18 @@ function errorOf(text) {
   }
 }
 
-/** Peter's answer says he didn't do it (he needs something, or can't): for the critic. */
+/** Peter didn't do it (he needs something, can't, or it went wrong): for the critic. His outcome says; his words only when he's too old to say it. */
+export function notDone(answer, outcome = '') {
+  if (outcome) return outcome === 'nothing' || outcome === 'error';
+  return troubled(answer);
+}
+
+/** A question about how to ask him ("how would I ask you to …?"): his answer is the way, nothing done, and that's what was wanted. */
+export function asksHow(text) {
+  return /^\W*how (would|should|do|can) I ask you\b/i.test(String(text ?? ''));
+}
+
+/** Peter's answer says he didn't do it (he needs something, or can't), from a Peter that doesn't send his outcome. */
 export function troubled(answer) {
   return /\b(send the whole request again|I couldn't do that|didn't work|couldn't (start|be)|isn't answering|There's no tool called)\b/i.test(String(answer ?? ''));
 }

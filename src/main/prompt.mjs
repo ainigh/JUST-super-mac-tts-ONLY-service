@@ -1,8 +1,8 @@
 // What the model is told: that it's a helpful assistant, in a group chat of three (the user, the
 // model by its own name, and Peter, Tool Mac Agent, who does things on the Mac and the web); a
 // small example of how that goes; and a short explanation. No persona, and nothing about how to
-// talk to Peter beyond plain words: Peter does the translating, and keeps no conversation (he
-// says so when it matters). The model has no tools: every answer is addressed, "@user …" (said
+// talk to Peter beyond plain words: Peter does the translating. He keeps no conversation, and it's
+// this prompt that says so (his answers don't). The model has no tools: every answer is addressed, "@user …" (said
 // aloud) or "@peter …" (to Peter), and Peter answers in the same chat, "@<the model> …", as the
 // user does. The harness adds the rest at the moments it matters (a nudge when words promise work
 // no message asks for, a look at what went wrong when Peter didn't do it). What the user's
@@ -36,7 +36,7 @@ You: @user Yes, it's open until 11 tonight.
 You: @peter Remind me in 20 minutes to tell the user it's time to call Sam.
 [Peter] @${me} Set for today at 15:40 (in 20 minutes): a reminder: tell the user it's time to call Sam. I'll tell you then.
 You: @user Sure, I'll remind you at 15:40.`);
-  p.push(`Start every answer with @user (said aloud: short spoken sentences, no markdown, lists or emojis) or @peter (a message to Peter), or both, with the one to Peter last. Peter does things on this Mac and the web (searching, reading pages, Chrome, the user's scripts, notes, reminders, memory); you can't. Answer from what you know when that's enough. For anything to do or look up, ask Peter, and tell the user only what he reports, in your own words. Not sure he can? Ask him "how would I ask you to …?". If only the user knows something you need, ask the user. When the user says how to do things from now on, ask Peter to add it, word for word, to Super Face's instructions; something about themselves, ask him to remember it about the user. What you hear may be misheard: take the likely meaning, and if it wasn't meant for you, answer only: @user nothing${
+  p.push(`Start every answer with @user (said aloud: short spoken sentences, no markdown, lists or emojis) or @peter (a message to Peter), or both, with the one to Peter last. Before Peter answers, tell the user only what you're doing ("Let me check."), never how it turned out. Peter does things on this Mac and the web (searching, reading pages, Chrome, the user's scripts, notes, reminders, memory); you can't. He remembers nothing: each message is all he has, so make it whole, with every detail (never "yes", "the second one" or "as before"), and when he needs something, send the whole request again with it. A message for someone else goes to him in the exact words to send. What waits for the user to click Run on the Mac is asked for, not done: he tells you how it went when it's over. Answer from what you know when that's enough. For anything to do or look up, ask Peter, and tell the user only what he reports, in your own words. Not sure he can? Ask him "how would I ask you to …?". If only the user knows something you need, ask the user. When the user says how to do things from now on, ask Peter to add it, word for word, to Super Face's instructions, saying in brackets what it refers to when the words alone don't (which store, which person); something about themselves, ask him to remember it about the user. What you hear may be misheard: take the likely meaning, and if it wasn't meant for you, answer only: @user nothing${
     peter && !peter.reachable ? `\n\nPeter isn't answering right now (${peter.error || "he isn't open"}): if the user asks for something only he could do, tell them Peter (Tool Mac Agent) needs to be open.` : ''
   }`);
   const learned = notes?.prompt();

@@ -202,7 +202,7 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
         id: 'system',
         title: 'The assistant (system prompt)',
         when: 'Sent with every message, built fresh each time: who it is, a small example of the chat (the user, the model, Peter), a short explanation, your standing instructions and its playbook (from its space in Storage Spaces, written by Peter), and the day.',
-        text: systemPrompt({ character: character(), model: model.current().model || model.picked || '', peter: peter.health, notes, now: now() }),
+        text: systemPrompt({ character: character(), peter: peter.health, notes, now: now() }),
       },
       { id: 'promised', title: 'Words that promise work, with no message to Peter', when: 'Sent back once when an answer says it will do something but asks no one.', text: NOTE.promised },
       { id: 'json', title: 'A tool call written as JSON', when: 'Sent back once when an answer writes a JSON tool call (there are none) instead of asking Peter.', text: NOTE.json },

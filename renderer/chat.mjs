@@ -1,4 +1,4 @@
-// The chat beside the character: a chat of three. What you said (to the model, "@<its name>"),
+// The chat beside the character: a chat of three. What you said (to the model, "@<the character's name>"),
 // what it said to you ("@user") and to Peter ("@peter"), and what Peter said back ("@<its name>"),
 // each with a way to call off a run Peter took on. Shown and hidden by a click on the character. Talks to the main process through window.chat (preload-chat.cjs),
 // or, in a plain browser (npm run dev), to the dev server over HTTP.
@@ -139,7 +139,7 @@ function render(e) {
   if (!msg) {
     li.textContent = e.text;
   } else {
-    // Who it's from, and who it's to: "@qwen3 …" (to the model), "@user …", "@peter …".
+    // Who it's from, and who it's to: "@Ivy …" (to the model, by the character's name), "@user …", "@peter …".
     const how = document.createElement('span');
     how.className = 'how';
     how.textContent = [e.from || '', e.kind === 'user' && e.how === 'said' ? 'said' : '', e.news ? 'by himself' : '', e.kind === 'to-peter' || e.kind === 'peter' ? 'not read aloud' : ''].filter(Boolean).join(' · ');

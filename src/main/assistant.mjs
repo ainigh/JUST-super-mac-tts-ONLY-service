@@ -1,7 +1,7 @@
 // The assistant: one model, in a group chat of three. The user says something (heard or typed),
-// shown as "@<the model> …"; the model answers, addressed: "@user …" is said aloud as it's
+// shown as "@<its name> …" (the character's: "@Ivy"); the model answers, addressed: "@user …" is said aloud as it's
 // written, "@peter …" goes to Peter (a tone plays; it's never said). Peter's answer comes back in
-// the same chat, "@<the model> …", and goes to the model at once, as if the user had answered;
+// the same chat, "@<its name> …", and goes to the model at once, as if the user had answered;
 // and so does what Peter sends by himself (a run he took on is over, something scheduled is due).
 // The model answers until it has nothing more for Peter. A run Peter takes on doesn't hold the
 // conversation up. Everything can be cancelled: the model mid-answer, a run waiting for its click
@@ -48,9 +48,9 @@ export class Assistant {
     this.load();
   }
 
-  /** The model's name in the chat ("qwen3"): what the user and Peter address. */
+  /** Its name in the chat, the character's ("Ivy"): what the user and Peter address. */
   get handle() {
-    return handleOf(this.model.current().model || this.model.picked || '');
+    return handleOf(this.character().name);
   }
 
   // ---------------------------------------------------------------- what comes in
@@ -168,8 +168,8 @@ export class Assistant {
   async work(batch) {
     const turn = { ctrl: new AbortController(), batch, calls: 0, failures: 0, spoke: false, nudged: new Set(), toolRunning: false, toolEntry: null };
     this.turn = turn;
-    const model = this.model.current().model || this.model.picked || '';
-    const content = batch.map((b) => (b.how === 'peter' ? peterMessage(b.text, { at: b.at, model }) : userMessage(b.text, { at: b.at, how: b.how, model }))).join('\n');
+    const name = this.handle;
+    const content = batch.map((b) => (b.how === 'peter' ? peterMessage(b.text, { at: b.at, name }) : userMessage(b.text, { at: b.at, how: b.how, name }))).join('\n');
     this.fold();
     const mark = this.history.length;
     this.history.push({ role: 'user', content });
@@ -201,7 +201,7 @@ export class Assistant {
         rounds++;
         // Peter's answer goes to the model as the user's do: a message in the chat. The app's notes
         // follow it, each a message of its own (so folding his answer later never cuts one).
-        this.history.push({ role: 'user', content: peterMessage(text, { at: this.now(), model }) });
+        this.history.push({ role: 'user', content: peterMessage(text, { at: this.now(), name }) });
         if (found.length > 1) this.history.push({ role: 'user', content: NOTE.onlyFirst() });
         if (failed && !cancelled && turn.failures <= 2) this.history.push({ role: 'user', content: NOTE.review });
         if (rounds >= MAX_ROUNDS) this.history.push({ role: 'user', content: NOTE.outOfRounds(MAX_ROUNDS) });
@@ -250,7 +250,7 @@ export class Assistant {
       turn.read = true;
       await this.notes?.refresh({ signal: turn.ctrl.signal }).catch(() => {});
     }
-    const system = systemPrompt({ character: this.character(), model: this.model.current().model || this.model.picked || '', peter: this.peter.health, notes: this.notes, now: this.now() });
+    const system = systemPrompt({ character: this.character(), peter: this.peter.health, notes: this.notes, now: this.now() });
     const messages = [{ role: 'system', content: system }, ...this.history];
     const out = { text: '', spokenTo: 0, entry: null, spokenAny: false };
     const flush = (final) => {

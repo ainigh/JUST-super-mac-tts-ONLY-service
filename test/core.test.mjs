@@ -61,11 +61,12 @@ test('the harness knows promises and "I can\'t"', () => {
 
 test('the prompt: a helpful assistant in a chat of three, an example, a short explanation, what it has learned, the day', () => {
   const m = { prompt: () => "The user's standing instructions (follow them):\nCall me Sam.\n\nWhat you've learned about getting things done for the user:\n- Prefers Celsius" };
-  const p = systemPrompt({ character: CHARACTERS[2], model: 'qwen3:8b', peter: { reachable: true }, notes: m, now: new Date(2026, 9, 24).getTime() });
+  const p = systemPrompt({ character: CHARACTERS[2], peter: { reachable: true }, notes: m, now: new Date(2026, 9, 24).getTime() });
   assert.match(p, /^You are Sofia, a helpful assistant/);
-  assert.match(p, /In this chat you are @qwen3\./);
+  assert.match(p, /In this chat you are @Sofia\./);
   assert.doesNotMatch(p, /3D|character|avatar|gesture|your (?:face|hands|body)|\[tags?\]|dark suit/i, 'the model knows nothing of the character it is shown as: how it moves comes from its words, afterwards');
-  assert.match(p, /For example:\n\[the user\] @qwen3 /, 'an example first');
+  assert.doesNotMatch(p, /qwen/, 'never the model\'s name');
+  assert.match(p, /For example:\n\[the user\] @Sofia /, 'an example first');
   assert.match(p, /Start every answer with @user \(said aloud/);
   assert.match(p, /@peter \(a message to Peter\)/);
   assert.match(p, /how would I ask you to …\?/, 'how to find out what Peter can do');
@@ -79,12 +80,12 @@ test('the prompt: a helpful assistant in a chat of three, an example, a short ex
   assert.doesNotMatch(p, /Peter isn't answering/);
   assert.match(systemPrompt({ character: CHARACTERS[0], peter: { reachable: false, error: 'not running' } }), /Peter isn't answering right now \(not running\)/);
   assert.match(stamp(new Date(2026, 9, 24, 9, 5, 7).getTime()), /Saturday 24 October 2026, 09:05:07 \(UTC[+-]\d\d:\d\d\)/);
-  assert.equal(handleOf('qwen3:8b'), 'qwen3');
-  assert.equal(handleOf('library/llama3.2:3b'), 'llama3.2');
-  assert.equal(handleOf(''), 'model');
+  assert.equal(handleOf('Ivy'), 'Ivy');
+  assert.equal(handleOf('Mary Jane'), 'MaryJane');
+  assert.equal(handleOf(''), 'assistant');
   const at = new Date(2026, 9, 24, 9, 5, 7).getTime();
-  assert.match(userMessage('hi', { at, how: 'said', model: 'qwen3:8b' }), /^\[the user, said aloud, Saturday 24 October 2026, 09:05:07 \(UTC[^)]*\)\] @qwen3 hi$/);
-  assert.match(peterMessage('Done.', { at, model: 'qwen3:8b' }), /^\[Peter, Saturday [^\]]*\] @qwen3 Done\.$/);
+  assert.match(userMessage('hi', { at, how: 'said', name: 'Ivy' }), /^\[the user, said aloud, Saturday 24 October 2026, 09:05:07 \(UTC[^)]*\)\] @Ivy hi$/);
+  assert.match(peterMessage('Done.', { at, name: 'Ivy' }), /^\[Peter, Saturday [^\]]*\] @Ivy Done\.$/);
 });
 
 test('sizes go round', () => {

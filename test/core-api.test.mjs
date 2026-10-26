@@ -113,6 +113,8 @@ test('picking a character picks its voice, and its name', async () => {
   replies = ["I'm Leo."];
   await post('/api/chat', { text: 'who are you?', wait: true });
   assert.match(asked.at(-1).messages[0].content, /^You are Leo/);
+  assert.match(asked.at(-1).messages[0].content, /In this chat you are @Leo\./);
+  assert.match(asked.at(-1).messages.at(-1).content, /\] @Leo who are you\?$/, 'addressed by its name, not the model\'s');
   assert.equal(spoken.at(-1).voice, 'am_puck');
   core.actions.setCharacter({ id: 'Sofia' });
   assert.equal(settings.get().voice, 'bf_emma');
@@ -133,7 +135,7 @@ test('what it hears of its own voice is dropped; what the user says over it cuts
   assert.equal(r.said, 'what time is it in Tokyo');
   assert.ok(!speech.speaking, 'cut in: it stopped talking');
   await idle();
-  assert.match(asked.at(-1).messages.at(-1).content, /^\[the user, said aloud, [^\]]+\] @qwen3 what time is it in Tokyo$/);
+  assert.match(asked.at(-1).messages.at(-1).content, /^\[the user, said aloud, [^\]]+\] @Ivy what time is it in Tokyo$/);
 });
 
 test('"stop", "cancel", "new chat" and "clear the chat" are done at once, without the model', async () => {
@@ -169,7 +171,7 @@ test('a phrase that sounds unfinished waits for the rest', async () => {
   assert.equal(asked.length, before);
   core.heard({ text: 'eggs to my shopping list' });
   await idle();
-  assert.match(asked.at(-1).messages.at(-1).content, /\] @qwen3 add milk and eggs to my shopping list$/);
+  assert.match(asked.at(-1).messages.at(-1).content, /\] @Ivy add milk and eggs to my shopping list$/);
 });
 
 test('what it has learned, over the API: read from its space in Storage Spaces; without it there is none', async () => {
@@ -232,9 +234,9 @@ test("Peter's news over the API (Peter calling back): the character shows, and t
   assert.equal(r.status, 202);
   await idle();
   assert.ok(shown > before, 'it shows itself to say so');
-  assert.match(asked[sent].messages.at(-1).content, /^\[Peter, [^\]]+\] @qwen3 Meanwhile: The nightly backup finished \(it worked\)\.$/);
+  assert.match(asked[sent].messages.at(-1).content, /^\[Peter, [^\]]+\] @Ivy Meanwhile: The nightly backup finished \(it worked\)\.$/);
   assert.equal(asked[sent].messages.at(-1).role, 'user');
-  assert.ok(core.assistant.log.some((e) => e.kind === 'peter' && e.from === 'Peter' && e.to === 'qwen3' && /nightly backup finished/.test(e.text)));
+  assert.ok(core.assistant.log.some((e) => e.kind === 'peter' && e.from === 'Peter' && e.to === 'Ivy' && /nightly backup finished/.test(e.text)));
   assert.equal(spoken.at(-1).text, "Your backup's done, and it worked.");
   // Plain text is taken too; nothing to say is refused.
   replies = ['Noted.'];

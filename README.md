@@ -26,9 +26,9 @@ wake word. How the three apps fit: [ARCHITECTURE.md in Tool Mac Tool Run](https:
 - **A chat of three: you, the model, and Peter.** [Peter](https://github.com/ainigh/tool-mac-tool-run-agent)
   (Tool Mac Agent) is a participant, not a tool: he carries out anything on the Mac and the web
   (the web, your Chrome, your scripts and flows through Tool Mac Tool Run, notes, MEMORY, a
-  schedule), asked in plain words. What you say is to the model, shown as `@qwen3 …` (its own
-  name). Every answer of the model's is addressed: `@user …` is said aloud to you, `@peter …` goes
-  to Peter. Peter answers in the same chat (`@qwen3 …`), and his answer goes to the model at once,
+  schedule), asked in plain words. What you say is to the model, shown as `@Ivy …` (the
+  character's name). Every answer of the model's is addressed: `@user …` is said aloud to you, `@peter …` goes
+  to Peter. Peter answers in the same chat (`@Ivy …`), and his answer goes to the model at once,
   as if you'd answered, even while you're talking; what you say goes when you've finished, and its
   answer to you is said at once. **Messages to and from Peter are never read aloud**: a tone plays
   instead, rising for one to him, falling for his answer. A run doesn't hold the conversation up:
@@ -120,7 +120,7 @@ voice again without restarting the app.
 | Show or hide the character | Click the menu bar icon, or **⌘⇧A** anywhere |
 | Change character (and voice), size | The chat's top row (S, M, L, H); or right-click the icon or the character |
 | See what went to the model, and what came back | The chat's **Model** tab |
-| See every message to Peter, and what he said back | The chat itself: `@peter …`, and his `@qwen3 …` |
+| See every message to Peter, and what he said back | The chat itself: `@peter …`, and his `@Ivy …` |
 | Pick the model, think first | The chat's top row |
 | Listening while it talks, the soft tone | Its menu (right-click the icon or the character) |
 | Move it | Drag it |
@@ -136,7 +136,7 @@ Peter keeps, and what it has learned is in its space in Storage Spaces (Peter wr
  chat window ── typed ──────────────────────────────────▶ assistant ◀── Peter's callbacks (a run over,
                                                           │   ▲          something scheduled due)
                                          one model (Ollama, streamed)   its notes, read through Peter
-                                                          │   │ his answer (@qwen3 …), a tone
+                                                          │   │ his answer (@Ivy …), a tone
                                                           ▼   │
                  @peter …  (a tone) ── Peter's /api/say ──┘   (Tool Mac Agent: does it on the Mac,
                                                                 through Tool Mac Tool Run)

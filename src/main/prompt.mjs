@@ -1,20 +1,18 @@
 // What the model is told: that it's a helpful assistant, in a group chat of three (the user, the
-// model by its own name, and Peter, Tool Mac Agent, who does things on the Mac and the web); a
+// model by the character's name, and Peter, Tool Mac Agent, who does things on the Mac and the web); a
 // small example of how that goes; and a short explanation. No persona, and nothing about how to
 // talk to Peter beyond plain words: Peter does the translating. He keeps no conversation, and it's
 // this prompt that says so (his answers don't). The model has no tools: every answer is addressed, "@user …" (said
-// aloud) or "@peter …" (to Peter), and Peter answers in the same chat, "@<the model> …", as the
+// aloud) or "@peter …" (to Peter), and Peter answers in the same chat, "@<its name> …", as the
 // user does. The harness adds the rest at the moments it matters (a nudge when words promise work
 // no message asks for, a look at what went wrong when Peter didn't do it). What the user's
 // standing instructions and its playbook say is read from its own space in Storage Spaces
 // (./notes.mjs) and comes last, with the day. How the character moves is read from its words
 // afterwards (src/shared/director.mjs).
 
-/** The model's name in the chat: "@qwen3" for qwen3:8b. */
-export function handleOf(model) {
-  const m = String(model || '').trim();
-  if (!m) return 'model';
-  return m.split(':')[0].split('/').pop().replace(/[^\w.-]/g, '') || 'model';
+/** The assistant's name in the chat: the character's ("@Ivy"), never the model's. */
+export function handleOf(name) {
+  return String(name || '').replace(/[^\w.-]/g, '') || 'assistant';
 }
 
 /**
@@ -22,8 +20,8 @@ export function handleOf(model) {
  * reuses what it has read); what changes (the notes, the day) comes last, and each message
  * carries its exact time.
  */
-export function systemPrompt({ character, model = '', peter = null, notes, now = Date.now(), typedOnly = false }) {
-  const me = handleOf(model);
+export function systemPrompt({ character, peter = null, notes, now = Date.now(), typedOnly = false }) {
+  const me = handleOf(character.name);
   const p = [];
   p.push(`You are ${character.name}, a helpful assistant the user talks to on their Mac${typedOnly ? '' : ', out loud or typed'}. In this chat you are @${me}.`);
   p.push(`For example:
@@ -63,13 +61,13 @@ export function stamp(ms) {
 }
 
 /** A message from the user, as the model gets it: who, when, how (heard or typed), to whom. */
-export function userMessage(text, { at = Date.now(), how = 'said', model = '' } = {}) {
-  return `[the user, ${how === 'said' ? 'said aloud' : how}, ${stamp(at)}] @${handleOf(model)} ${text}`;
+export function userMessage(text, { at = Date.now(), how = 'said', name = '' } = {}) {
+  return `[the user, ${how === 'said' ? 'said aloud' : how}, ${stamp(at)}] @${handleOf(name)} ${text}`;
 }
 
 /** Peter's answer (or his news, come in by itself), as the model gets it: as the user's are. */
-export function peterMessage(text, { at = Date.now(), model = '' } = {}) {
-  return `[Peter, ${stamp(at)}] @${handleOf(model)} ${text}`;
+export function peterMessage(text, { at = Date.now(), name = '' } = {}) {
+  return `[Peter, ${stamp(at)}] @${handleOf(name)} ${text}`;
 }
 
 // ---------------------------------------------------------------- the harness's notes, at the moments they matter

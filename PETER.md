@@ -1,6 +1,6 @@
 # Peter: how things get done
 
-The chat is a chat of three: **you**, **the model** (by its own name: `@qwen3` for `qwen3:8b`),
+The chat is a chat of three: **you**, **the model** (by the character's name: `@Ivy`),
 and **Peter**, [Tool Mac Agent](https://github.com/ainigh/tool-mac-tool-run-agent), who carries
 out anything on the Mac and the web. The model has no tools to learn: Peter is a participant, not
 a tool. It asks him the way you'd ask a colleague, in plain words, and he answers in plain words,
@@ -17,7 +17,7 @@ way: [Peter's DECISIONS.md](https://github.com/ainigh/tool-mac-tool-run-agent/bl
   answer may do both: "@user Let me check." (heard while Peter works), then "@peter …".
 - **What's said to and by Peter is never read aloud**: a tone plays instead, two quick notes
   rising for a message to him, falling for his answer. The chat shows each, `@peter …` and his
-  `@qwen3 …`.
+  `@Ivy …`.
 - **Peter's answer goes to the model at once, as yours do**: as a message in the chat, from
   Peter. Even while you're talking: what you say goes when you've finished, and its answer to you
   is said at once.
@@ -51,95 +51,95 @@ Sunday 25 October 2026, 9:40 pm.
 
 ### 1. Is it open, and till when tomorrow?
 
-> **You** (heard): `@qwen3` is the walmart on ben white still open? and when do they close tomorrow? let me see it
+> **You** (heard): `@Ivy` is the walmart on ben white still open? and when do they close tomorrow? let me see it
 
-> **qwen3**: `@user` Let me check.
+> **Ivy**: `@user` Let me check.
 > `@peter` Is the Walmart on East Ben White Blvd in Austin, TX open right now, what are its hours tomorrow (Monday), and open its page in Chrome.
 
 "Let me check." is said; the message to Peter isn't: a rising tone plays. Peter's model searches
 the web, reads the store's own page (a search snippet can be old) and opens it:
 
-> **Peter** (falling tone, not said): `@qwen3 Yes: the Walmart Supercenter at 710 E Ben White Blvd is open until 11pm tonight, and tomorrow from 6am to 11pm. Its page (walmart.com/store/1234-austin-tx) is open in your own Chrome window, side by side with the person's.`
+> **Peter** (falling tone, not said): `@Ivy Yes: the Walmart Supercenter at 710 E Ben White Blvd is open until 11pm tonight, and tomorrow from 6am to 11pm. Its page (walmart.com/store/1234-austin-tx) is open in your own Chrome window, side by side with the person's.`
 
-> **qwen3**: `@user` Yes, it's open until 11 tonight, and tomorrow from 6 in the morning to 11 at
+> **Ivy**: `@user` Yes, it's open until 11 tonight, and tomorrow from 6 in the morning to 11 at
 > night. Its page is up on the right.
 
 ### 2. "From now on, when I say walmart…"
 
-> **You**: `@qwen3` from now on whenever I say walmart just tell me yes if they're open and no if they're closed
+> **You**: `@Ivy` from now on whenever I say walmart just tell me yes if they're open and no if they're closed
 
 That's a standing instruction, so it goes in Super Face's instructions, which the model is given
 with every request. It has everything the next time needs, because the next time the model will
 have only that line, not this conversation:
 
-> **qwen3**: `@user` Got it.
+> **Ivy**: `@user` Got it.
 > `@peter` Add to Super Face's instructions, word for word: "When the user says just walmart: ask Peter whether the Walmart Supercenter at 710 E Ben White Blvd, Austin TX (walmart.com/store/1234-austin-tx) is open right now, and answer with one word: Yes or No."
 
-> **Peter**: `@qwen3 Added it to the end of Super Face's instructions.`
+> **Peter**: `@Ivy Added it to the end of Super Face's instructions.`
 
-> **qwen3**: `@user` Done. Say walmart any time and I'll tell you yes or no.
+> **Ivy**: `@user` Done. Say walmart any time and I'll tell you yes or no.
 
 ### 3. Next time
 
 Tuesday, 11:20 pm:
 
-> **You**: `@qwen3` walmart
+> **You**: `@Ivy` walmart
 >
-> **qwen3**: `@peter` Is the Walmart Supercenter at 710 E Ben White Blvd, Austin TX open right now? (nothing said yet; the soft busy tone plays)
+> **Ivy**: `@peter` Is the Walmart Supercenter at 710 E Ben White Blvd, Austin TX open right now? (nothing said yet; the soft busy tone plays)
 >
-> **Peter**: `@qwen3 No: it closed at 11pm, and opens tomorrow at 6am.`
+> **Peter**: `@Ivy No: it closed at 11pm, and opens tomorrow at 6am.`
 >
-> **qwen3**: `@user` No.
+> **Ivy**: `@user` No.
 
 ## When Peter needs something
 
-> **You**: `@qwen3` open that recipe page from earlier
+> **You**: `@Ivy` open that recipe page from earlier
 
-> **qwen3**: `@peter` Open the recipe page in Chrome.
+> **Ivy**: `@peter` Open the recipe page in Chrome.
 >
-> **Peter**: `@qwen3 Which page? Ask again with its address: open https://… in Chrome.`
+> **Peter**: `@Ivy Which page? Ask again with its address: open https://… in Chrome.`
 
 The model has the address from earlier in the chat, so it asks again, whole:
 
-> **qwen3**: `@peter` Open https://cooking.example/shakshuka in Chrome.
+> **Ivy**: `@peter` Open https://cooking.example/shakshuka in Chrome.
 >
-> **Peter**: `@qwen3 Opened https://cooking.example/shakshuka in your own Chrome window, side by side with the person's.`
+> **Peter**: `@Ivy Opened https://cooking.example/shakshuka in your own Chrome window, side by side with the person's.`
 >
-> **qwen3**: `@user` There it is.
+> **Ivy**: `@user` There it is.
 
 Had it not known, it would have asked you.
 
 ## When it's a run
 
-> **You**: `@qwen3` back up my documents
+> **You**: `@Ivy` back up my documents
 >
-> **qwen3**: `@user` I'll ask for it.
+> **Ivy**: `@user` I'll ask for it.
 > `@peter` Run the nightly backup.
 >
-> **Peter**: `@qwen3 Asked for the nightly backup. You'll be told how it went the moment it's over.`
+> **Peter**: `@Ivy Asked for the nightly backup. You'll be told how it went the moment it's over.`
 >
-> **qwen3**: `@user` It's asked for. I'll tell you when it's done.
+> **Ivy**: `@user` It's asked for. I'll tell you when it's done.
 
 (A run waits for someone to click Run on the Mac. Super Face says it itself when the card has
 waited a while: "It's waiting for you to click Run on your Mac.") The turn is over; you can talk
 about anything else. Minutes later, Peter calls back, and this comes in as a message from him:
 
-> **Peter**: `@qwen3 Meanwhile: The nightly backup finished (it worked). It printed: backed up 1,204 files`
+> **Peter**: `@Ivy Meanwhile: The nightly backup finished (it worked). It printed: backed up 1,204 files`
 >
-> **qwen3**: `@user` Your backup's done, and it worked.
+> **Ivy**: `@user` Your backup's done, and it worked.
 
 ## When it's for later
 
-> **You**: `@qwen3` remind me to call Sam in 20 minutes
+> **You**: `@Ivy` remind me to call Sam in 20 minutes
 >
-> **qwen3**: `@peter` Remind me in 20 minutes to tell the user it's time to call Sam.
+> **Ivy**: `@peter` Remind me in 20 minutes to tell the user it's time to call Sam.
 >
-> **Peter**: `@qwen3 Set for today at 21:40 (in 20 minutes): a reminder: tell the user it's time to call Sam. Its number is 3. I'll tell you then.`
+> **Peter**: `@Ivy Set for today at 21:40 (in 20 minutes): a reminder: tell the user it's time to call Sam. Its number is 3. I'll tell you then.`
 >
-> **qwen3**: `@user` Sure, I'll remind you at 9:40.
+> **Ivy**: `@user` Sure, I'll remind you at 9:40.
 
 Twenty minutes later:
 
-> **Peter**: `@qwen3 Meanwhile: Reminder (Scheduled today at 21:20, number 3): tell the user it's time to call Sam.`
+> **Peter**: `@Ivy Meanwhile: Reminder (Scheduled today at 21:20, number 3): tell the user it's time to call Sam.`
 >
-> **qwen3**: `@user` It's time to call Sam!
+> **Ivy**: `@user` It's time to call Sam!

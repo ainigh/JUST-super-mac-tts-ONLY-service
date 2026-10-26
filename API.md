@@ -345,15 +345,15 @@ it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) a
 
 - **One model**: Ollama's (`http://127.0.0.1:11434`), the one in `model`, else the best Ollama has
   (Qwen 3, Qwen 2.5, Gemma 3, Llama 3.x… in that order). Pick it in the chat's top row.
-- **A chat of three**: you, the model (by its own name: `@qwen3` for `qwen3:8b`), and
+- **A chat of three**: you, the model (by the character's name, `@Ivy`, never the model's), and
   [Peter](https://github.com/ainigh/tool-mac-tool-run-agent) (Tool Mac Agent, `http://127.0.0.1:8770`),
-  who carries out anything on the Mac and the web. What you say is to the model (`@qwen3 …`).
+  who carries out anything on the Mac and the web. What you say is to the model (`@Ivy …`).
   Every answer of the model's is addressed: `@user …` is said aloud to you, sentence by sentence
   as it's written; `@peter …` goes to Peter's `POST /api/say`, in plain words, and is never said:
   a tone plays instead (two quick rising notes). An answer may do both (`@user Let me check.`,
   then `@peter search the web for …`). Words addressed to no one are taken as yours.
 - **Peter is a participant, not a tool**: the model has no tools to learn. Peter's own model reads
-  what it says, does it with his tools, and answers in the same chat, `@qwen3 …` (two quick
+  what it says, does it with his tools, and answers in the same chat, `@Ivy …` (two quick
   falling notes; never said). His answer goes to the model at once, as if you had answered, until
   the model has nothing more for him (ten messages for one request at most). He keeps no
   conversation: each message to him is the whole request; when he needs something, or can't, he
@@ -394,7 +394,7 @@ it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) a
 
 ```bash
 curl -s localhost:8769/api/chat -d '{"text": "what is on my list for later?", "wait": true}'
-# {"ok":true,"id":"e12","reply":"You've one thing: stretch at 17:30.","peter":[{"from":"qwen3","to":"peter","text":"what's scheduled","state":"done"},{"from":"Peter","to":"qwen3","text":"Scheduled, the soonest first: …"}]}
+# {"ok":true,"id":"e12","reply":"You've one thing: stretch at 17:30.","peter":[{"from":"Ivy","to":"peter","text":"what's scheduled","state":"done"},{"from":"Peter","to":"Ivy","text":"Scheduled, the soonest first: …"}]}
 ```
 
 `text` is required; `wait: true` answers once the request is over (with `reply`, what was said

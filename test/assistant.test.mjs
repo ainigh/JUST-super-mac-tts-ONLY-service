@@ -136,7 +136,7 @@ test('a chat of three: @user is said, @peter is sent as it is (never said), and 
       [
         '@user Let me check.\n@peter search the web for Leeds weather today',
         (m) => {
-          assert.match(m.at(-1).content, /^\[Peter, \w+day [^\]]+\] @qwen3 The web has these for "Leeds weather today":\n1\. Leeds weather/);
+          assert.match(m.at(-1).content, /^\[Peter, \w+day [^\]]+\] @Ivy The web has these for "Leeds weather today":\n1\. Leeds weather/);
           assert.equal(m.at(-1).role, 'user', "Peter's answer is a message to the model, as the user's are");
           return '@peter read the page at https://weather.example/leeds';
         },
@@ -159,17 +159,17 @@ test('a chat of three: @user is said, @peter is sent as it is (never said), and 
     assert.deepEqual(tones, ['to-peter', 'from-peter', 'to-peter', 'from-peter'], 'a tone for each message to Peter, and each back');
     const sys = model.asked[0][0].content;
     assert.match(sys, /You are Ivy/);
-    assert.match(sys, /In this chat you are @qwen3\./);
-    assert.match(model.asked[0][1].content, /^\[the user, said aloud, \w+day \d+ \w+ \d{4}, \d\d:\d\d:\d\d \(UTC[+-]\d\d:\d\d\)\] @qwen3 what's the weather in Leeds\?$/);
+    assert.match(sys, /In this chat you are @Ivy\./);
+    assert.match(model.asked[0][1].content, /^\[the user, said aloud, \w+day \d+ \w+ \d{4}, \d\d:\d\d:\d\d \(UTC[+-]\d\d:\d\d\)\] @Ivy what's the weather in Leeds\?$/);
     const chat = a.log.filter((e) => !e.hidden).map((e) => [e.kind, e.from, e.to, e.text]);
     assert.deepEqual(chat.map((x) => x.slice(0, 3)), [
-      ['user', 'You', 'qwen3'],
-      ['assistant', 'qwen3', 'user'],
-      ['to-peter', 'qwen3', 'peter'],
-      ['peter', 'Peter', 'qwen3'],
-      ['to-peter', 'qwen3', 'peter'],
-      ['peter', 'Peter', 'qwen3'],
-      ['assistant', 'qwen3', 'user'],
+      ['user', 'You', 'Ivy'],
+      ['assistant', 'Ivy', 'user'],
+      ['to-peter', 'Ivy', 'peter'],
+      ['peter', 'Peter', 'Ivy'],
+      ['to-peter', 'Ivy', 'peter'],
+      ['peter', 'Peter', 'Ivy'],
+      ['assistant', 'Ivy', 'user'],
     ]);
     assert.equal(chat[2][3], 'search the web for Leeds weather today');
     assert.match(chat[3][3], /^The web has these/);
@@ -213,7 +213,7 @@ test('when Peter needs something, the model asks him again with the whole reques
       [
         '@peter what is the weather like',
         (m) => {
-          assert.match(m.at(-2).content, /^\[Peter, [^\]]+\] @qwen3 Where\? Ask again with the place, like: what's the weather in Leeds\.$/);
+          assert.match(m.at(-2).content, /^\[Peter, [^\]]+\] @Ivy Where\? Ask again with the place, like: what's the weather in Leeds\.$/);
           assert.match(m.at(-1).content, /^Note from the app \(not the user, not Peter\): Peter didn't do that\. Look at why first\./, 'the note is a message of its own');
           return "@peter what's the weather in Leeds";
         },
@@ -248,7 +248,7 @@ test("a run doesn't hold the conversation up: asked for, followed, and its news 
           return "@user It's asked for. I'll tell you when it's done.";
         },
         (m) => {
-          assert.match(m.at(-1).content, /^\[Peter, [^\]]+\] @qwen3 Meanwhile: The nightly backup finished \(it worked\)\.$/);
+          assert.match(m.at(-1).content, /^\[Peter, [^\]]+\] @Ivy Meanwhile: The nightly backup finished \(it worked\)\.$/);
           return "@user Your backup's done, and it worked.";
         },
       ],
@@ -266,7 +266,7 @@ test("a run doesn't hold the conversation up: asked for, followed, and its news 
     await idle();
     assert.equal(model.asked.length, 3);
     assert.deepEqual(said, ["I'll ask for it.", "It's asked for.", "I'll tell you when it's done.", "Your backup's done, and it worked."]);
-    assert.deepEqual(a.log.filter((e) => e.kind === 'peter' && e.news).map((e) => [e.from, e.to, e.text]), [['Peter', 'qwen3', 'Meanwhile: The nightly backup finished (it worked).']]);
+    assert.deepEqual(a.log.filter((e) => e.kind === 'peter' && e.news).map((e) => [e.from, e.to, e.text]), [['Peter', 'Ivy', 'Meanwhile: The nightly backup finished (it worked).']]);
     assert.deepEqual(tones, ['to-peter', 'from-peter', 'from-peter']);
   } finally {
     fake.close();
@@ -285,7 +285,7 @@ test('what the user says while Peter is working for them waits its turn; then it
           return '@user Rain in Leeds.';
         },
         (m) => {
-          assert.match(m.at(-1).content, /^\[the user, typed, [^\]]+\] @qwen3 and in York\?$/);
+          assert.match(m.at(-1).content, /^\[the user, typed, [^\]]+\] @Ivy and in York\?$/);
           return '@user York too.';
         },
       ],
@@ -309,11 +309,11 @@ test("the user speaking while the model starts on Peter's news is answered first
         signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
       }),
     (m) => {
-      assert.match(m.at(-1).content, /^\[the user, said aloud, [^\]]+\] @qwen3 what time is it\?$/);
+      assert.match(m.at(-1).content, /^\[the user, said aloud, [^\]]+\] @Ivy what time is it\?$/);
       return "@user It's nine.";
     },
     (m) => {
-      assert.match(m.at(-1).content, /^\[Peter, [^\]]+\] @qwen3 Meanwhile: The backup finished\.$/);
+      assert.match(m.at(-1).content, /^\[Peter, [^\]]+\] @Ivy Meanwhile: The backup finished\.$/);
       return '@user And your backup is done.';
     },
   ]);
@@ -444,7 +444,7 @@ test("how a request went is Peter's outcome, not his words: a job done that says
       [
         '@peter umbrella in Lagos?',
         (m) => {
-          assert.match(m.at(-1).content, /^\[Peter, [^\]]+\] @qwen3 Yes: 80% rain tomorrow\. I couldn't find the hours it'll fall\.$/, 'no note after a job done');
+          assert.match(m.at(-1).content, /^\[Peter, [^\]]+\] @Ivy Yes: 80% rain tomorrow\. I couldn't find the hours it'll fall\.$/, 'no note after a job done');
           return '@user Yes, take one.';
         },
       ],
@@ -563,7 +563,7 @@ test('more said while it is still thinking is asked together, as one request', a
   await idle();
   assert.equal(model.asked.length, 2);
   const asked = model.asked[1].at(-1).content;
-  assert.match(asked, /typed, [^\]]+\] @qwen3 book a table\n\[the user, typed, [^\]]+\] @qwen3 in Paris at nine tomorrow$/);
+  assert.match(asked, /typed, [^\]]+\] @Ivy book a table\n\[the user, typed, [^\]]+\] @Ivy in Paris at nine tomorrow$/);
   assert.equal(model.asked[1].filter((m) => m.role === 'user').length, 1);
   assert.deepEqual(said, ['Paris, at nine tomorrow.', 'Done.']);
   void release;

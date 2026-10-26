@@ -95,7 +95,6 @@ function doing() {
   if (status.face?.tts?.state === 'failed') return "My voice didn't load: see Errors";
   if (status.face?.tts?.state === 'downloading') return `Getting my voice ready… ${Math.round((status.face.tts.progress || 0) * 100)}%`;
   if (status.speaking) return 'Talking…';
-  if (a.phase === 'learning') return 'Taking notes…';
   if (!status.listening) return 'Not listening (the mic is off): type below';
   const e = status.ears || {};
   switch (e.state) {
@@ -256,7 +255,7 @@ function renderErrors() {
 const traceCards = { model: new Map() }; // item id → its card
 const LIST = { model: 'modelList' };
 const COUNT = { model: 'modelCount' };
-const PURPOSES = { answer: 'Answer', learning: 'Learning (after a request)' };
+const PURPOSES = { answer: 'Answer' };
 
 async function loadTrace(log) {
   const r = await act('trace', { log });

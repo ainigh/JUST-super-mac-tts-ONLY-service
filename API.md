@@ -93,7 +93,7 @@ curl -s localhost:8769/api/echo -d '{"text": "nice to meet you"}'
 | `POST /api/cancel` | cancels what the assistant is doing: its answer, and the runs Peter is following for it |
 | `POST /api/peter` | Peter calling back: a run asked of him is over, or something scheduled is due (see [below](#post-apipeter)) |
 | `POST /api/heard` | a phrase heard by other ears, handled as if the character's own had heard it |
-| `GET  /api/memory` | what it has learned, as Peter keeps it: its playbook and the user's standing instructions (notes), what MEMORY has on the user (changed by asking Peter, in words) |
+| `GET  /api/memory` | what it has learned, as its space in Storage Spaces has it: the user's standing instructions and its playbook (changed by asking Peter, in words) |
 | `GET  /api/errors` | what went wrong (the voice, the ears, the avatar, the model, the app), and `report`: all of it with versions and state, as text to paste |
 | `GET  /` | a status page, with a box to try it |
 | `GET  /api.md` | this document |
@@ -311,7 +311,7 @@ quiet on for a minute ends `failed`, so nobody waits on it for ever.
 `avaturn` Sofia, `avatarsdk` Leo; its voice comes with it), `voice`, `speed`, `mood` (the resting mood), `expressions` (`rules`: read from the words; `off`: only what's asked),
 `captions` (true/false), `hideAfter` (seconds after speaking before it hides; 0 stays), `model`
 (an Ollama model's name; empty: the best one Ollama has), `think` (true: it thinks before
-answering), `ollamaUrl`, `peterUrl` (where Peter is: `http://127.0.0.1:8770`), `listening` (the ears on while it shows), and
+answering), `ollamaUrl`, `peterUrl` (where Peter is: `http://127.0.0.1:8770`), `storageUrl` (where Storage Spaces is: `http://127.0.0.1:8771`), `listening` (the ears on while it shows), and
 `listenWhileSpeaking` (it can be cut in on), `busyTone` (true: a soft tone, now and then, while it works something out), and answers all of them. `GET /api/update` says `{"state": "idle" | "checking" |
 "upToDate" | "available" | "installing" | "failed", "version", "latest"}`; `POST /api/update` checks
 again, `{"install": true}` installs and restarts.
@@ -352,12 +352,12 @@ it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) a
   as it's written; `@peter …` goes to Peter's `POST /api/say`, in plain words, and is never said:
   a tone plays instead (two quick rising notes). An answer may do both (`@user Let me check.`,
   then `@peter search the web for …`). Words addressed to no one are taken as yours.
-- **Peter is a participant, not a tool**: the model has no tools to learn. Peter reads what it
-  says (with his own model when the words don't fit one of his templates), does it, and answers in
-  the same chat, `@qwen3 …` (two quick falling notes; never said). His answer goes to the model at
-  once, as if you had answered, until the model has nothing more for him (ten messages for one
-  request at most). He keeps no conversation: each message to him is whole in itself. How it goes,
-  with an example, is in [PETER.md](PETER.md).
+- **Peter is a participant, not a tool**: the model has no tools to learn. Peter's own model reads
+  what it says, does it with his tools, and answers in the same chat, `@qwen3 …` (two quick
+  falling notes; never said). His answer goes to the model at once, as if you had answered, until
+  the model has nothing more for him (ten messages for one request at most). He keeps no
+  conversation: each message to him is the whole request; when he needs something, or can't, he
+  says so and how to ask. How it goes, with an example, is in [PETER.md](PETER.md).
 - **Runs don't hold the conversation up**: a script or flow Peter takes on ("Asked for the nightly
   backup") ends the turn. The message follows it (waiting for Run on the Mac, running; it's told
   out loud if it waits unclicked for a while), and when it's over Peter calls back at `POST
@@ -372,19 +372,18 @@ it is a request (no wake word). Typed messages (its chat, or `POST /api/chat`) a
 - **Cancelling**: the Stop button, a message's Cancel, or saying "cancel" calls off the message
   being answered, and any run Peter is following for it (taken off the Mac while it waits for
   Run, stopped while it runs; `POST /api/say/stop` there).
-- **What it learns is kept by Peter**, written by asking him: its playbook (which ways, sites and
-  wording work for what, how the user likes things done, its mistakes) is the note `Super Face
-  playbook`; the user's standing instructions ("from now on, when I say…") are the note `Super Face
-  instructions`; what it learns about the user themselves goes to MEMORY (`PEOPLE`, about `the
-  user`). The app reads all three through Peter (`?exact=true`: his templates only, never his
-  model) at the start of every request.
-- **Its habits** (one model playing what Super Voice gave three): understand what's wanted and own
-  it until it's delivered; have Peter do it, never claiming what he didn't; check what came back
-  with suspicion before answering. The app steps in at the moments it matters: an answer that
-  promises work with no message is sent back; a tool call written as JSON out of habit is sent
-  back (ask Peter instead); something that didn't work brings a note to work out why before
-  trying again; after a request that took work, a quiet moment (nothing said) to save what it
-  taught.
+- **What it learns is kept by Peter**, written by asking him, word for word: the user's standing
+  instructions ("from now on, when I say…") go to Super Face's instructions (SUPER/PROMPT, the note
+  `instructions`, in Storage Spaces), what it learns about the user themselves to MEMORY (`PEOPLE`,
+  about `the user`). The app reads its standing instructions and its playbook (SUPER/MEMORY, the
+  note `playbook`) straight from its own space in Storage Spaces (`storageUrl`), without a model,
+  at the start of every request.
+- **A helpful assistant**: no persona, and nothing about Peter's ways beyond plain words. Its
+  prompt is a small example of the chat and a short explanation. The app steps in at the moments it
+  matters: an answer that promises work with no message is sent back; a tool call written as JSON
+  out of habit is sent back (ask Peter instead); "I can't" while Peter could is sent back; when
+  Peter didn't do it, a note to look at why (ask him again whole, or ask the user) before trying
+  again.
 - **Heard**: what the ears write down is first compared with what the character just said
   (`/api/echo`'s comparison), so its own voice coming back is dropped; said over it, it cuts in.
   "Stop" stops it talking, "cancel" (or "never mind") calls off whatever it's doing, "new chat"
@@ -434,7 +433,7 @@ GPU, then the CPU; twice round). The chat's **Errors** tab shows them, with **Co
 ### `GET /api/events`, for the assistant
 
 Besides the speech events, the stream carries `entry` (a conversation entry added or changed),
-`assistant` (what it's doing: `phase` is `idle`, `thinking`, `tool` or `learning`; `pending`, the
+`assistant` (what it's doing: `phase` is `idle`, `thinking` or `tool`; `pending`, the
 runs on the Mac it asked for that aren't over), `ears` (`off`,
 `loading`, `listening`, `hearing`, `writing`, `paused`, `failed`), `heard`, `tone` (`which`:
 `to-peter` or `from-peter`: a message to Peter, or one from him), `errors` and `status`.

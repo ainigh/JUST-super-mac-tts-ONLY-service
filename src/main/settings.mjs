@@ -20,6 +20,8 @@ export const DEFAULTS = {
   think: false,
   /** Where Peter is (Tool Mac Agent): everything on the Mac and the web goes through him. */
   peterUrl: 'http://127.0.0.1:8770',
+  /** Where Storage Spaces is: the user's standing instructions and its playbook are read from its space there. */
+  storageUrl: 'http://127.0.0.1:8771',
   /** Listening for what's said while the character is shown. */
   listening: true,
   /** Listening while it talks too, so it can be cut in on (its own voice is told apart by its words). */

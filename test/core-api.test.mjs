@@ -172,12 +172,13 @@ test('a phrase that sounds unfinished waits for the rest', async () => {
   assert.match(asked.at(-1).messages.at(-1).content, /\] @qwen3 add milk and eggs to my shopping list$/);
 });
 
-test('what it has learned, over the API: kept by Peter, and read through him; without him there is none', async () => {
+test('what it has learned, over the API: read from its space in Storage Spaces; without it there is none', async () => {
   const [, m] = await get('/api/memory');
   assert.deepEqual(m.playbook, []);
   assert.equal(m.instructions, '');
-  assert.match(m.error, /Peter didn't answer/);
-  assert.deepEqual(m.names, { playbook: 'Super Face playbook', instructions: 'Super Face instructions', user: 'the user' });
+  assert.match(m.error, /Storage Spaces isn't answering/);
+  assert.match(m.where.instructions, /SUPER\/PROMPT/);
+  assert.match(m.where.playbook, /SUPER\/MEMORY/);
   for (const gone of ['/api/tools', '/api/schedules']) {
     const [status] = await get(gone);
     assert.equal(status, 404, `${gone}: Peter's now`);
@@ -219,7 +220,7 @@ test('the prompts as they stand: the system prompt built now, and every note the
   assert.equal(list[0].id, 'system');
   assert.match(list[0].text, /^You are Ivy/);
   assert.match(list[0].text, /Today is \w+day/);
-  assert.deepEqual(list.map((p) => p.id), ['system', 'promised', 'json', 'cannot', 'review', 'reflect', 'onlyFirst', 'outOfRounds', 'empty']);
+  assert.deepEqual(list.map((p) => p.id), ['system', 'promised', 'json', 'cannot', 'review', 'onlyFirst', 'outOfRounds', 'empty']);
   for (const p of list) assert.ok(p.title && p.when && p.text, p.id);
 });
 

@@ -55,9 +55,9 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
   const model = new Ollama({ current: () => ({ url: settings.get().ollamaUrl, model: settings.get().model, think: settings.get().think }), fetch: f, trace: traces.model });
   // Peter (Tool Mac Agent), talked to in words; he says how a run went, and what's due, at POST /api/peter here.
   const peter = new Peter({ url: () => settings.get().peterUrl, replyTo: () => (settings.get().port ? `http://127.0.0.1:${settings.get().port}/api/peter` : null), fetch: f });
-  // What it learns is kept by Peter (its playbook and the standing instructions as notes, what it
-  // knows of the user in MEMORY), and read back through him.
-  const notes = new Notes({ peter });
+  // The user's standing instructions and its playbook: read from its own space in Storage Spaces
+  // (Peter writes them, when the model asks him to keep something).
+  const notes = new Notes({ url: () => settings.get().storageUrl, fetch: f });
 
   /** Says `text` in the character's voice; its face follows the words (and the cues in them). */
   function speakAs(text) {
@@ -201,14 +201,13 @@ export function createCore({ settings, speech, dataDir, host = {}, fetch: f = gl
       {
         id: 'system',
         title: 'The assistant (system prompt)',
-        when: 'Sent with every message, built fresh each time: the character, the group chat (the user, the model, Peter), the three habits, how to ask Peter, the playbook, what MEMORY has on you and your standing instructions (all three kept by Peter), and the day.',
+        when: 'Sent with every message, built fresh each time: who it is, a small example of the chat (the user, the model, Peter), a short explanation, your standing instructions and its playbook (from its space in Storage Spaces, written by Peter), and the day.',
         text: systemPrompt({ character: character(), model: model.current().model || model.picked || '', peter: peter.health, notes, now: now() }),
       },
       { id: 'promised', title: 'Words that promise work, with no message to Peter', when: 'Sent back once when an answer says it will do something but asks no one.', text: NOTE.promised },
       { id: 'json', title: 'A tool call written as JSON', when: 'Sent back once when an answer writes a JSON tool call (there are none) instead of asking Peter.', text: NOTE.json },
       { id: 'cannot', title: '“I can’t”, when Peter could', when: 'Sent back once when an answer says it can’t, or has no access, while Peter is there.', text: NOTE.cannot },
-      { id: 'review', title: 'The critic: after something didn’t work', when: 'Added to Peter’s answer when it didn’t work (twice per request at most).', text: NOTE.review },
-      { id: 'reflect', title: 'Learning: after a request that took work', when: 'Asked quietly (nothing is said) after a request with a failure or two messages to Peter or more: its answer may ask Peter to add a line to its playbook or to remember something about you.', text: NOTE.reflect },
+      { id: 'review', title: 'The critic: after Peter didn’t do it', when: 'Added to Peter’s answer when he didn’t do it (he needs something, or can’t), twice per request at most.', text: NOTE.review },
       { id: 'onlyFirst', title: 'More than one message to Peter in an answer', when: 'Added to Peter’s answer when the model wrote several: only the first is sent.', text: NOTE.onlyFirst() },
       { id: 'outOfRounds', title: 'Ten messages for one request', when: 'Added to the tenth answer of Peter’s for one request.', text: NOTE.outOfRounds(10) },
       { id: 'empty', title: 'An empty message', when: 'The answer to "@peter" with nothing after it.', text: NOTE.empty() },

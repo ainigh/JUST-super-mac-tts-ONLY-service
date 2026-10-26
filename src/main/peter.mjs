@@ -58,14 +58,13 @@ export class Peter {
 
   /**
    * Says something to Peter (POST /api/say): { text, failed, cancelled }, his answer for the model.
-   * He's told where to say how a run went (reply_to). `exact`: only what fits one of his templates,
-   * without his model (quick: for this app's own notes). `client`: who it's from (its own notes
-   * are asked as another client, so the model's news isn't taken by them).
+   * He's told where to say how a run went (reply_to). His model works every request through, a
+   * few turns of it, so it may take a while.
    */
-  async say(text, { signal, timeout = 120_000, exact = false, client = CLIENT } = {}) {
-    const url = `${this.url}/api/say${exact ? '?exact=true' : ''}`;
-    const replyTo = client === CLIENT ? this.replyTo() : null;
-    const headers = { 'Content-Type': 'text/plain; charset=utf-8', 'X-Client': client, ...(replyTo ? { 'X-Reply-To': replyTo } : {}) };
+  async say(text, { signal, timeout = 300_000 } = {}) {
+    const url = `${this.url}/api/say`;
+    const replyTo = this.replyTo();
+    const headers = { 'Content-Type': 'text/plain; charset=utf-8', 'X-Client': CLIENT, ...(replyTo ? { 'X-Reply-To': replyTo } : {}) };
     let res;
     try {
       res = await this.fetch(url, { method: 'POST', headers, body: String(text), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout) });
@@ -118,7 +117,7 @@ function errorOf(text) {
   }
 }
 
-/** Peter's answer says it didn't go: for the critic, and for learning afterwards. */
+/** Peter's answer says he didn't do it (he needs something, or can't): for the critic. */
 export function troubled(answer) {
-  return /\b(didn't work|couldn't (start|be)|isn't one of them|has no line called|I don't know how to do that|I can't tell which|There's no (script|tool|note)|Nothing came up|isn't answering|Nothing was done)\b/i.test(String(answer ?? ''));
+  return /\b(send the whole request again|I couldn't do that|didn't work|couldn't (start|be)|isn't answering|There's no tool called)\b/i.test(String(answer ?? ''));
 }
